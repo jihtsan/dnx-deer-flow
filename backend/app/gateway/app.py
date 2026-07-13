@@ -23,6 +23,7 @@ from app.gateway.routers import (
     feedback,
     github_webhooks,
     input_polish,
+    knowledge_documents,
     knowledge_scope,
     mcp,
     memory,
@@ -423,6 +424,9 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Unified singleton Knowledge Scope API is mounted at /api/knowledge/scope
     app.include_router(knowledge_scope.router)
+
+    # Knowledge document upload and tracking API is mounted at /api/knowledge/documents
+    app.include_router(knowledge_documents.router)
 
     # Console API (cross-thread observability) is mounted at /api/console
     app.include_router(console.router)

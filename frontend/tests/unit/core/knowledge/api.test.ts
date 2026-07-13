@@ -12,8 +12,11 @@ import { fetch as fetcher } from "@/core/api/fetcher";
 import {
   createKnowledgeScope,
   fetchKnowledgeBaseFeature,
+  fetchKnowledgeDocuments,
   fetchKnowledgeScope,
+  KnowledgeDocumentRequestError,
   KnowledgeScopeRequestError,
+  uploadKnowledgeDocument,
   updateKnowledgeScope,
 } from "@/core/knowledge/api";
 
@@ -142,6 +145,26 @@ const scope = {
   updated_at: "2026-07-13T01:00:00Z",
 };
 
+function document(
+  status: "pending" | "indexing" | "ready" | "failed" = "pending",
+) {
+  return {
+    id: `doc-${status}`,
+    original_filename: `${status}.md`,
+    content_type: "text/markdown",
+    size_bytes: 42,
+    status,
+    lightrag_tracking_id: status === "pending" ? null : `track-${status}`,
+    failure_code: status === "failed" ? "index_failed" : null,
+    failure_reason: status === "failed" ? "索引失败，请检查文档格式。" : null,
+    ingestion_job_id: `job-${status}`,
+    created_at: "2026-07-13T01:00:00Z",
+    updated_at: "2026-07-13T01:01:00Z",
+    completed_at:
+      status === "ready" || status === "failed" ? "2026-07-13T01:01:00Z" : null,
+  };
+}
+
 describe("Knowledge Scope API", () => {
   test("reads the singleton envelope, including the empty state", async () => {
     mockedFetch.mockResolvedValueOnce(
@@ -247,5 +270,96 @@ describe("Knowledge Scope API", () => {
     await expect(fetchKnowledgeScope()).rejects.toThrow(
       "Invalid Knowledge Scope response",
     );
+  });
+});
+
+describe("Knowledge documents API", () => {
+  test("loads all four document states and forwards cancellation", async () => {
+    const documents = [
+      document("pending"),
+      document("indexing"),
+      document("ready"),
+      document("failed"),
+    ];
+    mockedFetch.mockResolvedValueOnce(jsonResponse(200, { documents }));
+    const controller = new AbortController();
+
+    await expect(fetchKnowledgeDocuments(controller.signal)).resolves.toEqual({
+      documents,
+    });
+    expect(mockedFetch).toHaveBeenCalledWith("/api/knowledge/documents", {
+      signal: controller.signal,
+    });
+  });
+
+  test.each([
+    {},
+    { documents: null },
+    { documents: [{ ...document(), status: "mystery" }] },
+    { documents: [{ ...document(), lightrag_tracking_id: 42 }] },
+    { documents: [{ ...document(), ingestion_job_id: null }] },
+  ])("rejects a malformed documents response", async (payload) => {
+    mockedFetch.mockResolvedValueOnce(jsonResponse(200, payload));
+
+    await expect(fetchKnowledgeDocuments()).rejects.toThrow(
+      "Invalid knowledge documents response",
+    );
+  });
+
+  test("uploads one file with a stable idempotency key", async () => {
+    const accepted = { document: document("pending"), deduplicated: false };
+    mockedFetch.mockResolvedValueOnce(jsonResponse(202, accepted));
+    const file = new File(["# 产品手册"], "产品手册.md", {
+      type: "text/markdown",
+    });
+
+    await expect(
+      uploadKnowledgeDocument(file, "upload-idempotency-1"),
+    ).resolves.toEqual(accepted);
+
+    const [url, init] = mockedFetch.mock.calls[0] ?? [];
+    expect(url).toBe("/api/knowledge/documents");
+    expect(init?.method).toBe("POST");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Idempotency-Key")).toBe("upload-idempotency-1");
+    expect(headers.has("Content-Type")).toBe(false);
+    const body = init?.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get("file")).toBe(file);
+  });
+
+  test("accepts an idempotent replay without creating another document", async () => {
+    const accepted = { document: document("indexing"), deduplicated: true };
+    mockedFetch.mockResolvedValueOnce(jsonResponse(202, accepted));
+
+    await expect(
+      uploadKnowledgeDocument(
+        new File(["same"], "same.md", { type: "text/markdown" }),
+        "replayed-key",
+      ),
+    ).resolves.toEqual(accepted);
+  });
+
+  test("preserves a stable upload error for actionable UI", async () => {
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(503, {
+        detail: {
+          code: "knowledge_data_plane_unavailable",
+          message: "LightRAG is offline.",
+        },
+      }),
+    );
+
+    const error = await uploadKnowledgeDocument(
+      new File(["offline"], "offline.md"),
+      "offline-key",
+    ).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(KnowledgeDocumentRequestError);
+    expect(error).toMatchObject({
+      status: 503,
+      code: "knowledge_data_plane_unavailable",
+      message: "LightRAG is offline.",
+    });
   });
 });

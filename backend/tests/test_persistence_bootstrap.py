@@ -47,7 +47,7 @@ from deerflow.persistence.migrations._helpers import _normalize_default
 asyncio_test = pytest.mark.asyncio
 
 
-HEAD = "0004_knowledge_scope"
+HEAD = "0005_knowledge_documents"
 BASELINE = "0001_baseline"
 
 
@@ -138,6 +138,8 @@ async def test_empty_branch_creates_all_and_stamps_head(tmp_path: Path) -> None:
             "channel_conversations",
             "channel_oauth_states",
             "knowledge_scopes",
+            "knowledge_documents",
+            "knowledge_ingestion_jobs",
             "alembic_version",
         }:
             assert required in tables, f"missing table: {required}"

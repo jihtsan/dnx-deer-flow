@@ -70,6 +70,7 @@ Knowledge-base note:
 - `/workspace/knowledge` is the single-resource Knowledge Scope management page backed by `GET/POST/PATCH /api/knowledge/scope`; it has no scope selector or client-supplied scope ID.
 - `knowledge_scopes.singleton_key` is fixed to `1` and unique, so the SQL database—not an application pre-check—enforces the global singleton. Owner-filtered reads preserve the existing not-found/invisible convention.
 - `knowledge_base` config points to one operator-managed LightRAG startup workspace. The app adapter owns health, upload, tracking, structured `/query/data`, and delete contract normalization; it never sends `LIGHTRAG-WORKSPACE` or exposes endpoint/key diagnostics.
+- `GET/POST /api/knowledge/documents` lists owner-visible documents and accepts one multipart `file` with `Idempotency-Key`. Original files are atomically persisted below the server-owned runtime directory before one SQL transaction creates the document and ingestion job; process-local background tasks then upload and track LightRAG. Only `ready` documents are retrieval candidates. The fixed safety limits are 25 MiB per file and 1 GiB total for the singleton Scope.
 
 ## Commands: Root vs. Module
 

@@ -23,6 +23,36 @@ export interface KnowledgeBaseFeature {
   diagnostics: KnowledgeBaseDiagnostics;
 }
 
+export type KnowledgeDocumentStatus =
+  | "pending"
+  | "indexing"
+  | "ready"
+  | "failed";
+
+export interface KnowledgeDocument {
+  id: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: KnowledgeDocumentStatus;
+  lightrag_tracking_id: string | null;
+  failure_code: string | null;
+  failure_reason: string | null;
+  ingestion_job_id: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface KnowledgeDocumentsEnvelope {
+  documents: KnowledgeDocument[];
+}
+
+export interface KnowledgeDocumentAccepted {
+  document: KnowledgeDocument;
+  deduplicated: boolean;
+}
+
 export interface KnowledgeDocumentStats {
   total: number;
   pending: number;

@@ -60,6 +60,12 @@ function fulfill(route: Route, body: unknown, status = 200) {
   });
 }
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/knowledge/documents", (route) =>
+    fulfill(route, { documents: [] }),
+  );
+});
+
 for (const status of Object.keys(STATUS_LABELS) as KnowledgeStatus[]) {
   test(`keeps the single-resource entry visible and renders ${status}`, async ({
     page,
