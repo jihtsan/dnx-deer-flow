@@ -5,6 +5,10 @@ import type {
   KnowledgeBaseDiagnostics,
   KnowledgeBaseFeature,
   KnowledgeBaseStatus,
+  KnowledgeDocument,
+  KnowledgeDocumentAccepted,
+  KnowledgeDocumentsEnvelope,
+  KnowledgeDocumentStatus,
   KnowledgeDocumentStats,
   KnowledgeScope,
   KnowledgeScopeCreateInput,
@@ -18,6 +22,13 @@ const KNOWLEDGE_BASE_STATUSES = new Set<KnowledgeBaseStatus>([
   "offline",
   "incompatible",
   "ready",
+]);
+
+const KNOWLEDGE_DOCUMENT_STATUSES = new Set<KnowledgeDocumentStatus>([
+  "pending",
+  "indexing",
+  "ready",
+  "failed",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,6 +103,64 @@ function parseDocumentStats(value: unknown): KnowledgeDocumentStats | null {
   };
 }
 
+function parseDocument(value: unknown): KnowledgeDocument | null {
+  if (!isRecord(value)) return null;
+  const status = value.status;
+  if (
+    typeof value.id !== "string" ||
+    typeof value.original_filename !== "string" ||
+    typeof value.content_type !== "string" ||
+    typeof value.size_bytes !== "number" ||
+    typeof status !== "string" ||
+    !KNOWLEDGE_DOCUMENT_STATUSES.has(status as KnowledgeDocumentStatus) ||
+    !isOptionalString(value.lightrag_tracking_id) ||
+    !isOptionalString(value.failure_code) ||
+    !isOptionalString(value.failure_reason) ||
+    typeof value.ingestion_job_id !== "string" ||
+    typeof value.created_at !== "string" ||
+    typeof value.updated_at !== "string" ||
+    !isOptionalString(value.completed_at)
+  ) {
+    return null;
+  }
+  return {
+    id: value.id,
+    original_filename: value.original_filename,
+    content_type: value.content_type,
+    size_bytes: value.size_bytes,
+    status: status as KnowledgeDocumentStatus,
+    lightrag_tracking_id: value.lightrag_tracking_id,
+    failure_code: value.failure_code,
+    failure_reason: value.failure_reason,
+    ingestion_job_id: value.ingestion_job_id,
+    created_at: value.created_at,
+    updated_at: value.updated_at,
+    completed_at: value.completed_at,
+  };
+}
+
+function parseDocumentsEnvelope(value: unknown): KnowledgeDocumentsEnvelope {
+  if (!isRecord(value) || !Array.isArray(value.documents)) {
+    throw new Error("Invalid knowledge documents response");
+  }
+  const documents = value.documents.map(parseDocument);
+  if (documents.some((document) => document === null)) {
+    throw new Error("Invalid knowledge documents response");
+  }
+  return { documents: documents as KnowledgeDocument[] };
+}
+
+function parseDocumentAccepted(value: unknown): KnowledgeDocumentAccepted {
+  if (!isRecord(value) || typeof value.deduplicated !== "boolean") {
+    throw new Error("Invalid knowledge document response");
+  }
+  const document = parseDocument(value.document);
+  if (document === null) {
+    throw new Error("Invalid knowledge document response");
+  }
+  return { document, deduplicated: value.deduplicated };
+}
+
 function parseScope(value: unknown): KnowledgeScope | null {
   if (!isRecord(value)) return null;
   const documentStats = parseDocumentStats(value.document_stats);
@@ -148,6 +217,35 @@ export class KnowledgeScopeRequestError extends Error {
   }
 }
 
+export class KnowledgeDocumentRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "KnowledgeDocumentRequestError";
+  }
+}
+
+function documentRequestError(
+  response: Response,
+  data: unknown,
+): KnowledgeDocumentRequestError {
+  const detail = isRecord(data) && isRecord(data.detail) ? data.detail : null;
+  const stringDetail =
+    isRecord(data) && typeof data.detail === "string" ? data.detail : null;
+  const detailMessage =
+    detail && typeof detail.message === "string" ? detail.message : null;
+  const message =
+    detailMessage ??
+    stringDetail ??
+    `Knowledge documents request failed: ${response.statusText || response.status}`;
+  const code =
+    detail && typeof detail.code === "string" ? detail.code : undefined;
+  return new KnowledgeDocumentRequestError(message, response.status, code);
+}
+
 async function requestKnowledgeScope(
   method: "GET" | "POST" | "PATCH",
   body?: KnowledgeScopeCreateInput | KnowledgeScopeUpdateInput,
@@ -197,6 +295,37 @@ export function updateKnowledgeScope(
   input: KnowledgeScopeUpdateInput,
 ): Promise<KnowledgeScopeEnvelope> {
   return requestKnowledgeScope("PATCH", input);
+}
+
+export async function fetchKnowledgeDocuments(
+  signal?: AbortSignal,
+): Promise<KnowledgeDocumentsEnvelope> {
+  const res = await fetch(`${getBackendBaseURL()}/api/knowledge/documents`, {
+    signal,
+  });
+  const data = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    throw documentRequestError(res, data);
+  }
+  return parseDocumentsEnvelope(data);
+}
+
+export async function uploadKnowledgeDocument(
+  file: File,
+  idempotencyKey: string,
+): Promise<KnowledgeDocumentAccepted> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${getBackendBaseURL()}/api/knowledge/documents`, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: formData,
+  });
+  const data = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    throw documentRequestError(res, data);
+  }
+  return parseDocumentAccepted(data);
 }
 
 export async function fetchKnowledgeBaseFeature(): Promise<KnowledgeBaseFeature> {

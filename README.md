@@ -800,6 +800,17 @@ contract. The response reuses the redacted LightRAG states (`unconfigured`,
 `disabled`, `offline`, `incompatible`, or `ready`) and never includes the service
 URL or API key.
 
+The same page accepts `.txt`, `.md`, `.pdf`, `.docx`, `.pptx`, and `.xlsx`
+documents. Uploads use `POST /api/knowledge/documents` with a stable
+`Idempotency-Key`; DeerFlow safely persists the original file and atomically
+creates its document plus ingestion job before returning `202`, so the browser
+does not wait for indexing. The page polls `GET /api/knowledge/documents` only
+while a document is `pending` or `indexing`, stops at `ready` or `failed`, and
+restores server state after a refresh. Fixed safety limits are 25 MiB per file
+and 1 GiB across the singleton Scope. Only `ready` documents are eligible for
+later retrieval; this release does not add preview, download, deletion, retry,
+or agent retrieval controls.
+
 This integration targets LightRAG tag `v1.5.2-4-gab86f430` at commit
 `ab86f4303aafb2e66543ce3e0c735e8b698141ab`. Start one LightRAG service with a
 single startup workspace, then enable it in the project-root `config.yaml`:

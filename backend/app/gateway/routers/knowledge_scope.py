@@ -85,13 +85,18 @@ def _user_id(request: Request) -> str:
     return str(auth.user.id)
 
 
-def _scope_response(scope: dict[str, Any], data_plane: KnowledgeBaseFeature) -> KnowledgeScopeResponse:
+def _scope_response(
+    scope: dict[str, Any],
+    data_plane: KnowledgeBaseFeature,
+    document_stats: dict[str, int] | None = None,
+) -> KnowledgeScopeResponse:
     return KnowledgeScopeResponse(
         id=scope["id"],
         name=scope["name"],
         description=scope["description"],
         enabled=scope["enabled"],
         available_for_retrieval=bool(scope["enabled"] and data_plane.status == "ready"),
+        document_stats=KnowledgeDocumentStats(**(document_stats or {})),
         created_at=scope["created_at"],
         updated_at=scope["updated_at"],
     )
@@ -125,6 +130,13 @@ async def _data_plane(
     return await resolve_knowledge_base_feature(config, lightrag_client)
 
 
+async def _document_stats(request: Request, owner_user_id: str) -> dict[str, int]:
+    repo = getattr(request.app.state, "knowledge_document_repo", None)
+    if repo is None:
+        return {}
+    return await repo.document_stats_for_user(owner_user_id)
+
+
 @router.get("", response_model=KnowledgeScopeEnvelope)
 @require_permission("knowledge", "read")
 async def get_knowledge_scope(
@@ -134,9 +146,10 @@ async def get_knowledge_scope(
     repo: KnowledgeScopeRepository = Depends(get_knowledge_scope_repo),
 ) -> KnowledgeScopeEnvelope:
     data_plane = await _data_plane(config, lightrag_client)
-    scope = await repo.get_for_user(_user_id(request))
+    user_id = _user_id(request)
+    scope = await repo.get_for_user(user_id)
     return KnowledgeScopeEnvelope(
-        scope=_scope_response(scope, data_plane) if scope is not None else None,
+        scope=_scope_response(scope, data_plane, await _document_stats(request, user_id)) if scope is not None else None,
         data_plane=data_plane,
     )
 
@@ -168,7 +181,10 @@ async def create_knowledge_scope(
         if await repo.get_for_user(user_id) is None:
             raise HTTPException(status_code=404, detail="Knowledge Scope not found") from exc
         raise _already_exists() from exc
-    return KnowledgeScopeEnvelope(scope=_scope_response(scope, data_plane), data_plane=data_plane)
+    return KnowledgeScopeEnvelope(
+        scope=_scope_response(scope, data_plane, await _document_stats(request, user_id)),
+        data_plane=data_plane,
+    )
 
 
 @router.patch("", response_model=KnowledgeScopeEnvelope)
@@ -192,4 +208,7 @@ async def update_knowledge_scope(
     scope = await repo.update_for_user(user_id, **body.model_dump(exclude_unset=True))
     if scope is None:
         raise HTTPException(status_code=404, detail="Knowledge Scope not found")
-    return KnowledgeScopeEnvelope(scope=_scope_response(scope, data_plane), data_plane=data_plane)
+    return KnowledgeScopeEnvelope(
+        scope=_scope_response(scope, data_plane, await _document_stats(request, user_id)),
+        data_plane=data_plane,
+    )

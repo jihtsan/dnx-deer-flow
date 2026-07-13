@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.knowledge.ingestion import map_lightrag_tracking_status
 from app.knowledge.lightrag import LightRAGClient
 from deerflow.config.knowledge_base_config import (
     LIGHTRAG_EXPECTED_COMMIT,
@@ -77,6 +78,10 @@ def running_lightrag(tmp_path_factory: pytest.TempPathFactory) -> RunningLightRA
     api_key = f"contract-{uuid.uuid4().hex}"
     base_url = f"http://127.0.0.1:{port}"
     log_path = root / "server.log"
+    process_env = os.environ.copy()
+    process_env["INPUT_DIR"] = str(input_dir)
+    process_env["WORKING_DIR"] = str(working_dir)
+    process_env["LIGHTRAG_API_KEY"] = api_key
 
     with log_path.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
@@ -98,6 +103,7 @@ def running_lightrag(tmp_path_factory: pytest.TempPathFactory) -> RunningLightRA
                 "INFO",
             ],
             cwd=checkout,
+            env=process_env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
@@ -162,14 +168,14 @@ async def test_real_health_and_query_data_contract(running_lightrag: RunningLigh
 async def test_real_upload_tracking_and_delete_contract(running_lightrag: RunningLightRAG) -> None:
     client = _client(running_lightrag)
     upload = await client.upload_document(
-        filename=f"empty-contract-{uuid.uuid4().hex}.txt",
-        content=b"",
+        filename=f"ready-contract-{uuid.uuid4().hex}.txt",
+        content=b"DeerFlow uploads this non-empty contract document and waits for indexing to finish.",
         content_type="text/plain",
     )
     assert upload.status == "success"
     assert upload.track_id.startswith("upload_")
 
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + 180
     tracking = None
     while time.monotonic() < deadline:
         tracking = await client.get_track_status(upload.track_id)
@@ -179,7 +185,8 @@ async def test_real_upload_tracking_and_delete_contract(running_lightrag: Runnin
     assert tracking is not None
     assert tracking.total_count == 1
     document = tracking.documents[0]
-    assert document["status"] in {"processed", "failed"}
+    assert document["status"] == "processed"
+    assert map_lightrag_tracking_status(tracking).status == "ready"
 
     deletion = await client.delete_documents([document["id"]], delete_file=True)
     assert deletion.status in {"deletion_started", "busy"}

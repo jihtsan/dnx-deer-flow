@@ -39,6 +39,8 @@ import type {
   KnowledgeScopeUpdateInput,
 } from "@/core/knowledge";
 
+import { KnowledgeDocumentsCard } from "./knowledge-documents";
+
 const NONE = "—";
 
 export default function KnowledgeBasePage() {
@@ -80,10 +82,16 @@ export default function KnowledgeBasePage() {
               {scopeQuery.data.scope === null ? (
                 <CreateScopeCard dataPlane={scopeQuery.data.data_plane} />
               ) : (
-                <ManageScopeCard
-                  scope={scopeQuery.data.scope}
-                  dataPlane={scopeQuery.data.data_plane}
-                />
+                <>
+                  <ManageScopeCard
+                    scope={scopeQuery.data.scope}
+                    dataPlane={scopeQuery.data.data_plane}
+                  />
+                  <KnowledgeDocumentsCard
+                    scope={scopeQuery.data.scope}
+                    dataPlane={scopeQuery.data.data_plane}
+                  />
+                </>
               )}
             </>
           )}

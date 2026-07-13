@@ -223,6 +223,35 @@ export interface Translations {
       observedApiVersion: string;
       serviceStatus: string;
     };
+    documents: {
+      title: string;
+      description: string;
+      uploadTitle: string;
+      fileLabel: string;
+      selectedFile: string;
+      noFile: string;
+      upload: string;
+      uploading: string;
+      retryUpload: string;
+      accepted: string;
+      alreadyAccepted: string;
+      uploadErrorTitle: string;
+      featureDisabled: string;
+      scopeDisabled: string;
+      dataPlaneUnavailable: string;
+      listTitle: string;
+      loading: string;
+      listErrorTitle: string;
+      retryList: string;
+      emptyTitle: string;
+      emptyDescription: string;
+      trackingId: string;
+      trackingPending: string;
+      ingestionJobId: string;
+      updatedAt: string;
+      failureReason: string;
+      status: Record<"pending" | "indexing" | "ready" | "failed", string>;
+    };
   };
 
   // Scheduled tasks

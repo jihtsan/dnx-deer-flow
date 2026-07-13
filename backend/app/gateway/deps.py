@@ -267,6 +267,10 @@ async def langgraph_runtime(app: FastAPI, startup_config: AppConfig) -> AsyncGen
 
         app.state.thread_store = make_thread_store(sf, app.state.store)
         if sf is not None:
+            from app.knowledge.ingestion import KnowledgeIngestionService
+            from app.knowledge.storage import KnowledgeFileStore
+            from deerflow.config.runtime_paths import runtime_home
+            from deerflow.persistence.knowledge_documents import KnowledgeDocumentRepository
             from deerflow.persistence.knowledge_scope import KnowledgeScopeRepository
             from deerflow.persistence.scheduled_task_runs import (
                 ScheduledTaskRunRepository,
@@ -276,10 +280,19 @@ async def langgraph_runtime(app: FastAPI, startup_config: AppConfig) -> AsyncGen
             app.state.scheduled_task_repo = ScheduledTaskRepository(sf)
             app.state.scheduled_task_run_repo = ScheduledTaskRunRepository(sf)
             app.state.knowledge_scope_repo = KnowledgeScopeRepository(sf)
+            app.state.knowledge_document_repo = KnowledgeDocumentRepository(sf)
+            app.state.knowledge_file_store = KnowledgeFileStore(runtime_home() / "knowledge")
+            app.state.knowledge_ingestion_service = KnowledgeIngestionService(
+                repo=app.state.knowledge_document_repo,
+                file_store=app.state.knowledge_file_store,
+            )
         else:
             app.state.scheduled_task_repo = None
             app.state.scheduled_task_run_repo = None
             app.state.knowledge_scope_repo = None
+            app.state.knowledge_document_repo = None
+            app.state.knowledge_file_store = None
+            app.state.knowledge_ingestion_service = None
 
         # Run event store. The store and the matching ``run_events_config`` are
         # both frozen at startup so ``get_run_context`` does not combine a
@@ -308,6 +321,9 @@ async def langgraph_runtime(app: FastAPI, startup_config: AppConfig) -> AsyncGen
         try:
             yield
         finally:
+            ingestion_service = getattr(app.state, "knowledge_ingestion_service", None)
+            if ingestion_service is not None:
+                await ingestion_service.shutdown()
             # Drain in-flight run tasks BEFORE the AsyncExitStack tears down the
             # checkpointer (and its connection pool). A run still mid-graph would
             # otherwise leak into asyncio.run() shutdown, where langgraph's
@@ -383,6 +399,27 @@ def get_knowledge_scope_repo(request: Request):
     val = getattr(request.app.state, "knowledge_scope_repo", None)
     if val is None:
         raise HTTPException(status_code=503, detail="Knowledge Scope persistence is not available")
+    return val
+
+
+def get_knowledge_document_repo(request: Request):
+    val = getattr(request.app.state, "knowledge_document_repo", None)
+    if val is None:
+        raise HTTPException(status_code=503, detail="Knowledge document persistence is not available")
+    return val
+
+
+def get_knowledge_file_store(request: Request):
+    val = getattr(request.app.state, "knowledge_file_store", None)
+    if val is None:
+        raise HTTPException(status_code=503, detail="Knowledge file storage is not available")
+    return val
+
+
+def get_knowledge_ingestion_service(request: Request):
+    val = getattr(request.app.state, "knowledge_ingestion_service", None)
+    if val is None:
+        raise HTTPException(status_code=503, detail="Knowledge ingestion service is not available")
     return val
 
 

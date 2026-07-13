@@ -21,6 +21,7 @@ from deerflow.persistence.channel_connections.model import (
     ChannelOAuthStateRow,
 )
 from deerflow.persistence.feedback.model import FeedbackRow
+from deerflow.persistence.knowledge_documents.model import KnowledgeDocumentRow, KnowledgeIngestionJobRow
 from deerflow.persistence.knowledge_scope.model import KnowledgeScopeRow
 from deerflow.persistence.models.run_event import RunEventRow
 from deerflow.persistence.run.model import RunRow
@@ -35,6 +36,8 @@ __all__ = [
     "ChannelCredentialRow",
     "ChannelOAuthStateRow",
     "FeedbackRow",
+    "KnowledgeDocumentRow",
+    "KnowledgeIngestionJobRow",
     "KnowledgeScopeRow",
     "RunEventRow",
     "RunRow",

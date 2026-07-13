@@ -76,7 +76,15 @@ update. Successful mutations replace the cached envelope immediately. The page
 renders an empty create state or one management card—never a scope list,
 selector, or ID input—alongside all five redacted data-plane states. Metadata can
 still be edited or disabled during a data-plane outage; creation of the default
-enabled scope and re-enabling remain gated on `ready`.
+enabled scope and re-enabling remain gated on `ready`. When the Scope exists,
+`core/knowledge` also owns the strict `GET/POST /api/knowledge/documents`
+contract. The page uploads one supported file with a stable `Idempotency-Key`,
+upserts the accepted document into the cache, and polls only while any document
+is `pending` or `indexing`; `ready` and `failed` are terminal and stop polling.
+Document queries consume TanStack Query's abort signal so route changes and
+unmounts cancel in-flight refreshes. Upload controls remain disabled whenever the
+feature, Scope, or LightRAG data plane is unavailable, while the server-backed
+list remains readable for refresh recovery and failure diagnosis.
 
 `/goal` and `/compact` are built-in composer commands, not skill activations. `src/components/workspace/input-box.tsx` intercepts `/goal`, `/goal clear`, and `/goal <condition>` before normal chat submission, calling Gateway `GET/PUT/DELETE /api/threads/{thread_id}/goal`. Setting `/goal <condition>` also submits the condition text as the next user task so the agent starts running immediately; status and clear do not start a run. Goal and compact requests are tied to the current `threadId` with an `AbortController`, so switching threads or unmounting the composer aborts in-flight requests and stale responses cannot update the new thread's composer state. The chat pages render `GoalStatus` above the composer from `AgentThreadState.goal`, with local optimistic state until the next stream `values` update arrives. `/compact` calls `POST /api/threads/{thread_id}/compact` to summarize older active context while leaving the full visible chat history intact; it is skipped on new/empty threads and blocked server-side while a run is in flight.
 
