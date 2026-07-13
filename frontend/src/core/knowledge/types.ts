@@ -29,6 +29,26 @@ export type KnowledgeDocumentStatus =
   | "ready"
   | "failed";
 
+export type KnowledgeIngestionJobStatus =
+  | "pending"
+  | "leased"
+  | "retry_wait"
+  | "succeeded"
+  | "dead"
+  | "cancelled";
+
+export interface KnowledgeIngestionDiagnostics {
+  status: KnowledgeIngestionJobStatus;
+  attempt_count: number;
+  max_attempts: number;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  manual_retry_count: number;
+  retry_allowed: boolean;
+}
+
 export interface KnowledgeDocument {
   id: string;
   original_filename: string;
@@ -42,6 +62,7 @@ export interface KnowledgeDocument {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  ingestion: KnowledgeIngestionDiagnostics;
 }
 
 export interface KnowledgeDocumentsEnvelope {

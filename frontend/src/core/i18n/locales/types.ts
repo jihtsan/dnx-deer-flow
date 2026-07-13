@@ -269,6 +269,17 @@ export interface Translations {
       detailEmpty: string;
       fileType: string;
       uploadedAt: string;
+      retryWaiting: string;
+      errorType: string;
+      attempts: string;
+      lastAttempt: string;
+      nextRetry: string;
+      notAvailable: string;
+      manualRetry: string;
+      retrying: string;
+      retryErrorTitle: string;
+      retryWaitTitle: string;
+      retryWaitDescription: string;
       status: Record<"pending" | "indexing" | "ready" | "failed", string>;
     };
   };

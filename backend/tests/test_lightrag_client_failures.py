@@ -4,8 +4,14 @@ import pytest
 from app.knowledge.lightrag import (
     LightRAGAuthenticationError,
     LightRAGClient,
+    LightRAGConflictError,
+    LightRAGConnectionError,
     LightRAGContractError,
     LightRAGOfflineError,
+    LightRAGRateLimitError,
+    LightRAGRequestRejectedError,
+    LightRAGServerError,
+    LightRAGTimeoutError,
 )
 from deerflow.config.knowledge_base_config import LightRAGConfig
 
@@ -32,10 +38,32 @@ async def test_health_maps_network_failures_to_offline_without_leaking_config(fa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_type"),
+    [
+        (httpx.ConnectError("no route"), LightRAGConnectionError),
+        (httpx.ReadTimeout("slow"), LightRAGTimeoutError),
+    ],
+)
+async def test_network_failures_keep_stable_retry_classification(
+    failure: Exception,
+    expected_type: type[Exception],
+) -> None:
+    async def fail(_request: httpx.Request) -> httpx.Response:
+        raise failure
+
+    with pytest.raises(expected_type):
+        await _client(httpx.MockTransport(fail)).health()
+
+
+@pytest.mark.asyncio
 async def test_health_maps_5xx_to_offline() -> None:
     transport = httpx.MockTransport(lambda _request: httpx.Response(503, json={"detail": "private upstream"}))
 
     with pytest.raises(LightRAGOfflineError):
+        await _client(transport).health()
+
+    with pytest.raises(LightRAGServerError):
         await _client(transport).health()
 
 
@@ -48,6 +76,10 @@ async def test_health_maps_temporarily_unavailable_statuses_to_offline(status_co
         await _client(transport).health()
 
     assert str(exc_info.value) == "temporarily_unavailable"
+    assert isinstance(
+        exc_info.value,
+        LightRAGRateLimitError if status_code == 429 else LightRAGTimeoutError,
+    )
 
 
 @pytest.mark.asyncio
@@ -67,11 +99,64 @@ async def test_health_preserves_authentication_failure_without_leaking_response(
 async def test_health_maps_contract_level_4xx_to_incompatible(status_code: int) -> None:
     transport = httpx.MockTransport(lambda _request: httpx.Response(status_code, json={"detail": "private detail"}))
 
-    with pytest.raises(LightRAGContractError) as exc_info:
+    with pytest.raises(LightRAGRequestRejectedError) as exc_info:
         await _client(transport).health()
 
     assert str(exc_info.value) == "request_rejected"
     assert "private detail" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_upload_conflict_is_distinct_for_filename_reconciliation() -> None:
+    transport = httpx.MockTransport(lambda _request: httpx.Response(409, json={"detail": "private conflict"}))
+
+    with pytest.raises(LightRAGConflictError) as exc_info:
+        await _client(transport).upload_document(filename="doc-stable.txt", content=b"body", content_type="text/plain")
+
+    assert str(exc_info.value) == "conflict"
+    assert "private conflict" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_find_document_by_filename_pages_until_the_stable_upload_name_matches() -> None:
+    requests: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        requests.append(body)
+        page = body["page"]
+        return httpx.Response(
+            200,
+            json={
+                "documents": [
+                    {
+                        "id": f"remote-{page}",
+                        "content_summary": "",
+                        "content_length": 1,
+                        "status": "pending",
+                        "created_at": "2026-07-13T00:00:00Z",
+                        "updated_at": "2026-07-13T00:00:00Z",
+                        "track_id": f"track-{page}",
+                        "file_path": "other.txt" if page == 1 else "doc-stable.txt",
+                    }
+                ],
+                "pagination": {
+                    "page": page,
+                    "page_size": 200,
+                    "total_count": 2,
+                    "total_pages": 2,
+                    "has_next": page == 1,
+                    "has_prev": page == 2,
+                },
+                "status_counts": {"PENDING": 2},
+            },
+        )
+
+    found = await _client(httpx.MockTransport(handler)).find_document_by_filename("doc-stable.txt")
+
+    assert found is not None
+    assert found.track_id == "track-2"
+    assert [request["page"] for request in requests] == [1, 2]
 
 
 @pytest.mark.asyncio

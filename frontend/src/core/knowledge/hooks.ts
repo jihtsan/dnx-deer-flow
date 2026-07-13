@@ -5,6 +5,7 @@ import {
   fetchKnowledgeBaseFeature,
   fetchKnowledgeDocuments,
   fetchKnowledgeScope,
+  retryKnowledgeDocument,
   uploadKnowledgeDocument,
   updateKnowledgeScope,
 } from "./api";
@@ -25,7 +26,9 @@ export function getKnowledgeDocumentsRefetchInterval(
 ): number | false {
   return data?.documents.some(
     (document) =>
-      document.status === "pending" || document.status === "indexing",
+      document.status === "pending" ||
+      document.status === "indexing" ||
+      ["pending", "leased", "retry_wait"].includes(document.ingestion.status),
   )
     ? KNOWLEDGE_DOCUMENT_POLL_INTERVAL_MS
     : false;
@@ -122,6 +125,29 @@ export function useUploadKnowledgeDocument() {
       void queryClient.invalidateQueries({ queryKey: knowledgeScopeQueryKey });
     },
     onError: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeScopeQueryKey });
+    },
+  });
+}
+
+export function useRetryKnowledgeDocument() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      documentId,
+      idempotencyKey,
+    }: {
+      documentId: string;
+      idempotencyKey: string;
+    }) => retryKnowledgeDocument(documentId, idempotencyKey),
+    onSuccess: (data) => {
+      queryClient.setQueryData<KnowledgeDocumentsEnvelope>(
+        knowledgeDocumentsQueryKey,
+        (current) => upsertKnowledgeDocument(current, data.document),
+      );
+      void queryClient.invalidateQueries({
+        queryKey: knowledgeDocumentsQueryKey,
+      });
       void queryClient.invalidateQueries({ queryKey: knowledgeScopeQueryKey });
     },
   });

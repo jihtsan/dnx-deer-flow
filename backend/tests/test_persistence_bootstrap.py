@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from alembic import command
 from sqlalchemy.ext.asyncio import create_async_engine
 
 # Pre-import models so Base.metadata is populated before bootstrap reads it.
@@ -47,7 +48,7 @@ from deerflow.persistence.migrations._helpers import _normalize_default
 asyncio_test = pytest.mark.asyncio
 
 
-HEAD = "0005_knowledge_documents"
+HEAD = "0006_reliable_knowledge_ingestion"
 BASELINE = "0001_baseline"
 
 
@@ -140,6 +141,7 @@ async def test_empty_branch_creates_all_and_stamps_head(tmp_path: Path) -> None:
             "knowledge_scopes",
             "knowledge_documents",
             "knowledge_ingestion_jobs",
+            "knowledge_ingestion_retry_requests",
             "alembic_version",
         }:
             assert required in tables, f"missing table: {required}"
@@ -392,6 +394,182 @@ async def test_versioned_branch_is_noop_at_head(tmp_path: Path) -> None:
         cols_after = await _runs_columns(engine)
         assert cols_after == cols_before
         assert await _alembic_version(engine) == HEAD
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_0005_jobs_are_normalized_for_recovery(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-0005.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0005_knowledge_documents")
+        created_at = "2026-07-13 09:00:00"
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO knowledge_scopes
+                        (id, singleton_key, owner_user_id, name, description, enabled, created_at, updated_at)
+                    VALUES ('scope', 1, 'alice', '统一知识库', '', 1, :now, :now)
+                    """
+                ),
+                {"now": created_at},
+            )
+            for suffix, document_status, job_status in (
+                ("tracking", "indexing", "tracking"),
+                ("failed", "failed", "failed"),
+            ):
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_documents
+                            (id, scope_id, owner_user_id, idempotency_key, original_filename,
+                             storage_name, content_type, size_bytes, content_sha256, status,
+                             lightrag_tracking_id, failure_code, failure_reason, ingestion_job_id,
+                             created_at, updated_at, completed_at)
+                        VALUES
+                            (:document_id, 'scope', 'alice', :key, :filename, :storage_name,
+                             'text/plain', 1, :sha, :document_status, :tracking_id,
+                             :failure_code, :failure_reason, :job_id, :now, :now, NULL)
+                        """
+                    ),
+                    {
+                        "document_id": f"doc-{suffix}",
+                        "job_id": f"job-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "filename": f"{suffix}.txt",
+                        "storage_name": f"doc-{suffix}.txt",
+                        "sha": suffix[0] * 64,
+                        "document_status": document_status,
+                        "tracking_id": "remote-track" if suffix == "tracking" else None,
+                        "failure_code": "lightrag_processing_failed" if suffix == "failed" else None,
+                        "failure_reason": "知识服务处理失败。" if suffix == "failed" else None,
+                        "now": created_at,
+                    },
+                )
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_ingestion_jobs
+                            (id, document_id, scope_id, idempotency_key, status,
+                             created_at, updated_at, started_at, completed_at)
+                        VALUES (:job_id, :document_id, 'scope', :key, :status, :now, :now, :now, NULL)
+                        """
+                    ),
+                    {
+                        "job_id": f"job-{suffix}",
+                        "document_id": f"doc-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "status": job_status,
+                        "now": created_at,
+                    },
+                )
+
+        await asyncio.to_thread(_upgrade, cfg, "head")
+
+        async with engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        sa.text(
+                            """
+                        SELECT id, status, attempt_count, max_attempts, next_attempt_at,
+                               lease_owner, lease_expires_at, last_error_code, last_error_message
+                        FROM knowledge_ingestion_jobs ORDER BY id
+                        """
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        assert rows[0]["id"] == "job-failed"
+        assert rows[0]["status"] == "dead"
+        assert rows[0]["last_error_code"] == "lightrag_processing_failed"
+        assert rows[0]["last_error_message"] == "知识服务处理失败。"
+        assert rows[1]["id"] == "job-tracking"
+        assert rows[1]["status"] == "pending"
+        assert rows[1]["next_attempt_at"] is not None
+        assert all(row["attempt_count"] == 0 and row["max_attempts"] == 5 for row in rows)
+        assert all(row["lease_owner"] is None and row["lease_expires_at"] is None for row in rows)
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_0006_downgrade_maps_terminal_states_before_restoring_0005_schema(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-0006-downgrade.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, HEAD)
+        created_at = "2026-07-13 09:00:00"
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO knowledge_scopes
+                        (id, singleton_key, owner_user_id, name, description, enabled, created_at, updated_at)
+                    VALUES ('scope', 1, 'alice', '统一知识库', '', 1, :now, :now)
+                    """
+                ),
+                {"now": created_at},
+            )
+            for suffix, status in (("dead", "dead"), ("cancelled", "cancelled")):
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_documents
+                            (id, scope_id, owner_user_id, idempotency_key, original_filename,
+                             storage_name, content_type, size_bytes, content_sha256, status,
+                             lightrag_tracking_id, failure_code, failure_reason, ingestion_job_id,
+                             created_at, updated_at, completed_at)
+                        VALUES
+                            (:document_id, 'scope', 'alice', :key, :filename, :storage_name,
+                             'text/plain', 1, :sha, 'failed', NULL, 'failure', 'failed', :job_id,
+                             :now, :now, :now)
+                        """
+                    ),
+                    {
+                        "document_id": f"doc-{suffix}",
+                        "job_id": f"job-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "filename": f"{suffix}.txt",
+                        "storage_name": f"doc-{suffix}.txt",
+                        "sha": suffix[0] * 64,
+                        "now": created_at,
+                    },
+                )
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_ingestion_jobs
+                            (id, document_id, scope_id, idempotency_key, status, attempt_count,
+                             max_attempts, next_attempt_at, manual_retry_count, created_at, updated_at,
+                             started_at, completed_at)
+                        VALUES
+                            (:job_id, :document_id, 'scope', :key, :status, 1, 5, NULL, 0,
+                             :now, :now, :now, :now)
+                        """
+                    ),
+                    {
+                        "job_id": f"job-{suffix}",
+                        "document_id": f"doc-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "status": status,
+                        "now": created_at,
+                    },
+                )
+
+        await asyncio.to_thread(command.downgrade, cfg, "0005_knowledge_documents")
+
+        async with engine.connect() as conn:
+            statuses = list((await conn.execute(sa.text("SELECT status FROM knowledge_ingestion_jobs ORDER BY id"))).scalars())
+            columns = await conn.run_sync(lambda sync_conn: {column["name"] for column in sa.inspect(sync_conn).get_columns("knowledge_ingestion_jobs")})
+        assert statuses == ["failed", "failed"]
+        assert "attempt_count" not in columns
+        assert "knowledge_ingestion_retry_requests" not in await _table_names(engine)
+        assert await _alembic_version(engine) == "0005_knowledge_documents"
     finally:
         await engine.dispose()
 

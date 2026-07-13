@@ -27,6 +27,7 @@ import { useI18n } from "@/core/i18n/hooks";
 import {
   knowledgeScopeQueryKey,
   useKnowledgeDocuments,
+  useRetryKnowledgeDocument,
   useUploadKnowledgeDocument,
 } from "@/core/knowledge";
 import type {
@@ -90,6 +91,7 @@ export function KnowledgeDocumentsCard({
   const queryClient = useQueryClient();
   const documentsQuery = useKnowledgeDocuments();
   const uploadMutation = useUploadKnowledgeDocument();
+  const retryMutation = useRetryKnowledgeDocument();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [accepted, setAccepted] = useState<{
@@ -99,6 +101,8 @@ export function KnowledgeDocumentsCard({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const idempotencyKeyRef = useRef<string | null>(null);
   const submittingRef = useRef(false);
+  const retryingDocumentRef = useRef<string | null>(null);
+  const retryKeysRef = useRef(new Map<string, string>());
   const previousStatusSignatureRef = useRef<string | null>(null);
 
   const documents = useMemo(
@@ -106,7 +110,10 @@ export function KnowledgeDocumentsCard({
     [documentsQuery.data],
   );
   const statusSignature = documents
-    .map((document) => `${document.id}:${document.status}`)
+    .map(
+      (document) =>
+        `${document.id}:${document.status}:${document.ingestion.status}:${document.ingestion.attempt_count}`,
+    )
     .join("|");
 
   useEffect(() => {
@@ -180,6 +187,38 @@ export function KnowledgeDocumentsCard({
       },
     );
   };
+
+  const retryDocument = (document: KnowledgeDocument) => {
+    if (
+      retryMutation.isPending ||
+      retryingDocumentRef.current !== null ||
+      !document.ingestion.retry_allowed
+    ) {
+      return;
+    }
+    let idempotencyKey = retryKeysRef.current.get(document.id);
+    if (idempotencyKey === undefined) {
+      idempotencyKey = crypto.randomUUID();
+      retryKeysRef.current.set(document.id, idempotencyKey);
+    }
+    retryingDocumentRef.current = document.id;
+    retryMutation.mutate(
+      { documentId: document.id, idempotencyKey },
+      {
+        onSuccess: () => {
+          retryKeysRef.current.delete(document.id);
+        },
+        onSettled: () => {
+          retryingDocumentRef.current = null;
+        },
+      },
+    );
+  };
+
+  const documentStatusLabel = (document: KnowledgeDocument) =>
+    document.ingestion.status === "retry_wait"
+      ? copy.retryWaiting
+      : copy.status[document.status];
 
   return (
     <Card data-testid="knowledge-documents-card">
@@ -341,8 +380,48 @@ export function KnowledgeDocumentsCard({
                         )}
                       >
                         <FileTextIcon className="text-muted-foreground size-4 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {document.original_filename}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">
+                            {document.original_filename}
+                          </span>
+                          <span className="text-muted-foreground block truncate text-[11px]">
+                            {documentStatusLabel(document)} · {copy.attempts}{" "}
+                            {document.ingestion.attempt_count}/
+                            {document.ingestion.max_attempts}
+                          </span>
+                          {document.ingestion.last_error_code ? (
+                            <span
+                              data-testid={`knowledge-document-row-diagnostics-${document.id}`}
+                              className="text-destructive block truncate text-[11px]"
+                              title={
+                                document.ingestion.last_error_message ??
+                                document.ingestion.last_error_code
+                              }
+                            >
+                              {document.ingestion.last_error_code}
+                              {document.ingestion.last_error_message
+                                ? ` · ${document.ingestion.last_error_message}`
+                                : ""}
+                            </span>
+                          ) : null}
+                          {document.ingestion.last_attempt_at ? (
+                            <span className="text-muted-foreground block truncate text-[11px]">
+                              {copy.lastAttempt}:{" "}
+                              {formatTimestamp(
+                                document.ingestion.last_attempt_at,
+                                locale,
+                              )}
+                            </span>
+                          ) : null}
+                          {document.ingestion.next_attempt_at ? (
+                            <span className="text-muted-foreground block truncate text-[11px]">
+                              {copy.nextRetry}:{" "}
+                              {formatTimestamp(
+                                document.ingestion.next_attempt_at,
+                                locale,
+                              )}
+                            </span>
+                          ) : null}
                         </span>
                         <span
                           className={cn(
@@ -387,7 +466,7 @@ export function KnowledgeDocumentsCard({
                     variant={statusBadgeVariant(selectedDocument.status)}
                   >
                     {statusIcon(selectedDocument.status)}
-                    {copy.status[selectedDocument.status]}
+                    {documentStatusLabel(selectedDocument)}
                   </Badge>
                 </div>
                 <dl className="grid gap-4 text-xs sm:grid-cols-2">
@@ -416,16 +495,94 @@ export function KnowledgeDocumentsCard({
                       {selectedDocument.ingestion_job_id}
                     </dd>
                   </div>
+                  <div className="space-y-1">
+                    <dt className="text-muted-foreground">{copy.errorType}</dt>
+                    <dd data-testid="knowledge-document-error-code">
+                      {selectedDocument.ingestion.last_error_code ??
+                        copy.notAvailable}
+                    </dd>
+                  </div>
+                  <div className="space-y-1">
+                    <dt className="text-muted-foreground">{copy.attempts}</dt>
+                    <dd data-testid="knowledge-document-attempts">
+                      {selectedDocument.ingestion.attempt_count}/
+                      {selectedDocument.ingestion.max_attempts}
+                    </dd>
+                  </div>
+                  <div className="space-y-1">
+                    <dt className="text-muted-foreground">
+                      {copy.lastAttempt}
+                    </dt>
+                    <dd data-testid="knowledge-document-last-attempt">
+                      {selectedDocument.ingestion.last_attempt_at
+                        ? formatTimestamp(
+                            selectedDocument.ingestion.last_attempt_at,
+                            locale,
+                          )
+                        : copy.notAvailable}
+                    </dd>
+                  </div>
+                  <div className="space-y-1">
+                    <dt className="text-muted-foreground">{copy.nextRetry}</dt>
+                    <dd data-testid="knowledge-document-next-retry">
+                      {selectedDocument.ingestion.next_attempt_at
+                        ? formatTimestamp(
+                            selectedDocument.ingestion.next_attempt_at,
+                            locale,
+                          )
+                        : copy.notAvailable}
+                    </dd>
+                  </div>
                 </dl>
+                {selectedDocument.ingestion.status === "retry_wait" ? (
+                  <Alert data-testid="knowledge-document-retry-wait">
+                    <Clock3Icon />
+                    <AlertTitle>{copy.retryWaitTitle}</AlertTitle>
+                    <AlertDescription>
+                      {copy.retryWaitDescription}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 {selectedDocument.status === "failed" &&
-                selectedDocument.failure_reason ? (
+                (selectedDocument.ingestion.last_error_message ||
+                  selectedDocument.failure_reason) ? (
                   <Alert variant="destructive">
                     <CircleAlertIcon />
                     <AlertTitle>{copy.failureReason}</AlertTitle>
                     <AlertDescription>
-                      {selectedDocument.failure_reason}
+                      {selectedDocument.ingestion.last_error_message ??
+                        selectedDocument.failure_reason}
                     </AlertDescription>
                   </Alert>
+                ) : null}
+                {retryMutation.isError &&
+                retryingDocumentRef.current === null ? (
+                  <Alert
+                    variant="destructive"
+                    data-testid="knowledge-document-retry-error"
+                  >
+                    <CircleAlertIcon />
+                    <AlertTitle>{copy.retryErrorTitle}</AlertTitle>
+                    <AlertDescription>
+                      {retryMutation.error.message}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                {selectedDocument.status === "failed" &&
+                selectedDocument.ingestion.retry_allowed ? (
+                  <Button
+                    type="button"
+                    data-testid={`knowledge-document-retry-${selectedDocument.id}`}
+                    disabled={retryMutation.isPending}
+                    onClick={() => retryDocument(selectedDocument)}
+                  >
+                    {retryMutation.isPending ? (
+                      <LoaderCircleIcon className="animate-spin" />
+                    ) : (
+                      <RefreshCwIcon />
+                    )}
+                    {retryMutation.isPending ? copy.retrying : copy.manualRetry}
+                  </Button>
                 ) : null}
               </article>
             ) : (

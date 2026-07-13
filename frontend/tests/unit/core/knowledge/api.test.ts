@@ -16,6 +16,7 @@ import {
   fetchKnowledgeScope,
   KnowledgeDocumentRequestError,
   KnowledgeScopeRequestError,
+  retryKnowledgeDocument,
   uploadKnowledgeDocument,
   updateKnowledgeScope,
 } from "@/core/knowledge/api";
@@ -162,6 +163,24 @@ function document(
     updated_at: "2026-07-13T01:01:00Z",
     completed_at:
       status === "ready" || status === "failed" ? "2026-07-13T01:01:00Z" : null,
+    ingestion: {
+      status:
+        status === "ready"
+          ? "succeeded"
+          : status === "failed"
+            ? "dead"
+            : status === "indexing"
+              ? "leased"
+              : "pending",
+      attempt_count: status === "pending" ? 0 : 1,
+      max_attempts: 5,
+      last_attempt_at: status === "pending" ? null : "2026-07-13T01:01:00Z",
+      next_attempt_at: status === "pending" ? "2026-07-13T01:00:00Z" : null,
+      last_error_code: status === "failed" ? "lightrag_timeout" : null,
+      last_error_message: status === "failed" ? "LightRAG 响应超时。" : null,
+      manual_retry_count: 0,
+      retry_allowed: status === "failed",
+    },
   };
 }
 
@@ -298,6 +317,15 @@ describe("Knowledge documents API", () => {
     { documents: [{ ...document(), status: "mystery" }] },
     { documents: [{ ...document(), lightrag_tracking_id: 42 }] },
     { documents: [{ ...document(), ingestion_job_id: null }] },
+    { documents: [{ ...document(), ingestion: null }] },
+    {
+      documents: [
+        {
+          ...document(),
+          ingestion: { ...document().ingestion, status: "lost" },
+        },
+      ],
+    },
   ])("rejects a malformed documents response", async (payload) => {
     mockedFetch.mockResolvedValueOnce(jsonResponse(200, payload));
 
@@ -338,6 +366,23 @@ describe("Knowledge documents API", () => {
         "replayed-key",
       ),
     ).resolves.toEqual(accepted);
+  });
+
+  test("retries one failed document with a stable idempotency key", async () => {
+    const accepted = { document: document("pending"), deduplicated: false };
+    mockedFetch.mockResolvedValueOnce(jsonResponse(202, accepted));
+
+    await expect(
+      retryKnowledgeDocument("doc/encoded", "retry-idempotency-1"),
+    ).resolves.toEqual(accepted);
+
+    expect(mockedFetch).toHaveBeenCalledWith(
+      "/api/knowledge/documents/doc%2Fencoded/retry",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "retry-idempotency-1" },
+      },
+    );
   });
 
   test("preserves a stable upload error for actionable UI", async () => {

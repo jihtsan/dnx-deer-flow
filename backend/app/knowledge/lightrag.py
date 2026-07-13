@@ -22,12 +22,36 @@ class LightRAGOfflineError(LightRAGError):
     """The configured LightRAG service could not serve the request."""
 
 
+class LightRAGTimeoutError(LightRAGOfflineError):
+    """LightRAG timed out before returning a response."""
+
+
+class LightRAGConnectionError(LightRAGOfflineError):
+    """A connection to LightRAG could not be established."""
+
+
+class LightRAGServerError(LightRAGOfflineError):
+    """LightRAG returned a transient server-side failure."""
+
+
+class LightRAGRateLimitError(LightRAGOfflineError):
+    """LightRAG temporarily rate-limited the request."""
+
+
 class LightRAGAuthenticationError(LightRAGError):
     """LightRAG is reachable, but rejected the configured API key."""
 
 
 class LightRAGContractError(LightRAGError):
     """LightRAG responded, but its JSON did not match the pinned contract."""
+
+
+class LightRAGRequestRejectedError(LightRAGContractError):
+    """LightRAG permanently rejected the submitted request."""
+
+
+class LightRAGConflictError(LightRAGError):
+    """LightRAG reported a conflict that may require reconciliation."""
 
 
 @dataclass(frozen=True)
@@ -51,6 +75,14 @@ class LightRAGTrackStatus:
     documents: tuple[dict[str, Any], ...]
     total_count: int
     status_summary: dict[str, int]
+
+
+@dataclass(frozen=True)
+class LightRAGRemoteDocument:
+    id: str
+    track_id: str
+    status: str
+    file_path: str
 
 
 @dataclass(frozen=True)
@@ -113,18 +145,22 @@ class LightRAGClient:
             ) as client:
                 response = await client.request(method, path, **kwargs)
         except httpx.TimeoutException as exc:
-            raise LightRAGOfflineError("timeout") from exc
+            raise LightRAGTimeoutError("timeout") from exc
         except httpx.TransportError as exc:
-            raise LightRAGOfflineError("connection_failed") from exc
+            raise LightRAGConnectionError("connection_failed") from exc
 
         if response.status_code >= 500:
-            raise LightRAGOfflineError("server_error")
-        if response.status_code in {408, 429}:
-            raise LightRAGOfflineError("temporarily_unavailable")
+            raise LightRAGServerError("server_error")
+        if response.status_code == 408:
+            raise LightRAGTimeoutError("temporarily_unavailable")
+        if response.status_code == 429:
+            raise LightRAGRateLimitError("temporarily_unavailable")
         if response.status_code in {401, 403}:
             raise LightRAGAuthenticationError("authentication_failed")
+        if response.status_code == 409:
+            raise LightRAGConflictError("conflict")
         if not response.is_success:
-            raise LightRAGContractError("request_rejected")
+            raise LightRAGRequestRejectedError("request_rejected")
         try:
             data = response.json()
         except ValueError as exc:
@@ -188,6 +224,44 @@ class LightRAGClient:
             total_count=total_count,
             status_summary=status_summary,
         )
+
+    async def find_document_by_filename(self, filename: str) -> LightRAGRemoteDocument | None:
+        """Reconcile a stable upload filename through LightRAG's paginated API."""
+        page = 1
+        while True:
+            data = await self._request_json(
+                "POST",
+                "/documents/paginated",
+                json={
+                    "page": page,
+                    "page_size": 200,
+                    "sort_field": "updated_at",
+                    "sort_direction": "desc",
+                },
+            )
+            documents = _required_list(data, "documents")
+            pagination = _required_dict(data, "pagination")
+            for document in documents:
+                if not isinstance(document, dict):
+                    raise LightRAGContractError("invalid_paginated_document")
+                file_path = document.get("file_path")
+                if file_path != filename:
+                    continue
+                return LightRAGRemoteDocument(
+                    id=_required_string(document, "id"),
+                    track_id=_required_string(document, "track_id"),
+                    status=_required_string(document, "status"),
+                    file_path=file_path,
+                )
+            has_next = pagination.get("has_next")
+            if not isinstance(has_next, bool):
+                raise LightRAGContractError("invalid_pagination")
+            if not has_next:
+                return None
+            returned_page = pagination.get("page")
+            if not isinstance(returned_page, int) or returned_page != page:
+                raise LightRAGContractError("invalid_pagination")
+            page += 1
 
     async def query_data(
         self,
