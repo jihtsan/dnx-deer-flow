@@ -23,6 +23,7 @@ from app.gateway.routers import (
     feedback,
     github_webhooks,
     input_polish,
+    knowledge_scope,
     mcp,
     memory,
     models,
@@ -419,6 +420,9 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Features API is mounted at /api/features
     app.include_router(features.router)
+
+    # Unified singleton Knowledge Scope API is mounted at /api/knowledge/scope
+    app.include_router(knowledge_scope.router)
 
     # Console API (cross-thread observability) is mounted at /api/console
     app.include_router(console.router)

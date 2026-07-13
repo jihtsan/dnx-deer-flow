@@ -99,6 +99,18 @@ async def list_features(
     lightrag_client: LightRAGClient | None = Depends(get_lightrag_client),
 ) -> FeaturesResponse:
     """Return availability of optional, config-gated frontend features."""
+    knowledge_base = await resolve_knowledge_base_feature(config, lightrag_client)
+    return FeaturesResponse(
+        agents_api=AgentsApiFeature(enabled=config.agents_api.enabled),
+        knowledge_base=knowledge_base,
+    )
+
+
+async def resolve_knowledge_base_feature(
+    config: AppConfig,
+    lightrag_client: LightRAGClient | None,
+) -> KnowledgeBaseFeature:
+    """Resolve the shared, redacted LightRAG availability contract."""
     knowledge_base = _knowledge_base_without_health_check(config)
     if knowledge_base is None:
         if lightrag_client is None:
@@ -140,7 +152,4 @@ async def list_features(
                     status="incompatible",
                     reason="LightRAG returned an incompatible contract.",
                 )
-    return FeaturesResponse(
-        agents_api=AgentsApiFeature(enabled=config.agents_api.enabled),
-        knowledge_base=knowledge_base,
-    )
+    return knowledge_base

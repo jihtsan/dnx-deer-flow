@@ -247,6 +247,33 @@ export const enUS: Translations = {
     requestErrorDescription:
       "DeerFlow could not load the feature status. The navigation entry remains available so the problem stays visible.",
     retry: "Retry",
+    saveErrorTitle: "Could not save the Knowledge Scope",
+    retrySave: "Retry save",
+    emptyTitle: "Create your Knowledge Scope",
+    emptyDescription:
+      "DeerFlow uses one shared scope for all knowledge documents. Create it once, then manage it here.",
+    scopeName: "Name",
+    scopeNamePlaceholder: "For example: Product knowledge",
+    scopeDescription: "Description",
+    scopeDescriptionPlaceholder: "Describe what belongs in this scope",
+    create: "Create Knowledge Scope",
+    creating: "Creating…",
+    createUnavailable:
+      "Creation is unavailable until the LightRAG data plane is ready.",
+    save: "Save changes",
+    saving: "Saving…",
+    saveSuccess: "Changes saved.",
+    scopeStableId: "Single server-managed Knowledge Scope",
+    scopeEnabled: "Enabled",
+    scopeDisabled: "Disabled",
+    enabledControl: "Enable Knowledge Scope",
+    documentsTotal: "Documents",
+    documentsReady: "Ready",
+    documentsFailed: "Failed",
+    disabledRetrieval:
+      "Knowledge retrieval will treat this scope as unavailable.",
+    enableUnavailable:
+      "This scope cannot be enabled until the LightRAG data plane is ready.",
     statusTitle: "LightRAG status",
     diagnosticsTitle: "Redacted diagnostics",
     singleWorkspace: "Single startup workspace",
