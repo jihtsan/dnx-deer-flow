@@ -223,8 +223,40 @@ export const zhCN: Translations = {
     recentChats: "最近的对话",
     demoChats: "演示对话",
     agents: "智能体",
+    knowledgeBase: "知识库",
     scheduledTasks: "定时任务",
     agentsDisabledTooltip: "功能未启用",
+  },
+
+  // 知识库
+  knowledgeBase: {
+    title: "知识库",
+    description: "查看由运维配置的 LightRAG 数据平面的可用性与兼容性。",
+    loading: "正在检查知识库可用性…",
+    requestErrorTitle: "无法获取知识库状态",
+    requestErrorDescription:
+      "DeerFlow 无法加载功能状态。导航入口会保持可见，以便问题不会被隐藏。",
+    retry: "重试",
+    statusTitle: "LightRAG 状态",
+    diagnosticsTitle: "脱敏诊断信息",
+    singleWorkspace: "启动时固定的单一工作区",
+    status: {
+      unconfigured: "未配置",
+      disabled: "已禁用",
+      offline: "离线",
+      incompatible: "不兼容",
+      ready: "就绪",
+    },
+    labels: {
+      workspaceMode: "工作区模式",
+      expectedTag: "预期标签",
+      expectedCommit: "预期提交",
+      expectedCoreVersion: "预期核心版本",
+      expectedApiVersion: "预期 API 版本",
+      observedCoreVersion: "实际核心版本",
+      observedApiVersion: "实际 API 版本",
+      serviceStatus: "服务状态",
+    },
   },
 
   // 定时任务
@@ -410,6 +442,7 @@ export const zhCN: Translations = {
   breadcrumb: {
     workspace: "工作区",
     chats: "对话",
+    knowledgeBase: "知识库",
   },
 
   // Workspace

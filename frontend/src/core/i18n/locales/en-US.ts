@@ -232,8 +232,41 @@ export const enUS: Translations = {
     recentChats: "Recent chats",
     demoChats: "Demo chats",
     agents: "Agents",
+    knowledgeBase: "Knowledge base",
     scheduledTasks: "Scheduled tasks",
     agentsDisabledTooltip: "Feature not enabled",
+  },
+
+  // Knowledge base
+  knowledgeBase: {
+    title: "Knowledge base",
+    description:
+      "View the availability and compatibility of the operator-managed LightRAG data plane.",
+    loading: "Checking knowledge-base availability…",
+    requestErrorTitle: "Knowledge-base status is unavailable",
+    requestErrorDescription:
+      "DeerFlow could not load the feature status. The navigation entry remains available so the problem stays visible.",
+    retry: "Retry",
+    statusTitle: "LightRAG status",
+    diagnosticsTitle: "Redacted diagnostics",
+    singleWorkspace: "Single startup workspace",
+    status: {
+      unconfigured: "Unconfigured",
+      disabled: "Disabled",
+      offline: "Offline",
+      incompatible: "Incompatible",
+      ready: "Ready",
+    },
+    labels: {
+      workspaceMode: "Workspace mode",
+      expectedTag: "Expected tag",
+      expectedCommit: "Expected commit",
+      expectedCoreVersion: "Expected core version",
+      expectedApiVersion: "Expected API version",
+      observedCoreVersion: "Observed core version",
+      observedApiVersion: "Observed API version",
+      serviceStatus: "Service status",
+    },
   },
 
   // Scheduled tasks
@@ -427,6 +460,7 @@ export const enUS: Translations = {
   breadcrumb: {
     workspace: "Workspace",
     chats: "Chats",
+    knowledgeBase: "Knowledge base",
   },
 
   // Workspace

@@ -71,6 +71,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Long-Term Memory](#long-term-memory)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
+  - [Knowledge Base (LightRAG)](#knowledge-base-lightrag)
   - [Scheduled Tasks](#scheduled-tasks)
   - [Terminal Workbench (TUI)](#terminal-workbench-tui)
   - [Documentation](#documentation)
@@ -782,6 +783,32 @@ client.clear_goal("thread-1")
 ```
 
 All dict-returning methods are validated against Gateway Pydantic response models in CI (`TestGatewayConformance`), ensuring the embedded client stays in sync with the HTTP API schemas. See `backend/packages/harness/deerflow/client.py` for full API documentation.
+
+## Knowledge Base (LightRAG)
+
+DeerFlow exposes a permanent **Knowledge base** entry at
+`/workspace/knowledge`. The page reports whether the operator-managed LightRAG
+data plane is unconfigured, disabled, offline, incompatible, or ready, together
+with redacted version diagnostics. It never displays the service URL or API key.
+
+This integration targets LightRAG tag `v1.5.2-4-gab86f430` at commit
+`ab86f4303aafb2e66543ce3e0c735e8b698141ab`. Start one LightRAG service with a
+single startup workspace, then enable it in the project-root `config.yaml`:
+
+```yaml
+knowledge_base:
+  enabled: true
+  lightrag:
+    base_url: http://127.0.0.1:9621
+    api_key: $LIGHTRAG_API_KEY
+    timeout_seconds: 5.0
+```
+
+Keep `LIGHTRAG_API_KEY` in `.env` or the process environment. DeerFlow uses
+LightRAG's health, upload, tracking, structured `/query/data`, and delete
+interfaces; it deliberately does not send the `LIGHTRAG-WORKSPACE` header or
+consume LightRAG's generated final answer. Workspace selection belongs to the
+LightRAG startup command, not to browser users.
 
 ## Scheduled Tasks
 
