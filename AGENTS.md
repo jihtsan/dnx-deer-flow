@@ -67,7 +67,8 @@ Scheduled-task note:
 - Scheduled background runs are intentionally non-interactive: they execute through the normal run lifecycle, but the lead-agent toolset excludes `ask_clarification` when `context.non_interactive=true`. The key is honored only for internally-authenticated callers (the scheduler launch path); client-supplied `context.non_interactive` is dropped.
 
 Knowledge-base note:
-- `/workspace/knowledge` is a permanent status entry backed by `GET /api/features`.
+- `/workspace/knowledge` is the single-resource Knowledge Scope management page backed by `GET/POST/PATCH /api/knowledge/scope`; it has no scope selector or client-supplied scope ID.
+- `knowledge_scopes.singleton_key` is fixed to `1` and unique, so the SQL database—not an application pre-check—enforces the global singleton. Owner-filtered reads preserve the existing not-found/invisible convention.
 - `knowledge_base` config points to one operator-managed LightRAG startup workspace. The app adapter owns health, upload, tracking, structured `/query/data`, and delete contract normalization; it never sends `LIGHTRAG-WORKSPACE` or exposes endpoint/key diagnostics.
 
 ## Commands: Root vs. Module

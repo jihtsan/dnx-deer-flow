@@ -47,7 +47,7 @@ from deerflow.persistence.migrations._helpers import _normalize_default
 asyncio_test = pytest.mark.asyncio
 
 
-HEAD = "0003_scheduled_tasks"
+HEAD = "0004_knowledge_scope"
 BASELINE = "0001_baseline"
 
 
@@ -137,6 +137,7 @@ async def test_empty_branch_creates_all_and_stamps_head(tmp_path: Path) -> None:
             "channel_credentials",
             "channel_conversations",
             "channel_oauth_states",
+            "knowledge_scopes",
             "alembic_version",
         }:
             assert required in tables, f"missing table: {required}"
@@ -615,7 +616,7 @@ class TestDecideState:
 # ---------------------------------------------------------------------------
 
 
-def test_head_revision_is_token_usage_revision() -> None:
+def test_head_revision_matches_latest_schema_revision() -> None:
     assert _get_head_revision() == HEAD
 
 

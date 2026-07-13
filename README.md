@@ -787,9 +787,18 @@ All dict-returning methods are validated against Gateway Pydantic response model
 ## Knowledge Base (LightRAG)
 
 DeerFlow exposes a permanent **Knowledge base** entry at
-`/workspace/knowledge`. The page reports whether the operator-managed LightRAG
-data plane is unconfigured, disabled, offline, incompatible, or ready, together
-with redacted version diagnostics. It never displays the service URL or API key.
+`/workspace/knowledge`. Authorized users create and manage one persistent
+Knowledge Scope there: its name, description, enabled state, document counters,
+and LightRAG data-plane readiness. The page has no knowledge-base selector or
+client-supplied scope ID. Disabling the scope makes it unavailable to later
+retrieval work without deleting its metadata.
+
+The Gateway stores the singleton scope in the configured SQL database and
+enforces the one-row invariant with a database constraint, including concurrent
+creates. `GET`, `POST`, and `PATCH /api/knowledge/scope` expose the management
+contract. The response reuses the redacted LightRAG states (`unconfigured`,
+`disabled`, `offline`, `incompatible`, or `ready`) and never includes the service
+URL or API key.
 
 This integration targets LightRAG tag `v1.5.2-4-gab86f430` at commit
 `ab86f4303aafb2e66543ce3e0c735e8b698141ab`. Start one LightRAG service with a
