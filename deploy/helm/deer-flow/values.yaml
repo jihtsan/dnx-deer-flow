@@ -221,7 +221,7 @@ ingress:
 # -- DeerFlow config.yaml content. Secrets MUST stay as $VAR references — never
 #    inline literal secret values here. The default enables provisioner sandbox.
 config: |
-  config_version: 21
+  config_version: 22
   log_level: info
 
   models: []
@@ -265,6 +265,15 @@ config: |
 
   memory:
     storage_path: memory.json
+
+  # Operator-managed LightRAG data plane. Set the service URL and keep the key
+  # as an environment-variable reference supplied through `secrets`.
+  knowledge_base:
+    enabled: false
+    lightrag:
+      base_url: null
+      api_key: null
+      timeout_seconds: 5.0
 
   # -- Tools configuration. The agent gets NO tools unless they're listed here
   # (BUILTIN_TOOLS only adds present_file + ask_clarification). The file/bash

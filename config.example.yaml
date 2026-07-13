@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 21
+config_version: 22
 
 # ============================================================================
 # Logging
@@ -1457,6 +1457,19 @@ memory:
   consolidation_min_facts: 8
   consolidation_max_groups_per_cycle: 3
   consolidation_max_sources: 8
+
+# ============================================================================
+# Knowledge Base — single operator-managed LightRAG data plane
+# ============================================================================
+# The workspace is selected when LightRAG starts. DeerFlow deliberately does
+# not send LIGHTRAG-WORKSPACE headers and does not expose this connection in
+# the user interface. Keep credentials in environment variables.
+knowledge_base:
+  enabled: false
+  lightrag:
+    base_url: null                  # Example: http://127.0.0.1:9621
+    api_key: null                   # Example: $LIGHTRAG_API_KEY
+    timeout_seconds: 5.0
 
 # ============================================================================
 # Custom Agent Management API

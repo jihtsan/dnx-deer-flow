@@ -169,9 +169,37 @@ export interface Translations {
     chats: string;
     demoChats: string;
     agents: string;
+    knowledgeBase: string;
     scheduledTasks: string;
     agentsDisabledTooltip: string;
     channels: string;
+  };
+
+  // Knowledge base
+  knowledgeBase: {
+    title: string;
+    description: string;
+    loading: string;
+    requestErrorTitle: string;
+    requestErrorDescription: string;
+    retry: string;
+    statusTitle: string;
+    diagnosticsTitle: string;
+    singleWorkspace: string;
+    status: Record<
+      "unconfigured" | "disabled" | "offline" | "incompatible" | "ready",
+      string
+    >;
+    labels: {
+      workspaceMode: string;
+      expectedTag: string;
+      expectedCommit: string;
+      expectedCoreVersion: string;
+      expectedApiVersion: string;
+      observedCoreVersion: string;
+      observedApiVersion: string;
+      serviceStatus: string;
+    };
   };
 
   // Scheduled tasks
@@ -335,6 +363,7 @@ export interface Translations {
   breadcrumb: {
     workspace: string;
     chats: string;
+    knowledgeBase: string;
   };
 
   // Workspace
