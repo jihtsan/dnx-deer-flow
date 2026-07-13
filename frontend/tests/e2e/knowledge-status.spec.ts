@@ -82,15 +82,16 @@ for (const status of Object.keys(STATUS_LABELS) as KnowledgeStatus[]) {
     await expect(knowledgeLink).toBeVisible({ timeout: 15_000 });
     await knowledgeLink.click();
 
-    await expect(page.getByTestId("knowledge-status")).toHaveText(
-      STATUS_LABELS[status],
+    const statusBadge = page.getByTestId("knowledge-status");
+    await expect(statusBadge).toHaveText(STATUS_LABELS[status]);
+    await expect(statusBadge).toHaveAttribute(
+      "title",
+      `Visible operator reason for ${status}.`,
     );
     await expect(page.getByTestId("knowledge-empty-state")).toBeVisible();
-    await expect(
-      page.getByText(`Visible operator reason for ${status}.`),
-    ).toBeVisible();
-    await expect(page.getByText("v1.5.2-4-gab86f430")).toBeVisible();
-    await expect(page.getByText("Single startup workspace")).toBeVisible();
+    await expect(page.getByTestId("knowledge-status-card")).toHaveCount(0);
+    await expect(page.getByText("v1.5.2-4-gab86f430")).toHaveCount(0);
+    await expect(page.getByText("Single startup workspace")).toHaveCount(0);
     await expect(
       page.getByText("https://secret-lightrag.internal"),
     ).toHaveCount(0);
@@ -106,9 +107,25 @@ for (const status of Object.keys(STATUS_LABELS) as KnowledgeStatus[]) {
   });
 }
 
-test("creates, edits, disables, enables, and survives refresh", async ({
+test("keeps the document workbench without operator-only cards", async ({
   page,
 }) => {
+  mockLangGraphAPI(page);
+  await page.route("**/api/knowledge/scope", (route) =>
+    fulfill(route, { scope: scope(), data_plane: dataPlane("ready") }),
+  );
+
+  await page.goto("/workspace/knowledge");
+
+  await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
+  await expect(page.getByTestId("knowledge-scope-card")).toHaveCount(0);
+  await expect(page.getByTestId("knowledge-status-card")).toHaveCount(0);
+  await expect(
+    page.getByText("Product knowledge", { exact: true }),
+  ).toHaveCount(1);
+});
+
+test("creates the singleton scope and survives refresh", async ({ page }) => {
   mockLangGraphAPI(page);
   let storedScope: ReturnType<typeof scope> | null = null;
   await page.route("**/api/knowledge/scope", async (route) => {
@@ -125,22 +142,6 @@ test("creates, edits, disables, enables, and survives refresh", async ({
         201,
       );
     }
-    if (request.method() === "PATCH") {
-      const body = request.postDataJSON() as Record<string, unknown>;
-      storedScope = scope({
-        ...storedScope,
-        ...body,
-        available_for_retrieval:
-          typeof body.enabled === "boolean"
-            ? body.enabled
-            : storedScope?.available_for_retrieval,
-        updated_at: "2026-07-13T02:00:00Z",
-      });
-      return fulfill(route, {
-        scope: storedScope,
-        data_plane: dataPlane("ready"),
-      });
-    }
     return fulfill(route, {
       scope: storedScope,
       data_plane: dataPlane("ready"),
@@ -154,38 +155,19 @@ test("creates, edits, disables, enables, and survives refresh", async ({
     .fill("One source of product truth");
   await page.getByTestId("knowledge-create").click();
 
-  await expect(page.getByTestId("knowledge-scope-card")).toBeVisible();
+  await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
+  await expect(page.getByTestId("knowledge-scope-card")).toHaveCount(0);
+  await expect(page.getByText("Product handbook", { exact: true })).toHaveCount(
+    1,
+  );
   await expect(
-    page.getByText("Product handbook", { exact: true }),
+    page.getByText("Documents").first().locator("..").getByText("4"),
   ).toBeVisible();
-  await expect(
-    page.getByText("Documents").locator("..").getByText("4"),
-  ).toBeVisible();
-
-  await page.getByTestId("knowledge-scope-name").fill("Product knowledge v2");
-  await page
-    .getByTestId("knowledge-scope-description")
-    .fill("Updated description");
-  await page.getByTestId("knowledge-save").click();
-  await expect(
-    page.getByText("Product knowledge v2", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Changes saved.")).toBeVisible();
-
-  await page.getByTestId("knowledge-scope-enabled").click();
-  await expect(page.getByText("Disabled", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Knowledge retrieval will treat this scope as unavailable."),
-  ).toBeVisible();
-  await page.getByTestId("knowledge-scope-enabled").click();
-  await expect(page.getByText("Enabled", { exact: true })).toBeVisible();
 
   await page.reload();
-  await expect(
-    page.getByText("Product knowledge v2", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByTestId("knowledge-scope-description")).toHaveValue(
-    "Updated description",
+  await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
+  await expect(page.getByText("Product handbook", { exact: true })).toHaveCount(
+    1,
   );
 });
 
@@ -215,48 +197,12 @@ test("shows create loading and ignores repeated create clicks", async ({
 
   await expect(button).toBeDisabled();
   await expect(button).toHaveText(/Creating/);
-  await expect(page.getByTestId("knowledge-scope-card")).toBeVisible();
+  await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
+  await expect(page.getByTestId("knowledge-scope-card")).toHaveCount(0);
   expect(createRequests).toBe(1);
 });
 
-test("shows save loading and ignores repeated edit submissions", async ({
-  page,
-}) => {
-  mockLangGraphAPI(page);
-  let patchRequests = 0;
-  let storedScope = scope();
-  await page.route("**/api/knowledge/scope", async (route) => {
-    if (route.request().method() !== "PATCH") {
-      return fulfill(route, {
-        scope: storedScope,
-        data_plane: dataPlane("ready"),
-      });
-    }
-    patchRequests += 1;
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    storedScope = scope({ ...storedScope, ...body });
-    return fulfill(route, {
-      scope: storedScope,
-      data_plane: dataPlane("ready"),
-    });
-  });
-
-  await page.goto("/workspace/knowledge");
-  await page
-    .getByTestId("knowledge-scope-description")
-    .fill("A new description");
-  const save = page.getByTestId("knowledge-save");
-  await save.dispatchEvent("click");
-  await save.dispatchEvent("click");
-
-  await expect(save).toBeDisabled();
-  await expect(save).toHaveText(/Saving/);
-  await expect(page.getByTestId("knowledge-save-success")).toBeVisible();
-  expect(patchRequests).toBe(1);
-});
-
-test("surfaces a recoverable save error and retries the same create", async ({
+test("surfaces a recoverable create error and retries the same create", async ({
   page,
 }) => {
   mockLangGraphAPI(page);
@@ -292,8 +238,10 @@ test("surfaces a recoverable save error and retries the same create", async ({
   await expect(
     page.getByText("LightRAG temporarily went offline."),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Retry save" }).click();
-  await expect(page.getByTestId("knowledge-scope-card")).toBeVisible();
+  await expect(page.getByTestId("knowledge-create-error")).toBeVisible();
+  await page.getByRole("button", { name: "Retry create" }).click();
+  await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
+  await expect(page.getByTestId("knowledge-scope-card")).toHaveCount(0);
   expect(attempts).toBe(2);
 });
 

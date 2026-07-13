@@ -183,8 +183,8 @@ export interface Translations {
     requestErrorTitle: string;
     requestErrorDescription: string;
     retry: string;
-    saveErrorTitle: string;
-    retrySave: string;
+    createErrorTitle: string;
+    retryCreate: string;
     emptyTitle: string;
     emptyDescription: string;
     scopeName: string;
@@ -209,6 +209,21 @@ export interface Translations {
     statusTitle: string;
     diagnosticsTitle: string;
     singleWorkspace: string;
+    enterpriseLabel: string;
+    documentsProcessing: string;
+    tabs: {
+      documents: string;
+      graph: string;
+      retrieval: string;
+    };
+    graphPlaceholder: {
+      title: string;
+      description: string;
+    };
+    retrievalPlaceholder: {
+      title: string;
+      description: string;
+    };
     status: Record<
       "unconfigured" | "disabled" | "offline" | "incompatible" | "ready",
       string
@@ -250,6 +265,10 @@ export interface Translations {
       ingestionJobId: string;
       updatedAt: string;
       failureReason: string;
+      catalogTitle: string;
+      detailEmpty: string;
+      fileType: string;
+      uploadedAt: string;
       status: Record<"pending" | "indexing" | "ready" | "failed", string>;
     };
   };

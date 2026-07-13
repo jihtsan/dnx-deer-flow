@@ -73,10 +73,10 @@ The Knowledge Base page is intentionally a single-resource surface: its sidebar
 entry is always navigable, while `core/knowledge` fetches `GET
 /api/knowledge/scope` on mount and uses TanStack Query mutations for create and
 update. Successful mutations replace the cached envelope immediately. The page
-renders an empty create state or one management card—never a scope list,
-selector, or ID input—alongside all five redacted data-plane states. Metadata can
-still be edited or disabled during a data-plane outage; creation of the default
-enabled scope and re-enabling remain gated on `ready`. When the Scope exists,
+renders the one-time create state or the document workbench—never a scope list,
+selector, ID input, or post-creation Scope editor. All five data-plane states
+remain available through the compact header badge; creation of the default
+enabled Scope remains gated on `ready`. When the Scope exists,
 `core/knowledge` also owns the strict `GET/POST /api/knowledge/documents`
 contract. The page uploads one supported file with a stable `Idempotency-Key`,
 upserts the accepted document into the cache, and polls only while any document
@@ -85,6 +85,22 @@ Document queries consume TanStack Query's abort signal so route changes and
 unmounts cancel in-flight refreshes. Upload controls remain disabled whenever the
 feature, Scope, or LightRAG data plane is unavailable, while the server-backed
 list remains readable for refresh recovery and failure diagnosis.
+
+The page (`src/app/workspace/knowledge/`) is laid out as a workbench: a header
+`knowledge-status` LightRAG badge, an overview bar (Scope name + total / ready /
+processing / failed stats), and a Shadcn `Tabs` strip. When the Scope exists the
+tabs are 文档目录 (default), 知识图谱, and 检索测试. Only 文档目录 is wired to a
+real endpoint — it hosts the master-detail document catalog
+(`knowledge-documents.tsx`: a compact list that auto-selects a document and a
+detail pane carrying the `knowledge-document-{id}` / status testids). Scope
+editing and verbose LightRAG diagnostics are intentionally absent from this
+end-user workbench; the header badge and upload availability retain the
+operational state users need. 知识图谱 and 检索测试 (`knowledge-panels.tsx`) are
+intentional "coming soon" placeholders because the Gateway exposes no graph or
+retrieval endpoint yet (only scope + documents + features). The no-scope state
+skips the tabs and shows only the one-time create card. The E2E suite
+(`tests/e2e/knowledge-*.spec.ts`) pins these testids and expects 文档目录 to be the
+default tab.
 
 `/goal` and `/compact` are built-in composer commands, not skill activations. `src/components/workspace/input-box.tsx` intercepts `/goal`, `/goal clear`, and `/goal <condition>` before normal chat submission, calling Gateway `GET/PUT/DELETE /api/threads/{thread_id}/goal`. Setting `/goal <condition>` also submits the condition text as the next user task so the agent starts running immediately; status and clear do not start a run. Goal and compact requests are tied to the current `threadId` with an `AbortController`, so switching threads or unmounting the composer aborts in-flight requests and stale responses cannot update the new thread's composer state. The chat pages render `GoalStatus` above the composer from `AgentThreadState.goal`, with local optimistic state until the next stream `values` update arrives. `/compact` calls `POST /api/threads/{thread_id}/compact` to summarize older active context while leaving the full visible chat history intact; it is skipped on new/empty threads and blocked server-side while a run is in flight.
 

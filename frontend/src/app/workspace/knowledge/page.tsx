@@ -20,7 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   WorkspaceBody,
@@ -28,20 +28,15 @@ import {
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
 import { useI18n } from "@/core/i18n/hooks";
-import {
-  useCreateKnowledgeScope,
-  useKnowledgeScope,
-  useUpdateKnowledgeScope,
-} from "@/core/knowledge";
-import type {
-  KnowledgeBaseFeature,
-  KnowledgeScope,
-  KnowledgeScopeUpdateInput,
-} from "@/core/knowledge";
+import { useCreateKnowledgeScope, useKnowledgeScope } from "@/core/knowledge";
+import type { KnowledgeBaseFeature, KnowledgeScope } from "@/core/knowledge";
+import { cn } from "@/lib/utils";
 
 import { KnowledgeDocumentsCard } from "./knowledge-documents";
-
-const NONE = "—";
+import {
+  KnowledgeGraphPanel,
+  KnowledgeRetrievalPanel,
+} from "./knowledge-panels";
 
 export default function KnowledgeBasePage() {
   const { t } = useI18n();
@@ -52,15 +47,18 @@ export default function KnowledgeBasePage() {
     document.title = `${kb.title} - ${t.pages.appName}`;
   }, [kb.title, t.pages.appName]);
 
+  const feature = scopeQuery.data?.data_plane;
+
   return (
     <WorkspaceContainer>
       <WorkspaceHeader />
       <WorkspaceBody>
         <div className="mx-auto flex w-full max-w-(--container-width-md) flex-col gap-6 p-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <DatabaseIcon className="text-muted-foreground size-6" />
               <h1 className="text-2xl font-semibold">{kb.title}</h1>
+              {feature ? <LightRAGBadge feature={feature} /> : null}
             </div>
             <p className="text-muted-foreground max-w-2xl text-sm">
               {kb.description}
@@ -76,28 +74,128 @@ export default function KnowledgeBasePage() {
             </Card>
           ) : scopeQuery.isError ? (
             <RequestError onRetry={() => void scopeQuery.refetch()} />
+          ) : scopeQuery.data.scope === null ? (
+            <CreateScopeCard dataPlane={scopeQuery.data.data_plane} />
           ) : (
             <>
-              <KnowledgeStatusCard feature={scopeQuery.data.data_plane} />
-              {scopeQuery.data.scope === null ? (
-                <CreateScopeCard dataPlane={scopeQuery.data.data_plane} />
-              ) : (
-                <>
-                  <ManageScopeCard
-                    scope={scopeQuery.data.scope}
-                    dataPlane={scopeQuery.data.data_plane}
-                  />
+              <OverviewBar
+                scope={scopeQuery.data.scope}
+                feature={scopeQuery.data.data_plane}
+              />
+              <Tabs defaultValue="documents">
+                <TabsList variant="line" className="w-full justify-start">
+                  <TabsTrigger value="documents">
+                    {kb.tabs.documents}
+                  </TabsTrigger>
+                  <TabsTrigger value="graph">{kb.tabs.graph}</TabsTrigger>
+                  <TabsTrigger value="retrieval">
+                    {kb.tabs.retrieval}
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="documents" className="mt-4 space-y-6">
                   <KnowledgeDocumentsCard
                     scope={scopeQuery.data.scope}
                     dataPlane={scopeQuery.data.data_plane}
                   />
-                </>
-              )}
+                </TabsContent>
+                <TabsContent value="graph" className="mt-4">
+                  <KnowledgeGraphPanel />
+                </TabsContent>
+                <TabsContent value="retrieval" className="mt-4">
+                  <KnowledgeRetrievalPanel />
+                </TabsContent>
+              </Tabs>
             </>
           )}
         </div>
       </WorkspaceBody>
     </WorkspaceContainer>
+  );
+}
+
+function LightRAGBadge({ feature }: { feature: KnowledgeBaseFeature }) {
+  const { t } = useI18n();
+  const kb = t.knowledgeBase;
+  const ready = feature.status === "ready";
+  return (
+    <Badge
+      data-testid="knowledge-status"
+      variant={ready ? "default" : "outline"}
+      className={cn(
+        ready &&
+          "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+      )}
+      title={feature.reason}
+    >
+      {ready ? <CheckCircle2Icon /> : <CircleAlertIcon />}
+      {kb.status[feature.status]}
+    </Badge>
+  );
+}
+
+function OverviewBar({
+  scope,
+  feature,
+}: {
+  scope: KnowledgeScope;
+  feature: KnowledgeBaseFeature;
+}) {
+  const { t } = useI18n();
+  const kb = t.knowledgeBase;
+  const stats = scope.document_stats;
+  const processing = stats.pending + stats.indexing;
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="flex items-center gap-2 pr-6 sm:border-r">
+          <DatabaseIcon className="text-muted-foreground size-4" />
+          <span className="font-medium">{scope.name}</span>
+          <span className="text-muted-foreground text-xs">
+            {kb.enterpriseLabel}
+          </span>
+        </div>
+        <OverviewStat label={kb.documentsTotal} value={stats.total} />
+        <OverviewStat
+          label={kb.documentsReady}
+          value={stats.ready}
+          className="text-emerald-600 dark:text-emerald-400"
+        />
+        <OverviewStat
+          label={kb.documentsProcessing}
+          value={processing}
+          className="text-amber-600 dark:text-amber-400"
+        />
+        <OverviewStat
+          label={kb.documentsFailed}
+          value={stats.failed}
+          className={stats.failed > 0 ? "text-destructive" : undefined}
+        />
+        {!feature.enabled ? (
+          <span className="text-muted-foreground ml-auto text-xs">
+            {feature.reason}
+          </span>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function OverviewStat({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: number;
+  className?: string;
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span className={cn("font-mono text-lg font-semibold", className)}>
+        {value}
+      </span>
+      <span className="text-muted-foreground text-xs">{label}</span>
+    </div>
   );
 }
 
@@ -119,7 +217,7 @@ function RequestError({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-function MutationError({
+function CreateScopeError({
   error,
   onRetry,
 }: {
@@ -128,14 +226,14 @@ function MutationError({
 }) {
   const { t } = useI18n();
   return (
-    <Alert variant="destructive" data-testid="knowledge-save-error">
+    <Alert variant="destructive" data-testid="knowledge-create-error">
       <CircleAlertIcon />
-      <AlertTitle>{t.knowledgeBase.saveErrorTitle}</AlertTitle>
+      <AlertTitle>{t.knowledgeBase.createErrorTitle}</AlertTitle>
       <AlertDescription>
         <p>{error.message}</p>
         <Button type="button" variant="outline" size="sm" onClick={onRetry}>
           <RefreshCwIcon />
-          {t.knowledgeBase.retrySave}
+          {t.knowledgeBase.retryCreate}
         </Button>
       </AlertDescription>
     </Alert>
@@ -221,7 +319,7 @@ function CreateScopeCard({ dataPlane }: { dataPlane: KnowledgeBaseFeature }) {
           <p className="text-destructive text-sm">{kb.createUnavailable}</p>
         ) : null}
         {mutation.isError ? (
-          <MutationError error={mutation.error} onRetry={create} />
+          <CreateScopeError error={mutation.error} onRetry={create} />
         ) : null}
         <Button
           data-testid="knowledge-create"
@@ -234,183 +332,6 @@ function CreateScopeCard({ dataPlane }: { dataPlane: KnowledgeBaseFeature }) {
           ) : null}
           {mutation.isPending ? kb.creating : kb.create}
         </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ManageScopeCard({
-  scope,
-  dataPlane,
-}: {
-  scope: KnowledgeScope;
-  dataPlane: KnowledgeBaseFeature;
-}) {
-  const { t } = useI18n();
-  const kb = t.knowledgeBase;
-  const [name, setName] = useState(scope.name);
-  const [description, setDescription] = useState(scope.description);
-  const mutation = useUpdateKnowledgeScope();
-  const [saveSucceeded, setSaveSucceeded] = useState(false);
-  const submitting = useRef(false);
-  const lastUpdate = useRef<KnowledgeScopeUpdateInput>({
-    name: scope.name,
-    description: scope.description,
-  });
-
-  useEffect(() => {
-    setName(scope.name);
-    setDescription(scope.description);
-  }, [scope.description, scope.name]);
-
-  const submit = (input: KnowledgeScopeUpdateInput) => {
-    if (submitting.current || mutation.isPending) return;
-    submitting.current = true;
-    setSaveSucceeded(false);
-    lastUpdate.current = input;
-    mutation.mutate(input, {
-      onSuccess: () => setSaveSucceeded(true),
-      onSettled: () => (submitting.current = false),
-    });
-  };
-  const save = () => {
-    if (!name.trim()) return;
-    submit({ name: name.trim(), description: description.trim() });
-  };
-  const toggle = (enabled: boolean) => {
-    submit({ enabled });
-  };
-  const canEnable = dataPlane.status === "ready";
-
-  return (
-    <Card data-testid="knowledge-scope-card">
-      <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <CardTitle>{scope.name}</CardTitle>
-            <CardDescription>{kb.scopeStableId}</CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant={scope.enabled ? "default" : "outline"}>
-              {scope.enabled ? kb.scopeEnabled : kb.scopeDisabled}
-            </Badge>
-            <Switch
-              data-testid="knowledge-scope-enabled"
-              aria-label={kb.enabledControl}
-              checked={scope.enabled}
-              disabled={mutation.isPending || (!scope.enabled && !canEnable)}
-              onCheckedChange={toggle}
-            />
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        <div className="grid gap-3 text-sm sm:grid-cols-3">
-          <Stat label={kb.documentsTotal} value={scope.document_stats.total} />
-          <Stat label={kb.documentsReady} value={scope.document_stats.ready} />
-          <Stat
-            label={kb.documentsFailed}
-            value={scope.document_stats.failed}
-          />
-        </div>
-        <ScopeFields
-          name={name}
-          description={description}
-          disabled={mutation.isPending}
-          onNameChange={setName}
-          onDescriptionChange={setDescription}
-        />
-        {!scope.enabled ? (
-          <p className="text-muted-foreground text-sm">
-            {kb.disabledRetrieval}
-          </p>
-        ) : null}
-        {!scope.enabled && !canEnable ? (
-          <p className="text-destructive text-sm">{kb.enableUnavailable}</p>
-        ) : null}
-        {mutation.isError ? (
-          <MutationError
-            error={mutation.error}
-            onRetry={() => submit(lastUpdate.current)}
-          />
-        ) : null}
-        {saveSucceeded ? (
-          <Alert data-testid="knowledge-save-success">
-            <CheckCircle2Icon />
-            <AlertTitle>{kb.saveSuccess}</AlertTitle>
-          </Alert>
-        ) : null}
-        <Button
-          data-testid="knowledge-save"
-          type="button"
-          disabled={mutation.isPending || !name.trim()}
-          onClick={save}
-        >
-          {mutation.isPending ? (
-            <LoaderCircleIcon className="animate-spin" />
-          ) : null}
-          {mutation.isPending ? kb.saving : kb.save}
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border p-3">
-      <div className="text-muted-foreground">{label}</div>
-      <div className="mt-1 text-xl font-semibold">{value}</div>
-    </div>
-  );
-}
-
-function KnowledgeStatusCard({ feature }: { feature: KnowledgeBaseFeature }) {
-  const { t } = useI18n();
-  const kb = t.knowledgeBase;
-  const diagnostics = feature.diagnostics;
-  const diagnosticRows = [
-    [kb.labels.workspaceMode, kb.singleWorkspace],
-    [kb.labels.expectedTag, diagnostics.expected_tag],
-    [kb.labels.expectedCommit, diagnostics.expected_commit],
-    [kb.labels.expectedCoreVersion, diagnostics.expected_core_version],
-    [kb.labels.expectedApiVersion, diagnostics.expected_api_version],
-    [kb.labels.observedCoreVersion, diagnostics.observed_core_version ?? NONE],
-    [kb.labels.observedApiVersion, diagnostics.observed_api_version ?? NONE],
-    [kb.labels.serviceStatus, diagnostics.service_status ?? NONE],
-  ];
-
-  return (
-    <Card data-testid="knowledge-status-card">
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-2">
-            <CardTitle>{kb.statusTitle}</CardTitle>
-            <CardDescription>{feature.reason}</CardDescription>
-          </div>
-          <Badge
-            data-testid="knowledge-status"
-            variant={feature.status === "ready" ? "default" : "outline"}
-          >
-            {feature.status === "ready" ? (
-              <CheckCircle2Icon />
-            ) : (
-              <CircleAlertIcon />
-            )}
-            {kb.status[feature.status]}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <h2 className="text-sm font-medium">{kb.diagnosticsTitle}</h2>
-        <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-          {diagnosticRows.map(([label, value]) => (
-            <div key={label} className="min-w-0 space-y-1">
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-mono break-all">{value}</dd>
-            </div>
-          ))}
-        </dl>
       </CardContent>
     </Card>
   );

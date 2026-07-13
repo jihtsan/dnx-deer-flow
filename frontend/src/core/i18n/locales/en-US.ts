@@ -247,11 +247,11 @@ export const enUS: Translations = {
     requestErrorDescription:
       "DeerFlow could not load the feature status. The navigation entry remains available so the problem stays visible.",
     retry: "Retry",
-    saveErrorTitle: "Could not save the Knowledge Scope",
-    retrySave: "Retry save",
+    createErrorTitle: "Could not create the Knowledge Scope",
+    retryCreate: "Retry create",
     emptyTitle: "Create your Knowledge Scope",
     emptyDescription:
-      "DeerFlow uses one shared scope for all knowledge documents. Create it once, then manage it here.",
+      "DeerFlow uses one shared scope for all knowledge documents. Create it once, then upload and track documents here.",
     scopeName: "Name",
     scopeNamePlaceholder: "For example: Product knowledge",
     scopeDescription: "Description",
@@ -277,6 +277,23 @@ export const enUS: Translations = {
     statusTitle: "LightRAG status",
     diagnosticsTitle: "Redacted diagnostics",
     singleWorkspace: "Single startup workspace",
+    enterpriseLabel: "Enterprise knowledge base",
+    documentsProcessing: "Processing",
+    tabs: {
+      documents: "Documents",
+      graph: "Knowledge graph",
+      retrieval: "Retrieval test",
+    },
+    graphPlaceholder: {
+      title: "Knowledge graph is coming soon",
+      description:
+        "The knowledge graph explorer is under development. There is no graph endpoint on the current data plane yet.",
+    },
+    retrievalPlaceholder: {
+      title: "Retrieval test is coming soon",
+      description:
+        "The retrieval playground is under development. There is no retrieval endpoint exposed on the current data plane yet.",
+    },
     status: {
       unconfigured: "Unconfigured",
       disabled: "Disabled",
@@ -323,6 +340,10 @@ export const enUS: Translations = {
       ingestionJobId: "Ingestion job ID",
       updatedAt: "Last updated",
       failureReason: "Failure reason",
+      catalogTitle: "Catalog",
+      detailEmpty: "Select a document to view its details.",
+      fileType: "Type",
+      uploadedAt: "Uploaded",
       status: {
         pending: "Accepted, waiting for indexing",
         indexing: "Indexing",

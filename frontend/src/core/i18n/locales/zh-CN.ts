@@ -237,11 +237,11 @@ export const zhCN: Translations = {
     requestErrorDescription:
       "DeerFlow 无法加载功能状态。导航入口会保持可见，以便问题不会被隐藏。",
     retry: "重试",
-    saveErrorTitle: "无法保存 Knowledge Scope",
-    retrySave: "重试保存",
+    createErrorTitle: "无法创建 Knowledge Scope",
+    retryCreate: "重试创建",
     emptyTitle: "创建 Knowledge Scope",
     emptyDescription:
-      "DeerFlow 使用唯一的知识范围管理全部知识文档。创建后可在此持续管理。",
+      "DeerFlow 使用唯一的知识范围管理全部知识文档。创建后可在此上传并追踪文档。",
     scopeName: "名称",
     scopeNamePlaceholder: "例如：产品知识",
     scopeDescription: "描述",
@@ -264,6 +264,21 @@ export const zhCN: Translations = {
     statusTitle: "LightRAG 状态",
     diagnosticsTitle: "脱敏诊断信息",
     singleWorkspace: "启动时固定的单一工作区",
+    enterpriseLabel: "企业知识库",
+    documentsProcessing: "处理中",
+    tabs: {
+      documents: "文档目录",
+      graph: "知识图谱",
+      retrieval: "检索测试",
+    },
+    graphPlaceholder: {
+      title: "知识图谱功能开发中",
+      description: "知识图谱浏览功能正在开发中，当前数据平面尚未提供图谱接口。",
+    },
+    retrievalPlaceholder: {
+      title: "检索测试功能开发中",
+      description: "检索测试功能正在开发中，当前数据平面尚未开放检索接口。",
+    },
     status: {
       unconfigured: "未配置",
       disabled: "已禁用",
@@ -308,6 +323,10 @@ export const zhCN: Translations = {
       ingestionJobId: "入库任务 ID",
       updatedAt: "最近更新时间",
       failureReason: "失败原因",
+      catalogTitle: "目录结构",
+      detailEmpty: "从左侧选择一个文档查看详情。",
+      fileType: "类型",
+      uploadedAt: "上传于",
       status: {
         pending: "已接收，等待索引",
         indexing: "索引中",
