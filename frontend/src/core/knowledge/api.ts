@@ -9,6 +9,8 @@ import type {
   KnowledgeDocumentAccepted,
   KnowledgeDocumentsEnvelope,
   KnowledgeDocumentStatus,
+  KnowledgeIngestionDiagnostics,
+  KnowledgeIngestionJobStatus,
   KnowledgeDocumentStats,
   KnowledgeScope,
   KnowledgeScopeCreateInput,
@@ -29,6 +31,15 @@ const KNOWLEDGE_DOCUMENT_STATUSES = new Set<KnowledgeDocumentStatus>([
   "indexing",
   "ready",
   "failed",
+]);
+
+const KNOWLEDGE_INGESTION_JOB_STATUSES = new Set<KnowledgeIngestionJobStatus>([
+  "pending",
+  "leased",
+  "retry_wait",
+  "succeeded",
+  "dead",
+  "cancelled",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -106,6 +117,7 @@ function parseDocumentStats(value: unknown): KnowledgeDocumentStats | null {
 function parseDocument(value: unknown): KnowledgeDocument | null {
   if (!isRecord(value)) return null;
   const status = value.status;
+  const ingestion = parseIngestionDiagnostics(value.ingestion);
   if (
     typeof value.id !== "string" ||
     typeof value.original_filename !== "string" ||
@@ -119,7 +131,8 @@ function parseDocument(value: unknown): KnowledgeDocument | null {
     typeof value.ingestion_job_id !== "string" ||
     typeof value.created_at !== "string" ||
     typeof value.updated_at !== "string" ||
-    !isOptionalString(value.completed_at)
+    !isOptionalString(value.completed_at) ||
+    ingestion === null
   ) {
     return null;
   }
@@ -136,6 +149,41 @@ function parseDocument(value: unknown): KnowledgeDocument | null {
     created_at: value.created_at,
     updated_at: value.updated_at,
     completed_at: value.completed_at,
+    ingestion,
+  };
+}
+
+function parseIngestionDiagnostics(
+  value: unknown,
+): KnowledgeIngestionDiagnostics | null {
+  if (!isRecord(value)) return null;
+  const status = value.status;
+  if (
+    typeof status !== "string" ||
+    !KNOWLEDGE_INGESTION_JOB_STATUSES.has(
+      status as KnowledgeIngestionJobStatus,
+    ) ||
+    typeof value.attempt_count !== "number" ||
+    typeof value.max_attempts !== "number" ||
+    !isOptionalString(value.last_attempt_at) ||
+    !isOptionalString(value.next_attempt_at) ||
+    !isOptionalString(value.last_error_code) ||
+    !isOptionalString(value.last_error_message) ||
+    typeof value.manual_retry_count !== "number" ||
+    typeof value.retry_allowed !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    status: status as KnowledgeIngestionJobStatus,
+    attempt_count: value.attempt_count,
+    max_attempts: value.max_attempts,
+    last_attempt_at: value.last_attempt_at,
+    next_attempt_at: value.next_attempt_at,
+    last_error_code: value.last_error_code,
+    last_error_message: value.last_error_message,
+    manual_retry_count: value.manual_retry_count,
+    retry_allowed: value.retry_allowed,
   };
 }
 
@@ -321,6 +369,24 @@ export async function uploadKnowledgeDocument(
     headers: { "Idempotency-Key": idempotencyKey },
     body: formData,
   });
+  const data = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    throw documentRequestError(res, data);
+  }
+  return parseDocumentAccepted(data);
+}
+
+export async function retryKnowledgeDocument(
+  documentId: string,
+  idempotencyKey: string,
+): Promise<KnowledgeDocumentAccepted> {
+  const res = await fetch(
+    `${getBackendBaseURL()}/api/knowledge/documents/${encodeURIComponent(documentId)}/retry`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+    },
+  );
   const data = (await res.json().catch(() => null)) as unknown;
   if (!res.ok) {
     throw documentRequestError(res, data);

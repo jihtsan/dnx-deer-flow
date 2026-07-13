@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -153,6 +154,17 @@ def test_upload_persists_file_and_atomic_records_then_returns_before_lightrag(do
         "created_at": payload["document"]["created_at"],
         "updated_at": payload["document"]["updated_at"],
         "completed_at": None,
+        "ingestion": {
+            "status": "pending",
+            "attempt_count": 0,
+            "max_attempts": 5,
+            "last_attempt_at": None,
+            "next_attempt_at": payload["document"]["ingestion"]["next_attempt_at"],
+            "last_error_code": None,
+            "last_error_message": None,
+            "manual_retry_count": 0,
+            "retry_allowed": False,
+        },
     }
     assert lightrag.upload_calls == 0
     assert document_runtime.service.scheduled[0][0] == payload["document"]["ingestion_job_id"]
@@ -302,6 +314,117 @@ def test_list_recovers_persisted_state_and_preserves_owner_invisibility(document
     assert invisible.json() == {"documents": []}
 
 
+def test_failed_document_exposes_diagnostics_and_manual_retry_is_idempotent(document_runtime) -> None:
+    _create_scope(document_runtime)
+    now = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+    with TestClient(_app(document_runtime)) as client:
+        accepted = _upload(client).json()["document"]
+
+        async def fail_job() -> None:
+            claim = await document_runtime.document_repo.claim_job(
+                job_id=accepted["ingestion_job_id"],
+                now=now,
+                lease_owner="router-test",
+                lease_duration=timedelta(minutes=1),
+            )
+            assert claim is not None
+            failed = await document_runtime.document_repo.record_job_failure(
+                job_id=accepted["ingestion_job_id"],
+                lease_owner="router-test",
+                attempt_count=1,
+                now=now,
+                error_code="lightrag_timeout",
+                error_message="LightRAG 响应超时。",
+                retryable=False,
+                base_delay=timedelta(seconds=5),
+                max_delay=timedelta(minutes=1),
+            )
+            assert failed is not None
+
+        anyio.run(fail_job)
+        listed = client.get("/api/knowledge/documents")
+        retried = client.post(
+            f"/api/knowledge/documents/{accepted['id']}/retry",
+            headers={"Idempotency-Key": "retry-stable-1"},
+        )
+        replayed = client.post(
+            f"/api/knowledge/documents/{accepted['id']}/retry",
+            headers={"Idempotency-Key": "retry-stable-1"},
+        )
+        conflicted = client.post(
+            f"/api/knowledge/documents/{accepted['id']}/retry",
+            headers={"Idempotency-Key": "retry-stable-2"},
+        )
+
+    assert listed.status_code == 200
+    failed = listed.json()["documents"][0]
+    assert failed["status"] == "failed"
+    assert failed["ingestion"] == {
+        "status": "dead",
+        "attempt_count": 1,
+        "max_attempts": 5,
+        "last_attempt_at": now.isoformat(),
+        "next_attempt_at": None,
+        "last_error_code": "lightrag_timeout",
+        "last_error_message": "LightRAG 响应超时。",
+        "manual_retry_count": 0,
+        "retry_allowed": True,
+    }
+    assert retried.status_code == replayed.status_code == 202
+    assert retried.json()["deduplicated"] is False
+    assert replayed.json()["deduplicated"] is True
+    assert retried.json()["document"]["status"] == "pending"
+    assert retried.json()["document"]["ingestion"]["status"] == "pending"
+    assert retried.json()["document"]["ingestion"]["attempt_count"] == 0
+    assert retried.json()["document"]["ingestion"]["manual_retry_count"] == 1
+    assert conflicted.status_code == 409
+    assert conflicted.json()["detail"]["code"] == "knowledge_retry_already_active"
+    assert len(document_runtime.service.scheduled) == 2
+
+
+def test_permanent_file_failure_and_foreign_document_cannot_be_manually_retried(document_runtime) -> None:
+    _create_scope(document_runtime)
+    now = datetime(2026, 7, 13, 13, 0, tzinfo=UTC)
+    with TestClient(_app(document_runtime)) as alice:
+        accepted = _upload(alice).json()["document"]
+
+    async def fail_job() -> None:
+        claim = await document_runtime.document_repo.claim_job(
+            job_id=accepted["ingestion_job_id"],
+            now=now,
+            lease_owner="router-test",
+            lease_duration=timedelta(minutes=1),
+        )
+        assert claim is not None
+        await document_runtime.document_repo.record_job_failure(
+            job_id=accepted["ingestion_job_id"],
+            lease_owner="router-test",
+            attempt_count=1,
+            now=now,
+            error_code="knowledge_file_unavailable",
+            error_message="已接收的原文件当前不可用。",
+            retryable=False,
+            base_delay=timedelta(seconds=5),
+            max_delay=timedelta(minutes=1),
+        )
+
+    anyio.run(fail_job)
+    with TestClient(_app(document_runtime)) as alice:
+        rejected = alice.post(
+            f"/api/knowledge/documents/{accepted['id']}/retry",
+            headers={"Idempotency-Key": "retry-permanent"},
+        )
+    with TestClient(_app(document_runtime, user_id=BOB_ID)) as bob:
+        invisible = bob.post(
+            f"/api/knowledge/documents/{accepted['id']}/retry",
+            headers={"Idempotency-Key": "retry-foreign"},
+        )
+
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "knowledge_retry_not_allowed"
+    assert invisible.status_code == 404
+
+
 def test_scope_stats_are_derived_from_persisted_document_states(document_runtime) -> None:
     _create_scope(document_runtime)
     with TestClient(_app(document_runtime)) as client:
@@ -384,3 +507,10 @@ def test_document_routes_require_knowledge_permissions(document_runtime) -> None
     with TestClient(app) as client:
         assert client.get("/api/knowledge/documents").status_code == 403
         assert _upload(client).status_code == 403
+        assert (
+            client.post(
+                "/api/knowledge/documents/missing/retry",
+                headers={"Idempotency-Key": "retry"},
+            ).status_code
+            == 403
+        )

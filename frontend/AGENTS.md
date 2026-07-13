@@ -79,12 +79,19 @@ remain available through the compact header badge; creation of the default
 enabled Scope remains gated on `ready`. When the Scope exists,
 `core/knowledge` also owns the strict `GET/POST /api/knowledge/documents`
 contract. The page uploads one supported file with a stable `Idempotency-Key`,
-upserts the accepted document into the cache, and polls only while any document
-is `pending` or `indexing`; `ready` and `failed` are terminal and stop polling.
+upserts the accepted document into the cache, and polls while the document or
+its ingestion job is active (`pending`, `indexing`, `leased`, or `retry_wait`);
+`ready` and non-retryable `failed` states stop polling.
 Document queries consume TanStack Query's abort signal so route changes and
 unmounts cancel in-flight refreshes. Upload controls remain disabled whenever the
 feature, Scope, or LightRAG data plane is unavailable, while the server-backed
-list remains readable for refresh recovery and failure diagnosis.
+list remains readable for refresh recovery and failure diagnosis. Rows and the
+detail pane expose sanitized failure type, attempt counters, last-attempt and
+next-retry times, and stable error text. Eligible failed jobs expose a guarded
+manual-retry mutation; its per-document idempotency key survives request failure,
+duplicate clicks are suppressed, and success updates the cache so polling resumes.
+The Gateway retains every accepted retry key in a durable per-job ledger, so an
+older network replay remains deduplicated after subsequent manual retry rounds.
 
 The page (`src/app/workspace/knowledge/`) is laid out as a workbench: a header
 `knowledge-status` LightRAG badge, an overview bar (Scope name + total / ready /

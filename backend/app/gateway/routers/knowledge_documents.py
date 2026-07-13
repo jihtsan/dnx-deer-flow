@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -20,7 +21,7 @@ from app.gateway.deps import (
     get_knowledge_scope_repo,
 )
 from app.gateway.routers.features import get_lightrag_client, resolve_knowledge_base_feature
-from app.knowledge.ingestion import KnowledgeIngestionService
+from app.knowledge.ingestion import MANUALLY_RETRYABLE_ERROR_CODES, KnowledgeIngestionService
 from app.knowledge.lightrag import LightRAGClient
 from app.knowledge.storage import (
     KnowledgeFileStore,
@@ -36,6 +37,8 @@ from deerflow.persistence.knowledge_documents import (
     KnowledgeDocumentQuotaExceededError,
     KnowledgeDocumentRepository,
     KnowledgeIdempotencyConflictError,
+    KnowledgeJobRetryConflictError,
+    KnowledgeJobRetryNotAllowedError,
 )
 from deerflow.persistence.knowledge_scope import KnowledgeScopeRepository
 
@@ -60,6 +63,19 @@ class KnowledgeDocumentResponse(BaseModel):
     created_at: str
     updated_at: str
     completed_at: str | None
+    ingestion: KnowledgeIngestionDiagnostics
+
+
+class KnowledgeIngestionDiagnostics(BaseModel):
+    status: Literal["pending", "leased", "retry_wait", "succeeded", "dead", "cancelled"]
+    attempt_count: int
+    max_attempts: int
+    last_attempt_at: str | None
+    next_attempt_at: str | None
+    last_error_code: str | None
+    last_error_message: str | None
+    manual_retry_count: int
+    retry_allowed: bool
 
 
 class KnowledgeDocumentsEnvelope(BaseModel):
@@ -78,7 +94,7 @@ def _user_id(request: Request) -> str:
     return str(auth.user.id)
 
 
-def _document_response(document: dict[str, Any]) -> KnowledgeDocumentResponse:
+def _document_response(document: dict[str, Any], job: dict[str, Any]) -> KnowledgeDocumentResponse:
     return KnowledgeDocumentResponse(
         id=document["id"],
         original_filename=document["original_filename"],
@@ -92,6 +108,17 @@ def _document_response(document: dict[str, Any]) -> KnowledgeDocumentResponse:
         created_at=document["created_at"],
         updated_at=document["updated_at"],
         completed_at=document["completed_at"],
+        ingestion=KnowledgeIngestionDiagnostics(
+            status=job["status"],
+            attempt_count=job["attempt_count"],
+            max_attempts=job["max_attempts"],
+            last_attempt_at=job["last_attempt_at"],
+            next_attempt_at=job["next_attempt_at"],
+            last_error_code=job["last_error_code"],
+            last_error_message=job["last_error_message"],
+            manual_retry_count=job["manual_retry_count"],
+            retry_allowed=(job["status"] == "dead" and job["last_error_code"] in MANUALLY_RETRYABLE_ERROR_CODES),
+        ),
     )
 
 
@@ -108,8 +135,70 @@ async def list_knowledge_documents(
     request: Request,
     repo: KnowledgeDocumentRepository = Depends(get_knowledge_document_repo),
 ) -> KnowledgeDocumentsEnvelope:
-    documents = await repo.list_for_user(_user_id(request))
-    return KnowledgeDocumentsEnvelope(documents=[_document_response(document) for document in documents])
+    states = await repo.list_ingestion_states_for_user(_user_id(request))
+    return KnowledgeDocumentsEnvelope(documents=[_document_response(state.document, state.job) for state in states])
+
+
+@router.post(
+    "/{document_id}/retry",
+    response_model=KnowledgeDocumentAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@require_permission("knowledge", "write")
+async def retry_knowledge_document(
+    document_id: str,
+    request: Request,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    config: AppConfig = Depends(get_config),
+    lightrag_client: LightRAGClient | None = Depends(get_lightrag_client),
+    scope_repo: KnowledgeScopeRepository = Depends(get_knowledge_scope_repo),
+    document_repo: KnowledgeDocumentRepository = Depends(get_knowledge_document_repo),
+    ingestion_service: KnowledgeIngestionService = Depends(get_knowledge_ingestion_service),
+) -> KnowledgeDocumentAccepted:
+    owner_user_id = _user_id(request)
+    state = await document_repo.get_ingestion_state_for_user(
+        document_id=document_id,
+        owner_user_id=owner_user_id,
+    )
+    if state is None:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+    scope = await scope_repo.get_for_user(owner_user_id)
+    if scope is None:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+    if not scope["enabled"]:
+        raise _error(409, "knowledge_scope_disabled", "Knowledge Scope 已禁用。")
+
+    data_plane = await resolve_knowledge_base_feature(config, lightrag_client)
+    if data_plane.status != "ready" or lightrag_client is None:
+        raise _error(503, "knowledge_data_plane_unavailable", data_plane.reason, status=data_plane.status)
+    normalized_key = idempotency_key.strip()
+    if not normalized_key:
+        raise _error(400, "knowledge_invalid_idempotency_key", "Idempotency-Key 不能为空。")
+    try:
+        result = await document_repo.retry_failed_document(
+            document_id=document_id,
+            owner_user_id=owner_user_id,
+            retry_key=normalized_key,
+            now=datetime.now(UTC),
+            allowed_error_codes=MANUALLY_RETRYABLE_ERROR_CODES,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Knowledge document not found") from exc
+    except KnowledgeJobRetryNotAllowedError as exc:
+        raise _error(409, "knowledge_retry_not_allowed", "该任务当前不允许人工重试。") from exc
+    except KnowledgeJobRetryConflictError as exc:
+        raise _error(409, "knowledge_retry_already_active", "该文档已有进行中的入库任务。") from exc
+
+    if result.activated:
+        ingestion_service.schedule(
+            job_id=result.job["id"],
+            document=result.document,
+            lightrag_client=lightrag_client,
+        )
+    return KnowledgeDocumentAccepted(
+        document=_document_response(result.document, result.job),
+        deduplicated=not result.activated,
+    )
 
 
 @router.post(
@@ -188,7 +277,7 @@ async def upload_knowledge_document(
                 "该 Idempotency-Key 已用于不同文件。",
             )
         return KnowledgeDocumentAccepted(
-            document=_document_response(existing.document),
+            document=_document_response(existing.document, existing.job),
             deduplicated=True,
         )
 
@@ -264,6 +353,6 @@ async def upload_knowledge_document(
             lightrag_client=lightrag_client,
         )
     return KnowledgeDocumentAccepted(
-        document=_document_response(result.document),
+        document=_document_response(result.document, result.job),
         deduplicated=not result.created,
     )

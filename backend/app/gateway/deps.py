@@ -268,6 +268,7 @@ async def langgraph_runtime(app: FastAPI, startup_config: AppConfig) -> AsyncGen
         app.state.thread_store = make_thread_store(sf, app.state.store)
         if sf is not None:
             from app.knowledge.ingestion import KnowledgeIngestionService
+            from app.knowledge.lightrag import LightRAGClient
             from app.knowledge.storage import KnowledgeFileStore
             from deerflow.config.runtime_paths import runtime_home
             from deerflow.persistence.knowledge_documents import KnowledgeDocumentRepository
@@ -282,10 +283,29 @@ async def langgraph_runtime(app: FastAPI, startup_config: AppConfig) -> AsyncGen
             app.state.knowledge_scope_repo = KnowledgeScopeRepository(sf)
             app.state.knowledge_document_repo = KnowledgeDocumentRepository(sf)
             app.state.knowledge_file_store = KnowledgeFileStore(runtime_home() / "knowledge")
+            knowledge_config = getattr(config, "knowledge_base", None)
+            lightrag_config = getattr(knowledge_config, "lightrag", None)
+            startup_lightrag_client = LightRAGClient(lightrag_config) if getattr(knowledge_config, "enabled", False) and getattr(lightrag_config, "base_url", None) else None
+
+            async def current_lightrag_client() -> LightRAGClient | None:
+                current_config = await asyncio.to_thread(get_app_config)
+                current_knowledge_config = getattr(current_config, "knowledge_base", None)
+                current_lightrag_config = getattr(current_knowledge_config, "lightrag", None)
+                if not getattr(current_knowledge_config, "enabled", False) or not getattr(
+                    current_lightrag_config,
+                    "base_url",
+                    None,
+                ):
+                    return None
+                return LightRAGClient(current_lightrag_config)
+
             app.state.knowledge_ingestion_service = KnowledgeIngestionService(
                 repo=app.state.knowledge_document_repo,
                 file_store=app.state.knowledge_file_store,
+                lightrag_client=startup_lightrag_client,
+                lightrag_client_provider=current_lightrag_client,
             )
+            app.state.knowledge_ingestion_service.start()
         else:
             app.state.scheduled_task_repo = None
             app.state.scheduled_task_run_repo = None

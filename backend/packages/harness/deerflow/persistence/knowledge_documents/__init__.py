@@ -1,9 +1,17 @@
-from deerflow.persistence.knowledge_documents.model import KnowledgeDocumentRow, KnowledgeIngestionJobRow
+from deerflow.persistence.knowledge_documents.model import (
+    KnowledgeDocumentRow,
+    KnowledgeIngestionJobRow,
+    KnowledgeIngestionRetryRequestRow,
+)
 from deerflow.persistence.knowledge_documents.sql import (
     KnowledgeDocumentCreateResult,
     KnowledgeDocumentQuotaExceededError,
     KnowledgeDocumentRepository,
     KnowledgeIdempotencyConflictError,
+    KnowledgeIngestionClaim,
+    KnowledgeJobRetryConflictError,
+    KnowledgeJobRetryNotAllowedError,
+    KnowledgeManualRetryResult,
 )
 
 __all__ = [
@@ -12,5 +20,10 @@ __all__ = [
     "KnowledgeDocumentQuotaExceededError",
     "KnowledgeDocumentRow",
     "KnowledgeIdempotencyConflictError",
+    "KnowledgeIngestionClaim",
     "KnowledgeIngestionJobRow",
+    "KnowledgeIngestionRetryRequestRow",
+    "KnowledgeJobRetryConflictError",
+    "KnowledgeJobRetryNotAllowedError",
+    "KnowledgeManualRetryResult",
 ]

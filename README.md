@@ -805,12 +805,22 @@ The same page accepts `.txt`, `.md`, `.pdf`, `.docx`, `.pptx`, and `.xlsx`
 documents. Uploads use `POST /api/knowledge/documents` with a stable
 `Idempotency-Key`; DeerFlow safely persists the original file and atomically
 creates its document plus ingestion job before returning `202`, so the browser
-does not wait for indexing. The page polls `GET /api/knowledge/documents` only
-while a document is `pending` or `indexing`, stops at `ready` or `failed`, and
-restores server state after a refresh. Fixed safety limits are 25 MiB per file
-and 1 GiB across the singleton Scope. Only `ready` documents are eligible for
-later retrieval; this release does not add preview, download, deletion, retry,
-or agent retrieval controls.
+does not wait for indexing. A SQL-backed worker atomically claims jobs with a
+bounded lease, automatically retries transient failures with capped exponential
+backoff, and recovers pending, due-retry, or expired-lease work after a Gateway
+restart. It resolves hot-reloaded LightRAG configuration per attempt, leaves
+work unclaimed while no usable client exists, and uses bounded in-process
+concurrency plus a tracking-poll cap so one remote document cannot starve the
+queue. The page polls `GET /api/knowledge/documents` while a document is active
+or waiting to retry, displays sanitized attempts and failure diagnostics, and
+restores server state after a refresh. Eligible terminal failures can be retried
+through `POST /api/knowledge/documents/{document_id}/retry`; duplicate clicks and
+network replays are deduplicated by a durable per-job retry-key ledger and
+reactivate the existing job at most once rather than creating another one. Fixed
+safety limits are 25 MiB per file and 1 GiB
+across the singleton Scope. Only `ready` documents are eligible for later
+retrieval; this release does not add preview, download, deletion, or agent
+retrieval controls.
 
 This integration targets LightRAG tag `v1.5.2-4-gab86f430` at commit
 `ab86f4303aafb2e66543ce3e0c735e8b698141ab`. Start one LightRAG service with a
@@ -829,7 +839,10 @@ Keep `LIGHTRAG_API_KEY` in `.env` or the process environment. DeerFlow uses
 LightRAG's health, upload, tracking, structured `/query/data`, and delete
 interfaces; it deliberately does not send the `LIGHTRAG-WORKSPACE` header or
 consume LightRAG's generated final answer. Workspace selection belongs to the
-LightRAG startup command, not to browser users.
+LightRAG startup command, not to browser users. LightRAG does not expose an
+upload idempotency-key guarantee: DeerFlow uses a stable server-generated remote
+filename and exact document-list reconciliation after interrupted uploads. This
+provides recoverable at-least-once execution, not remote exactly-once semantics.
 
 ## Scheduled Tasks
 

@@ -61,6 +61,25 @@ function document(
     updated_at: "2026-07-13T01:01:00Z",
     completed_at:
       status === "ready" || status === "failed" ? "2026-07-13T01:01:00Z" : null,
+    ingestion: {
+      status:
+        status === "ready"
+          ? "succeeded"
+          : status === "failed"
+            ? "dead"
+            : status === "indexing"
+              ? "leased"
+              : "pending",
+      attempt_count: status === "pending" ? 0 : 1,
+      max_attempts: 5,
+      last_attempt_at: status === "pending" ? null : "2026-07-13T01:01:00Z",
+      next_attempt_at: status === "pending" ? "2026-07-13T01:00:00Z" : null,
+      last_error_code: status === "failed" ? "lightrag_timeout" : null,
+      last_error_message:
+        status === "failed" ? "The knowledge service timed out." : null,
+      manual_retry_count: 0,
+      retry_allowed: status === "failed",
+    },
     ...overrides,
   };
 }
@@ -85,10 +104,15 @@ async function mockScope(
   );
 }
 
+async function mockWorkspaceAPI(page: Page) {
+  mockLangGraphAPI(page);
+  await page.waitForTimeout(0);
+}
+
 test("selects and uploads a document once, then shows tracking information", async ({
   page,
 }) => {
-  mockLangGraphAPI(page);
+  await mockWorkspaceAPI(page);
   await mockScope(page);
   let uploadRequests = 0;
   let idempotencyKey = "";
@@ -133,7 +157,7 @@ test("selects and uploads a document once, then shows tracking information", asy
 test("reuses the idempotency key when a failed upload is retried", async ({
   page,
 }) => {
-  mockLangGraphAPI(page);
+  await mockWorkspaceAPI(page);
   await mockScope(page);
   const idempotencyKeys: string[] = [];
   let uploadAttempts = 0;
@@ -178,17 +202,13 @@ test("reuses the idempotency key when a failed upload is retried", async ({
 test("polls pending and indexing documents, stops at ready, and restores after refresh", async ({
   page,
 }) => {
-  mockLangGraphAPI(page);
+  await mockWorkspaceAPI(page);
   await mockScope(page);
   let listRequests = 0;
   await page.route("**/api/knowledge/documents", (route) => {
     listRequests += 1;
     const status: DocumentStatus =
-      listRequests === 1
-        ? "pending"
-        : listRequests === 2
-          ? "indexing"
-          : "ready";
+      listRequests <= 2 ? "pending" : listRequests <= 4 ? "indexing" : "ready";
     return fulfill(route, { documents: [document(status)] });
   });
 
@@ -214,7 +234,7 @@ test("polls pending and indexing documents, stops at ready, and restores after r
 });
 
 test("shows a failed reason and stops polling", async ({ page }) => {
-  mockLangGraphAPI(page);
+  await mockWorkspaceAPI(page);
   await mockScope(page);
   let listRequests = 0;
   await page.route("**/api/knowledge/documents", (route) => {
@@ -226,19 +246,177 @@ test("shows a failed reason and stops polling", async ({ page }) => {
 
   await page.goto("/workspace/knowledge");
   await expect(
-    page.getByText("The document could not be indexed."),
-  ).toBeVisible({
-    timeout: 8_000,
-  });
+    page
+      .getByTestId("knowledge-document-doc-stable")
+      .getByText("The knowledge service timed out."),
+  ).toBeVisible({ timeout: 8_000 });
   const terminalRequestCount = listRequests;
   await page.waitForTimeout(2_500);
   expect(listRequests).toBe(terminalRequestCount);
 });
 
+test("shows retry_wait diagnostics and the next automatic retry time", async ({
+  page,
+}) => {
+  await mockWorkspaceAPI(page);
+  await mockScope(page);
+  const retrying = document("pending", {
+    ingestion: {
+      ...document("pending").ingestion,
+      status: "retry_wait",
+      attempt_count: 2,
+      last_attempt_at: "2026-07-13T01:02:00Z",
+      next_attempt_at: "2026-07-13T01:05:00Z",
+      last_error_code: "lightrag_rate_limited",
+      last_error_message: "The knowledge service is rate limited.",
+    },
+  });
+  await page.route("**/api/knowledge/documents", (route) =>
+    fulfill(route, { documents: [retrying] }),
+  );
+
+  await page.goto("/workspace/knowledge");
+  await expect(
+    page.getByTestId("knowledge-document-status-doc-stable"),
+  ).toHaveText("Waiting to retry");
+  await expect(
+    page.getByTestId("knowledge-document-row-diagnostics-doc-stable"),
+  ).toContainText("lightrag_rate_limited");
+  await expect(
+    page.getByTestId("knowledge-document-row-diagnostics-doc-stable"),
+  ).toContainText("The knowledge service is rate limited.");
+  await expect(page.getByTestId("knowledge-document-attempts")).toHaveText(
+    "2/5",
+  );
+  await expect(
+    page.getByTestId("knowledge-document-next-retry"),
+  ).not.toHaveText("Not available");
+  await expect(page.getByTestId("knowledge-document-retry-wait")).toBeVisible();
+});
+
+test("guards duplicate manual retries, resumes polling, and restores ready after refresh", async ({
+  page,
+}) => {
+  await mockWorkspaceAPI(page);
+  await mockScope(page);
+  let retryRequests = 0;
+  let active = false;
+  let ready = false;
+  let retryKey = "";
+  await page.route("**/api/knowledge/documents**", async (route) => {
+    const request = route.request();
+    if (request.url().endsWith("/retry")) {
+      retryRequests += 1;
+      retryKey = request.headers()["idempotency-key"] ?? "";
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      active = true;
+      return fulfill(
+        route,
+        {
+          document: document("pending", {
+            ingestion: {
+              ...document("pending").ingestion,
+              manual_retry_count: 1,
+            },
+          }),
+          deduplicated: false,
+        },
+        202,
+      );
+    }
+    if (active && !ready) {
+      ready = true;
+      return fulfill(route, {
+        documents: [
+          document("indexing", {
+            ingestion: {
+              ...document("indexing").ingestion,
+              attempt_count: 1,
+              manual_retry_count: 1,
+            },
+          }),
+        ],
+      });
+    }
+    return fulfill(route, {
+      documents: [
+        ready
+          ? document("ready", {
+              ingestion: {
+                ...document("ready").ingestion,
+                manual_retry_count: 1,
+              },
+            })
+          : document("failed"),
+      ],
+    });
+  });
+
+  await page.goto("/workspace/knowledge");
+  const retry = page.getByTestId("knowledge-document-retry-doc-stable");
+  await retry.dispatchEvent("click");
+  await retry.dispatchEvent("click");
+  await expect(retry).toBeDisabled();
+  await expect(retry).toHaveText("Retrying…");
+  await expect(
+    page.getByTestId("knowledge-document-status-doc-stable"),
+  ).toHaveText("Ready", { timeout: 8_000 });
+  expect(retryRequests).toBe(1);
+  expect(retryKey).not.toBe("");
+
+  await page.reload();
+  await expect(
+    page.getByTestId("knowledge-document-status-doc-stable"),
+  ).toHaveText("Ready");
+});
+
+test("reuses the manual retry idempotency key after a network failure", async ({
+  page,
+}) => {
+  await mockWorkspaceAPI(page);
+  await mockScope(page);
+  const retryKeys: string[] = [];
+  let retryRequests = 0;
+  await page.route("**/api/knowledge/documents**", (route) => {
+    if (!route.request().url().endsWith("/retry")) {
+      return fulfill(route, {
+        documents: [document(retryRequests >= 2 ? "pending" : "failed")],
+      });
+    }
+    retryRequests += 1;
+    retryKeys.push(route.request().headers()["idempotency-key"] ?? "");
+    if (retryRequests === 1) {
+      return fulfill(
+        route,
+        { detail: { code: "temporarily_unavailable", message: "Try again." } },
+        503,
+      );
+    }
+    return fulfill(
+      route,
+      { document: document("pending"), deduplicated: true },
+      202,
+    );
+  });
+
+  await page.goto("/workspace/knowledge");
+  const retry = page.getByTestId("knowledge-document-retry-doc-stable");
+  await retry.click();
+  await expect(
+    page.getByTestId("knowledge-document-retry-error"),
+  ).toContainText("Try again.");
+  await retry.click();
+  await expect(retry).toBeHidden();
+
+  expect(retryRequests).toBe(2);
+  expect(retryKeys[0]).not.toBe("");
+  expect(retryKeys[1]).toBe(retryKeys[0]);
+});
+
 test("stops active document polling when the page unmounts", async ({
   page,
 }) => {
-  mockLangGraphAPI(page);
+  await mockWorkspaceAPI(page);
   await mockScope(page);
   let listRequests = 0;
   await page.route("**/api/knowledge/documents", (route) => {
@@ -276,7 +454,7 @@ for (const scenario of [
   },
 ]) {
   test(`disables upload when ${scenario.name}`, async ({ page }) => {
-    mockLangGraphAPI(page);
+    await mockWorkspaceAPI(page);
     await mockScope(page, {
       enabled: scenario.enabled,
       status: scenario.status,
@@ -296,13 +474,13 @@ for (const scenario of [
 test("shows document loading, error, retry, and empty states", async ({
   page,
 }) => {
-  mockLangGraphAPI(page);
+  await mockWorkspaceAPI(page);
   await mockScope(page);
   let listRequests = 0;
   await page.route("**/api/knowledge/documents", async (route) => {
     listRequests += 1;
-    if (listRequests === 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
+    if (listRequests <= 2) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
       return fulfill(
         route,
         { detail: { code: "temporarily_unavailable", message: "Try again." } },
@@ -323,9 +501,9 @@ test("shows document loading, error, retry, and empty states", async ({
 
 test("renders the document workflow in Chinese", async ({ page, context }) => {
   await context.addCookies([
-    { name: "locale", value: "zh-CN", url: "http://localhost:3000" },
+    { name: "locale", value: "zh-CN", domain: "localhost", path: "/" },
   ]);
-  mockLangGraphAPI(page);
+  await mockWorkspaceAPI(page);
   await mockScope(page);
   await page.route("**/api/knowledge/documents", (route) =>
     fulfill(route, { documents: [document("pending")] }),
