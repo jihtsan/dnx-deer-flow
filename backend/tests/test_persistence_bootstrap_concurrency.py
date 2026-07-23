@@ -28,7 +28,7 @@ from deerflow.persistence.bootstrap import bootstrap_schema
 pytestmark = pytest.mark.asyncio
 
 
-HEAD = "0006_reliable_knowledge_ingestion"
+HEAD = "0007_merge_knowledge_and_agents"
 
 
 def _url(tmp_path: Path) -> str:

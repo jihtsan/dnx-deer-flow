@@ -1,6 +1,7 @@
 from . import (
     artifacts,
     assistants_compat,
+    browser,
     input_polish,
     knowledge_documents,
     mcp,
@@ -16,6 +17,7 @@ from . import (
 __all__ = [
     "artifacts",
     "assistants_compat",
+    "browser",
     "input_polish",
     "knowledge_documents",
     "mcp",

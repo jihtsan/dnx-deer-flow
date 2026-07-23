@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -16,14 +17,18 @@ from app.knowledge.lightrag import (
 def _app_with_config(
     *,
     agents_api_enabled: bool,
+    browser_enabled: bool = False,
+    browser_extra: dict | None = None,
     knowledge_base_enabled: bool = False,
     lightrag_base_url: str | None = None,
     lightrag_client: object | None = None,
 ) -> FastAPI:
     app = FastAPI()
     app.include_router(features.router)
+    tools = [SimpleNamespace(name="browser_navigate", model_extra=browser_extra or {})] if browser_enabled else []
     fake_config = SimpleNamespace(
         agents_api=SimpleNamespace(enabled=agents_api_enabled),
+        tools=tools,
         knowledge_base=SimpleNamespace(
             enabled=knowledge_base_enabled,
             lightrag=SimpleNamespace(base_url=lightrag_base_url),
@@ -41,6 +46,7 @@ def test_features_reports_agents_api_enabled() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "agents_api": {"enabled": True},
+        "browser_control": {"enabled": False},
         "knowledge_base": {
             "enabled": False,
             "status": "disabled",
@@ -64,6 +70,7 @@ def test_features_reports_agents_api_disabled() -> None:
         response = client.get("/api/features")
     assert response.status_code == 200
     assert response.json()["agents_api"] == {"enabled": False}
+    assert response.json()["browser_control"] == {"enabled": False}
     assert response.json()["knowledge_base"]["status"] == "disabled"
 
 
@@ -217,3 +224,39 @@ def test_features_reports_version_mismatch_as_incompatible() -> None:
     assert knowledge["status"] == "incompatible"
     assert knowledge["diagnostics"]["observed_core_version"] == "1.6.0"
     assert knowledge["diagnostics"]["observed_api_version"] == "0400"
+
+
+def test_features_reports_browser_control_enabled_when_configured_and_runtime_available() -> None:
+    with (
+        patch("app.gateway.browser_capability.importlib.util.find_spec", return_value=object()),
+        TestClient(_app_with_config(agents_api_enabled=True, browser_enabled=True)) as client,
+    ):
+        response = client.get("/api/features")
+    assert response.status_code == 200
+    assert response.json()["browser_control"] == {"enabled": True}
+
+
+def test_features_reports_browser_control_disabled_when_runtime_missing() -> None:
+    with (
+        patch("app.gateway.browser_capability.importlib.util.find_spec", return_value=None),
+        TestClient(_app_with_config(agents_api_enabled=True, browser_enabled=True)) as client,
+    ):
+        response = client.get("/api/features")
+    assert response.status_code == 200
+    assert response.json()["browser_control"] == {"enabled": False}
+
+
+def test_features_reports_browser_control_disabled_for_unguarded_cdp() -> None:
+    with (
+        patch("app.gateway.browser_capability.importlib.util.find_spec", return_value=object()),
+        TestClient(
+            _app_with_config(
+                agents_api_enabled=True,
+                browser_enabled=True,
+                browser_extra={"cdp_url": "http://127.0.0.1:9222"},
+            ),
+        ) as client,
+    ):
+        response = client.get("/api/features")
+    assert response.status_code == 200
+    assert response.json()["browser_control"] == {"enabled": False}

@@ -31,7 +31,10 @@ import {
   upsertFeedback,
   type FeedbackData,
 } from "@/core/api/feedback";
-import { resolveArtifactURL } from "@/core/artifacts/utils";
+import {
+  resolveArtifactURL,
+  resolveMessageImageURL,
+} from "@/core/artifacts/utils";
 import { extractCitationSources } from "@/core/citations/sources";
 import { useI18n } from "@/core/i18n/hooks";
 import {
@@ -42,7 +45,6 @@ import {
   stripUploadedFilesTag,
   type FileInMessage,
 } from "@/core/messages/utils";
-import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { readReferenceMessageContexts } from "@/core/sidecar";
 import {
   parseSlashSkillReference,
@@ -135,6 +137,7 @@ export function MessageListItem({
   feedback,
   runId,
   threadId,
+  artifactPaths = [],
   showCopyButton = true,
   turnStartTime,
 }: {
@@ -142,6 +145,7 @@ export function MessageListItem({
   message: Message;
   isLoading?: boolean;
   threadId: string;
+  artifactPaths?: readonly string[];
   feedback?: FeedbackData | null;
   runId?: string;
   showCopyButton?: boolean;
@@ -158,6 +162,7 @@ export function MessageListItem({
         message={message}
         isLoading={isLoading}
         threadId={threadId}
+        artifactPaths={artifactPaths}
         runId={runId}
         turnStartTime={turnStartTime}
       />
@@ -193,10 +198,12 @@ function MessageImage({
   src,
   alt,
   threadId,
+  artifactPaths,
   maxWidth = "90%",
   ...props
 }: React.ImgHTMLAttributes<HTMLImageElement> & {
   threadId: string;
+  artifactPaths: readonly string[];
   maxWidth?: string;
 }) {
   if (!src) return null;
@@ -204,14 +211,30 @@ function MessageImage({
   const imgClassName = cn("overflow-hidden rounded-lg", `max-w-[${maxWidth}]`);
 
   if (typeof src !== "string") {
-    return <img className={imgClassName} src={src} alt={alt} {...props} />;
+    return (
+      <img
+        className={imgClassName}
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        {...props}
+      />
+    );
   }
 
-  const url = src.startsWith("/mnt/") ? resolveArtifactURL(src, threadId) : src;
+  const url = resolveMessageImageURL(src, threadId, artifactPaths);
 
   return (
     <a href={url} target="_blank" rel="noopener noreferrer">
-      <img className={imgClassName} src={url} alt={alt} {...props} />
+      <img
+        className={imgClassName}
+        src={url}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        {...props}
+      />
     </a>
   );
 }
@@ -259,6 +282,7 @@ function MessageContent_({
   message,
   isLoading = false,
   threadId,
+  artifactPaths,
   runId,
   turnStartTime,
 }: {
@@ -266,10 +290,10 @@ function MessageContent_({
   message: Message;
   isLoading?: boolean;
   threadId: string;
+  artifactPaths: readonly string[];
   runId?: string;
   turnStartTime?: number | null;
 }) {
-  const rehypePlugins = useRehypeSplitWordsIntoSpans(isLoading);
   const isHuman = message.type === "human";
   const rawTurnDuration = message.additional_kwargs?.turn_duration as
     | number
@@ -317,11 +341,16 @@ function MessageContent_({
   const components = useMemo(
     () => ({
       img: (props: ImgHTMLAttributes<HTMLImageElement>) => (
-        <MessageImage {...props} threadId={threadId} maxWidth="90%" />
+        <MessageImage
+          {...props}
+          threadId={threadId}
+          artifactPaths={artifactPaths}
+          maxWidth="90%"
+        />
       ),
       a: createMarkdownLinkComponent(threadId),
     }),
-    [threadId],
+    [artifactPaths, threadId],
   );
 
   const rawContent = extractContentFromMessage(message);
@@ -447,7 +476,6 @@ function MessageContent_({
       <MarkdownContent
         content={contentToDisplay}
         isLoading={isLoading}
-        rehypePlugins={rehypePlugins}
         className="my-3"
         components={components}
       />
@@ -596,6 +624,8 @@ function RichFileCard({
         <img
           src={fileUrl}
           alt={file.filename}
+          loading="lazy"
+          decoding="async"
           className="h-32 w-auto max-w-60 object-cover transition-transform group-hover:scale-105"
         />
       </a>

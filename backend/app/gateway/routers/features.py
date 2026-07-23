@@ -11,6 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from app.gateway.browser_capability import browser_capability
 from app.gateway.deps import get_config
 from app.knowledge.lightrag import (
     LightRAGAuthenticationError,
@@ -57,11 +58,18 @@ class KnowledgeBaseFeature(BaseModel):
     diagnostics: KnowledgeBaseDiagnostics = Field(default_factory=KnowledgeBaseDiagnostics)
 
 
+class BrowserControlFeature(BaseModel):
+    """Availability of live agentic browser control."""
+
+    enabled: bool = Field(..., description="Whether the live browser routes and UI are available")
+
+
 class FeaturesResponse(BaseModel):
     """Frontend-facing feature availability flags."""
 
     agents_api: AgentsApiFeature
     knowledge_base: KnowledgeBaseFeature
+    browser_control: BrowserControlFeature
 
 
 def get_lightrag_client(config: AppConfig = Depends(get_config)) -> LightRAGClient | None:
@@ -100,9 +108,11 @@ async def list_features(
 ) -> FeaturesResponse:
     """Return availability of optional, config-gated frontend features."""
     knowledge_base = await resolve_knowledge_base_feature(config, lightrag_client)
+    browser = browser_capability(config)
     return FeaturesResponse(
         agents_api=AgentsApiFeature(enabled=config.agents_api.enabled),
         knowledge_base=knowledge_base,
+        browser_control=BrowserControlFeature(enabled=browser.available),
     )
 
 
