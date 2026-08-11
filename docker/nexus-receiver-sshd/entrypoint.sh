@@ -14,7 +14,8 @@ PYTHONPATH=. uv run --no-sync python -c \
   'from deerflow.config.app_config import get_app_config; assert get_app_config().nexus_receiver.enabled, "nexus_receiver.enabled is false"'
 PYTHONPATH=. uv run --no-sync python -m app.gateway.nexus_receiver.sshd_authorized_keys \
   --principal-map /run/secrets/nexus_receiver_principal_map \
-  --output /run/nexus-receiver/authorized_keys
+  --output /run/nexus-receiver/authorized_keys \
+  --forced-command-profile "${NEXUS_RECEIVER_FORCED_COMMAND_PROFILE:-release}"
 grep -q '^restrict,command=' /run/nexus-receiver/authorized_keys
 
 exec /usr/sbin/sshd -D -e -f /etc/ssh/nexus-receiver-sshd_config

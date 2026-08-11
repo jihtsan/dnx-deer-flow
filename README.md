@@ -1152,6 +1152,19 @@ and native `GLOBAL` support remain release gates. Nexus
 must not fall back to `/api/skills`, and browser clients must continue to call
 the Nexus public API instead of this service-to-service boundary.
 
+An independent acceptance-only profile is available for the frozen Skill Hub
+P0 USER rehearsal fixture. It must be layered explicitly with
+`docker/docker-compose.nexus-receiver-acceptance.yaml`, pins the reviewed Nexus
+preparation manifest and DeerFlow receiver revisions, and requires an isolated
+PostgreSQL database plus synthetic three-user directory and principal-map
+Secret. The profile uses the real SQL operation store, durable package staging,
+native USER installer/activation, and one-shot deterministic fault controls.
+It is disabled unless `DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED=true`; its
+HTTP authenticator always denies, and it neither enables production writes nor
+adds `GLOBAL`, upgrade, or delete behavior. See
+[`backend/docs/NEXUS_RECEIVER_ACCEPTANCE.md`](backend/docs/NEXUS_RECEIVER_ACCEPTANCE.md)
+for readiness-only validation.
+
 ## Embedded Python Client
 
 DeerFlow can be used as an embedded Python library without running the full HTTP services. The `DeerFlowClient` provides direct in-process access to all agent and Gateway capabilities, returning the same response schemas as the HTTP Gateway API. The HTTP Gateway also exposes `DELETE /api/threads/{thread_id}` to remove DeerFlow-managed local thread data after the LangGraph thread itself has been deleted:
