@@ -166,6 +166,7 @@ def test_capabilities_are_dimensioned_and_strictly_default_deny() -> None:
     assert response.headers["X-Correlation-ID"] == CORRELATION_ID
     payload = response.json()
     assert payload["contractVersion"] == "1.0.0"
+    assert payload["transportProfile"] == "http_v1"
     assert payload["connection"] == "healthy"
     assert payload["accessMode"] == "read_only"
     assert payload["freshness"] == "current"
@@ -191,6 +192,16 @@ def test_capabilities_are_dimensioned_and_strictly_default_deny() -> None:
         "TRUST_POLICY_NOT_CONFIGURED",
         "COMPATIBILITY_UNKNOWN",
     } <= set(payload["blockedBy"])
+
+
+@pytest.mark.parametrize("profile", ["unapproved", "ssh_forced_command", "unknown"])
+def test_http_service_principal_rejects_non_http_authentication_profiles(profile: str) -> None:
+    with pytest.raises(ValueError, match="profile is not approved"):
+        ReceiverServicePrincipal(
+            subject="nexus-reader-a",
+            profile=profile,  # type: ignore[arg-type]
+            actions=frozenset({"receiver:capabilities:read"}),
+        )
 
 
 def test_directory_is_unsupported_until_a_reviewed_provider_is_injected() -> None:
