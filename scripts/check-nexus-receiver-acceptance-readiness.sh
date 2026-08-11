@@ -90,6 +90,7 @@ jq -e --arg base "$EXPECTED_BASE_REVISION" --arg runtime "$EXPECTED_RUNTIME_REVI
   .topology.deerFlow.gatewayWorkers == 1 and
   .topology.deerFlow.sshdBindHost == "127.0.0.1" and
   .topology.deerFlow.sshdPort == 38222 and
+  .fixture.ssh.clientIdentitySecretReference == "secret://joint-acceptance/ssh/client-identity" and
   .fixture.ssh.hostKeySecretReference == "secret://joint-acceptance/ssh/host-key" and
   .fixture.ssh.principalMapSecretReference == "secret://joint-acceptance/ssh/principal-map" and
   .fixture.ssh.materialProvisioned == false and
@@ -132,6 +133,7 @@ grep -Fq -- '--workers 1' "$DEER_FLOW_REPO/docker/docker-compose.nexus-receiver-
 grep -Fq 'NEXUS_RECEIVER_FORCED_COMMAND_PROFILE: acceptance' "$DEER_FLOW_REPO/docker/docker-compose.nexus-receiver-acceptance.yaml" || fail "acceptance forced-command profile is missing"
 grep -Fq 'image: postgres:17.5-alpine' "$DEER_FLOW_REPO/docker/docker-compose.nexus-receiver-acceptance.yaml" || fail "acceptance PostgreSQL image is not pinned"
 grep -Fq 'POSTGRES_DB: deerflow_acceptance' "$DEER_FLOW_REPO/docker/docker-compose.nexus-receiver-acceptance.yaml" || fail "acceptance PostgreSQL database is not isolated"
+grep -Fq 'choices=("arm", "clear", "consume", "status")' "$DEER_FLOW_REPO/backend/app/gateway/nexus_receiver/acceptance_control.py" || fail "one-shot external fault consumer is missing"
 
 echo "DEER_FLOW_ACCEPTANCE_HARNESS_READY"
 echo "deer_flow_acceptance_harness_revision=$HEAD_REVISION"
@@ -140,8 +142,8 @@ echo "receiver_runtime_revision=$EXPECTED_RUNTIME_REVISION"
 echo "preparation_revision=$EXPECTED_PREPARATION_REVISION"
 echo "openapi_sha256=$EXPECTED_OPENAPI_SHA256"
 echo "conformance_sha256=$EXPECTED_CONFORMANCE_SHA256"
-echo "sql_operation_store=real"
-echo "native_user_installer=enabled_for_acceptance_profile"
+echo "sql_operation_store=wired_for_acceptance_profile"
+echo "native_user_installer=wired_for_acceptance_profile"
 echo "production_bootstrap_present=false"
 echo "production_write_enabled=false"
 echo "joint_e2e_executed=false"

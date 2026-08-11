@@ -36,7 +36,7 @@ normal user-scoped enabled-state and projection boundary.
 
 ## Fault control
 
-The local container CLI arms one fault atomically and consumes it once:
+The local container CLI arms one fault atomically and each owner consumes it once:
 
 ```bash
 cd backend
@@ -49,8 +49,17 @@ Supported fixture names are `disconnect_after_receiver_accept`,
 `restart_deer_flow_before_activation`,
 `fail_activation_after_atomic_install`, `disable_after_success`, and
 `observation_unavailable`. The Nexus restart is driven by the later Nexus
-harness; Deer Flow records the shared inventory but does not implement that
-external process restart.
+harness; it claims that fault through the same atomic control before restarting
+its own process:
+
+```bash
+cd backend
+PYTHONPATH=. uv run python -m app.gateway.nexus_receiver.acceptance_control \
+  consume restart_nexus_after_outcome_unknown
+```
+
+Deer Flow provides this deterministic bridge but does not implement or trigger
+the external Nexus process restart.
 
 `restart_deer_flow_before_activation` terminates the acceptance process only
 after the native Skill tree is atomically installed disabled and the SQL
@@ -73,6 +82,16 @@ run:
 `DEER_FLOW_ACCEPTANCE_HARNESS_READY` proves only revision, fixture, contract,
 composition, and default-deny readiness. It does not start services or count as
 joint E2E evidence.
+
+The isolated PostgreSQL/native-installer integration test is opt-in and expects
+an ephemeral `deerflow_acceptance` database owned by the matching role:
+
+```bash
+cd backend
+DEERFLOW_NEXUS_RECEIVER_ACCEPTANCE_POSTGRES_URL=postgresql://deerflow_acceptance:<password>@127.0.0.1:<port>/deerflow_acceptance \
+  uv run --extra postgres pytest \
+  tests/test_nexus_receiver_acceptance.py::test_acceptance_composition_uses_isolated_postgres_and_native_user_installer
+```
 
 The later isolated run layers these files explicitly:
 
