@@ -67,7 +67,7 @@ export const enUS: Translations = {
   welcome: {
     greeting: "Hello, again!",
     description:
-      "Welcome to 🦌 DeerFlow, an open source super agent. With built-in and custom skills, DeerFlow helps you search on the web, analyze data, and generate artifacts like slides, web pages and do almost anything.",
+      "Welcome to 电能侠Agent. It handles general agent tasks such as web research, data analysis, and content generation, and can also coordinate energy dispatch, equipment operations, and control for solar-storage-charging stations.",
 
     createYourOwnSkill: "Create Your Own Skill",
     createYourOwnSkillDescription:

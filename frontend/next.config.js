@@ -4,6 +4,22 @@
  */
 import "./src/env.js";
 
+import { hostname, networkInterfaces } from "node:os";
+
+const localDevOrigins = [
+  "localhost",
+  "127.0.0.1",
+  "10.*.*.*",
+  "192.168.*.*",
+  ...Array.from({ length: 16 }, (_, index) => `172.${index + 16}.*.*`),
+  hostname(),
+  ...Object.values(networkInterfaces()).flatMap((addresses) =>
+    (addresses ?? [])
+      .filter((address) => address.family === "IPv4" && !address.internal)
+      .map((address) => address.address),
+  ),
+];
+
 function getInternalServiceURL(envKey, fallbackURL) {
   const configured = process.env[envKey]?.trim();
   return configured && configured.length > 0
@@ -16,6 +32,7 @@ const withNextra = nextra({});
 
 /** @type {import("next").NextConfig} */
 const config = {
+  allowedDevOrigins: [...new Set(localDevOrigins)],
   output:
     process.env.NEXT_CONFIG_BUILD_OUTPUT === "standalone"
       ? "standalone"

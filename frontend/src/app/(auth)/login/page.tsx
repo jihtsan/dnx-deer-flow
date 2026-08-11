@@ -72,7 +72,6 @@ export default function LoginPage() {
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(
     null,
   );
-  const [setupStatusChecked, setSetupStatusChecked] = useState(false);
 
   // Extract error from query params (e.g., ?error=sso_failed)
   const errorParam = searchParams.get("error");
@@ -92,10 +91,7 @@ export default function LoginPage() {
   // Get next parameter for validated redirect
   const nextParam = searchParams.get("next");
   const redirectPath = validateNextParam(nextParam) ?? "/workspace";
-  const regularSignupAllowed = canCreateRegularAccount({
-    checked: setupStatusChecked,
-    status: setupStatus,
-  });
+  const regularSignupAllowed = canCreateRegularAccount(setupStatus);
   const systemNeedsAdminSetup = setupStatus?.needs_setup === true;
 
   // Redirect if already authenticated (client-side, post-login)
@@ -128,11 +124,6 @@ export default function LoginPage() {
       .catch(() => {
         if (!cancelled) {
           setSetupStatus(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSetupStatusChecked(true);
         }
       });
 
@@ -228,7 +219,7 @@ export default function LoginPage() {
       />
       <div className="border-border/20 bg-background/5 w-full max-w-md space-y-6 rounded-3xl border p-8 backdrop-blur-sm">
         <div className="text-center">
-          <h1 className="text-foreground font-serif text-3xl">DeerFlow</h1>
+          <h1 className="text-foreground font-serif text-3xl">电能侠Flow</h1>
           <p className="text-muted-foreground mt-2">
             {isLogin ? t.login.signInTitle : t.login.createAccountTitle}
           </p>
@@ -345,12 +336,6 @@ export default function LoginPage() {
             </button>
           </div>
         )}
-
-        <div className="text-muted-foreground text-center text-xs">
-          <Link href="/" className="hover:underline">
-            {t.login.backToHome}
-          </Link>
-        </div>
       </div>
     </div>
   );

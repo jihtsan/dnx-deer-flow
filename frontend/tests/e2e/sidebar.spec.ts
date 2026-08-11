@@ -12,6 +12,9 @@ test.describe("Sidebar navigation", () => {
 
     // Sidebar uses data-sidebar="menu-button" with asChild rendering on <Link>
     const sidebar = page.locator("[data-sidebar='sidebar']");
+    await expect(sidebar.getByText("电能侠Agent", { exact: true })).toBeVisible(
+      { timeout: 15_000 },
+    );
     await expect(sidebar.locator("a[href='/workspace/chats']")).toBeVisible({
       timeout: 15_000,
     });
@@ -19,6 +22,9 @@ test.describe("Sidebar navigation", () => {
       sidebar.locator("a[href='/workspace/knowledge']"),
     ).toBeVisible();
     await expect(sidebar.locator("a[href='/workspace/agents']")).toBeVisible();
+    await expect(
+      page.getByText(/solar-storage-charging stations/),
+    ).toBeVisible();
   });
 
   test("Agents link navigates to agents page", async ({ page }) => {

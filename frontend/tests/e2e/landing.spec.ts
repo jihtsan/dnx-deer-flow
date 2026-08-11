@@ -1,45 +1,65 @@
 import { expect, test } from "@playwright/test";
 
-import { mockLangGraphAPI } from "./utils/mock-api";
+test.describe("Root route", () => {
+  test("redirects to login", async ({ request }) => {
+    const response = await request.get("/", { maxRedirects: 0 });
 
-test.describe("Landing page", () => {
-  test("renders the header and hero section", async ({ page }) => {
-    await page.goto("/");
-
-    await expect(
-      page.locator("header").first().getByText("DeerFlow", { exact: true }),
-    ).toBeVisible();
-    await expect(page.locator("h1")).toHaveCount(1);
-    await expect(page.locator("h1")).toContainText("DeerFlow");
-
-    // "Get Started" call-to-action button in hero
-    await expect(
-      page.getByRole("link", { name: /get started/i }),
-    ).toBeVisible();
+    expect(response.status()).toBe(307);
+    expect(response.headers().location).toBe("/login");
   });
 
-  for (const width of [320, 375, 390]) {
-    test(`does not overflow at ${width}px width`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 812 });
-      await page.goto("/");
+  test("keeps sign-up visible when status fails but honors Gateway rejection", async ({
+    page,
+  }) => {
+    await page.route("**/api/v1/auth/setup-status", (route) =>
+      route.fulfill({ status: 503 }),
+    );
+    await page.route("**/api/v1/auth/providers", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ providers: [] }),
+      }),
+    );
+    await page.route("**/api/v1/auth/register", (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({
+          detail: {
+            code: "registration_disabled",
+            message: "Self-registration is disabled on this deployment",
+          },
+        }),
+      }),
+    );
 
-      await expect
-        .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
-        .toBeLessThanOrEqual(width);
-      await expect(page.locator("main").first()).toBeInViewport();
-    });
-  }
+    await page.goto("/login");
 
-  test("Get Started link navigates to workspace", async ({ page }) => {
-    mockLangGraphAPI(page);
+    const signUp = page.getByRole("button", { name: /sign up/i });
+    await expect(signUp).toBeVisible();
 
-    await page.goto("/");
+    await signUp.click();
+    await expect(
+      page.getByRole("button", { name: "Create Account", exact: true }),
+    ).toBeVisible();
 
-    const getStarted = page.getByRole("link", { name: /get started/i });
-    await getStarted.click();
+    await page.getByLabel("Email", { exact: true }).fill("visitor@example.com");
+    await page.getByLabel("Password", { exact: true }).fill("Tr0ub4dor3a!");
 
-    // Should redirect to /workspace/chats/new
-    await page.waitForURL("**/workspace/chats/new");
-    await expect(page).toHaveURL(/\/workspace\/chats\/new/);
+    const registrationResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/v1/auth/register") &&
+        response.request().method() === "POST",
+    );
+    await page
+      .getByRole("button", { name: "Create Account", exact: true })
+      .click();
+
+    expect((await registrationResponse).status()).toBe(403);
+    await expect(
+      page.getByText("Authentication failed", { exact: true }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/\/login$/);
   });
 });
