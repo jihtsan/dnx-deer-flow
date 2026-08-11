@@ -1389,6 +1389,15 @@ CI.
 
 **Gateway Conformance Tests** (`TestGatewayConformance`): Validate that every dict-returning client method conforms to the corresponding Gateway Pydantic response model. Each test parses the client output through the Gateway model — if Gateway adds a required field that the client doesn't provide, Pydantic raises `ValidationError` and CI catches the drift. Covers: `ModelsListResponse`, `ModelResponse`, `SkillsListResponse`, `SkillResponse`, `SkillInstallResponse`, `McpConfigResponse`, `UploadResponse`, `MemoryConfigResponse`, `MemoryStatusResponse`.
 
+**Nexus Skill receiver contract**: `../contracts/openapi/nexus-skill-receiver-v1.yaml`
+is the canonical DeerFlow-owned service contract; the adjacent conformance
+fixture supplies positive, negative, transition, and exact-Observed cases.
+`tests/test_nexus_skill_receiver_contract.py` validates the OpenAPI surface and
+provider semantics without mounting receiver routes. Run it with
+`PYTHONPATH=. uv run pytest tests/test_nexus_skill_receiver_contract.py -q`.
+Do not generate or maintain a second receiver OpenAPI in Nexus, and do not adapt
+the existing `/api/skills` current-user routes as a fallback.
+
 ## Development Workflow
 
 ### Test-Driven Development (TDD) — MANDATORY
