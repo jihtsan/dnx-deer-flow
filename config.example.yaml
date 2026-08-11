@@ -15,7 +15,24 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 33
+config_version: 34
+
+# Nexus Skill receiver release wiring. Disabled by default. Enabling requires
+# opaque deployment Secret references plus approved directory, trust, and
+# compatibility policy revisions; Secret values never belong in this file.
+nexus_receiver:
+  enabled: false
+  recovery_poll_interval_seconds: 30
+  # ssh_account: nexus-receiver
+  # host_key_secret_ref:
+  #   name: deerflow-receiver-host-key
+  #   key: ssh_host_ed25519_key
+  # principal_map_secret_ref:
+  #   name: deerflow-receiver-principals
+  #   key: principals.json
+  # directory_policy_revision: directory-policy-v1
+  # trust_policy_revision: trust-policy-v1
+  # compatibility_policy_revision: compatibility-policy-v1
 
 # ============================================================================
 # Logging

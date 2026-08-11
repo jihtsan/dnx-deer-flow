@@ -409,6 +409,7 @@ class ReceiverRuntimeHandler:
         runtime_version: str | None = None,
         clock: Callable[[], datetime] | None = None,
         execution_owner: str | None = None,
+        pending_recovery_notifier: Callable[[], None] | None = None,
     ) -> None:
         self.store = store
         self.package_store = package_store
@@ -418,6 +419,19 @@ class ReceiverRuntimeHandler:
         self.runtime_version = runtime_version
         self._clock = clock or (lambda: datetime.now(UTC))
         self._execution_owner_prefix = execution_owner or f"receiver-{uuid4().hex}"
+        self._pending_recovery_notifier = pending_recovery_notifier
+
+    def set_pending_recovery_notifier(self, notifier: Callable[[], None] | None) -> None:
+        """Register the supervised recovery wake-up owned by Gateway lifespan."""
+        self._pending_recovery_notifier = notifier
+
+    def _notify_pending_recovery(self) -> None:
+        if self._pending_recovery_notifier is None:
+            return
+        try:
+            self._pending_recovery_notifier()
+        except Exception:
+            logger.exception("Failed to notify Nexus receiver recovery after durable submit")
 
     @staticmethod
     def canonical_command_digest(command_payload: dict[str, Any]) -> str:
@@ -568,6 +582,7 @@ class ReceiverRuntimeHandler:
         if not created and entry.operation.phase in _TERMINAL:
             await self._delete_staged_package(operation_id, command.package_digest)
             return entry.operation
+        self._notify_pending_recovery()
         return entry.operation
 
     async def recover_pending(self) -> list[ReceiverOperation]:

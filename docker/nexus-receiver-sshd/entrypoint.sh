@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+if [ "${NEXUS_RECEIVER_ENABLED:-false}" != "true" ]; then
+  echo "Nexus receiver sshd remains disabled" >&2
+  exit 78
+fi
+
+install -d -m 0700 -o root -g root /run/nexus-receiver
+install -m 0600 -o root -g root /run/secrets/nexus_receiver_host_key /run/nexus-receiver/ssh_host_ed25519_key
+
+cd /app/backend
+PYTHONPATH=. uv run --no-sync python -c \
+  'from deerflow.config.app_config import get_app_config; assert get_app_config().nexus_receiver.enabled, "nexus_receiver.enabled is false"'
+PYTHONPATH=. uv run --no-sync python -m app.gateway.nexus_receiver.sshd_authorized_keys \
+  --principal-map /run/secrets/nexus_receiver_principal_map \
+  --output /run/nexus-receiver/authorized_keys
+grep -q '^restrict,command=' /run/nexus-receiver/authorized_keys
+
+exec /usr/sbin/sshd -D -e -f /etc/ssh/nexus-receiver-sshd_config

@@ -185,7 +185,7 @@ def _ssh_principal(*actions: str) -> ReceiverTransportPrincipal:
     )
 
 
-def _handler(*, store=None, package_store=None, directory=None, installer=None, user_directory=None, execution_owner=None) -> ReceiverRuntimeHandler:
+def _handler(*, store=None, package_store=None, directory=None, installer=None, user_directory=None, execution_owner=None, pending_recovery_notifier=None) -> ReceiverRuntimeHandler:
     return ReceiverRuntimeHandler(
         store=store or InMemoryReceiverOperationStore(),
         package_store=package_store or InMemoryReceiverPackageStore(),
@@ -195,6 +195,7 @@ def _handler(*, store=None, package_store=None, directory=None, installer=None, 
         runtime_version="0.9.0-test",
         clock=lambda: datetime(2026, 8, 11, 6, 0, tzinfo=UTC),
         execution_owner=execution_owner,
+        pending_recovery_notifier=pending_recovery_notifier,
     )
 
 
@@ -228,6 +229,27 @@ async def test_user_install_closes_durable_operation_with_exact_observed_state()
         "freshness": "current",
         "observedAt": "2026-08-11T06:00:00Z",
     }
+
+
+@pytest.mark.asyncio
+async def test_submit_notifies_recovery_only_after_durable_nonterminal_acceptance() -> None:
+    package = _archive()
+    command = _command(package)
+    store = InMemoryReceiverOperationStore()
+    notifications: list[str] = []
+    handler = _handler(store=store, pending_recovery_notifier=lambda: notifications.append("pending"))
+
+    accepted = await handler.submit_install(
+        principal=_principal("receiver:install:user"),
+        idempotency_key="install-user-submit-wakeup",
+        request_sha256=handler.canonical_command_digest(command),
+        command_payload=command,
+        package=package,
+    )
+
+    assert accepted.phase == "accepted"
+    assert notifications == ["pending"]
+    assert (await store.get(str(accepted.operation_id))) is not None
 
 
 @pytest.mark.asyncio
