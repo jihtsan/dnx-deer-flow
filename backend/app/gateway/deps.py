@@ -422,11 +422,13 @@ async def langgraph_runtime(app: FastAPI, startup_config: AppConfig) -> AsyncGen
             from deerflow.config.runtime_paths import runtime_home
             from deerflow.persistence.knowledge_documents import KnowledgeDocumentRepository
             from deerflow.persistence.knowledge_scope import KnowledgeScopeRepository
+            from deerflow.persistence.mcp_tasks import McpTaskRepository
             from deerflow.persistence.scheduled_task_runs import (
                 ScheduledTaskRunRepository,
             )
             from deerflow.persistence.scheduled_tasks import ScheduledTaskRepository
 
+            app.state.mcp_task_repo = McpTaskRepository(sf)
             app.state.scheduled_task_repo = ScheduledTaskRepository(sf)
             app.state.scheduled_task_run_repo = ScheduledTaskRunRepository(sf)
             app.state.knowledge_scope_repo = KnowledgeScopeRepository(sf)
@@ -456,6 +458,7 @@ async def langgraph_runtime(app: FastAPI, startup_config: AppConfig) -> AsyncGen
             )
             app.state.knowledge_ingestion_service.start()
         else:
+            app.state.mcp_task_repo = None
             app.state.scheduled_task_repo = None
             app.state.scheduled_task_run_repo = None
             app.state.knowledge_scope_repo = None
@@ -641,6 +644,20 @@ def get_knowledge_ingestion_service(request: Request):
     val = getattr(request.app.state, "knowledge_ingestion_service", None)
     if val is None:
         raise HTTPException(status_code=503, detail="Knowledge ingestion service is not available")
+    return val
+
+
+def get_mcp_task_repo(request: Request):
+    val = getattr(request.app.state, "mcp_task_repo", None)
+    if val is None:
+        raise HTTPException(status_code=503, detail="MCP task repo not available")
+    return val
+
+
+def get_mcp_task_service(request: Request):
+    val = getattr(request.app.state, "mcp_task_service", None)
+    if val is None:
+        raise HTTPException(status_code=503, detail="MCP task service not available")
     return val
 
 

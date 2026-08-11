@@ -28,6 +28,7 @@ from deerflow.persistence.knowledge_documents.model import (
     KnowledgeIngestionRetryRequestRow,
 )
 from deerflow.persistence.knowledge_scope.model import KnowledgeScopeRow
+from deerflow.persistence.mcp_tasks.model import McpTaskRow
 from deerflow.persistence.models.run_event import RunEventRow
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.scheduled_task_runs.model import ScheduledTaskRunRow
@@ -47,6 +48,7 @@ __all__ = [
     "KnowledgeIngestionJobRow",
     "KnowledgeIngestionRetryRequestRow",
     "KnowledgeScopeRow",
+    "McpTaskRow",
     "RunEventRow",
     "RunRow",
     "ScheduledTaskRow",
