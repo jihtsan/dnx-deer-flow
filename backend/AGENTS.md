@@ -1398,6 +1398,14 @@ mounting receiver routes or implementing the forced-command dispatcher. The SSH
 mapping must reference the existing canonical component schemas instead of
 creating a parallel CLI schema. Run it with
 `PYTHONPATH=. uv run pytest tests/test_nexus_skill_receiver_contract.py -q`.
+`app/gateway/nexus_receiver/` mounts only capability discovery and controlled
+user-directory reads. Its service authenticator and directory are deployment
+Ports injected through application state; neither has a production provider or
+an environment enable switch. Browser sessions and internal tokens are not
+authority. Missing auth fails `401`, missing directory support fails `409`, all
+capability dimensions stay default-deny, and no write/Observed routes are mounted.
+Run runtime conformance with
+`PYTHONPATH=. uv run pytest tests/test_nexus_receiver_provider.py -q`.
 Do not generate or maintain a second receiver OpenAPI in Nexus, and do not adapt
 the existing `/api/skills` current-user routes as a fallback.
 

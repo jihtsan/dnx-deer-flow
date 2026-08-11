@@ -54,12 +54,19 @@ _PUBLIC_EXACT_PATHS: frozenset[str] = frozenset(
     }
 )
 
+_DEDICATED_SERVICE_AUTH_PATH_PREFIXES: tuple[str, ...] = ("/api/v1/nexus/skill-receiver/",)
+
 
 def _is_public(path: str) -> bool:
     stripped = path.rstrip("/")
     if stripped in _PUBLIC_EXACT_PATHS:
         return True
     return any(path.startswith(prefix) for prefix in _PUBLIC_PATH_PREFIXES)
+
+
+def _uses_dedicated_service_auth(path: str) -> bool:
+    """Return whether a non-public route owns machine authentication itself."""
+    return any(path.startswith(prefix) for prefix in _DEDICATED_SERVICE_AUTH_PATH_PREFIXES)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -87,6 +94,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if _is_public(request.url.path):
+            return await call_next(request)
+        if _uses_dedicated_service_auth(request.url.path):
+            # Receiver routes reject browser sessions and generic internal tokens;
+            # their handlers enforce a dedicated machine principal and action.
             return await call_next(request)
 
         internal_user = None

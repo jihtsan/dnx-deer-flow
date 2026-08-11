@@ -117,8 +117,15 @@ Nexus Skill receiver note:
 - Publishing the contract does not implement or enable receiver routes. Until
   the listed authentication, privacy, native-global, trust, compatibility, and
   recovery gates are approved, providers must report `read_only` or
-  `unsupported`. Existing `/api/skills` routes are not a compatibility fallback,
-  and Nexus must not maintain a second canonical receiver OpenAPI.
+  `unsupported`.
+- The Gateway mounts only the receiver capability and controlled-directory GET
+  routes. They use dedicated service-auth and directory Ports with no production
+  provider or environment enablement: missing auth is `401`, missing directory
+  support is `409`, browser sessions/internal tokens are rejected, capabilities
+  report the `http_v1` transport and stay `read_only`/`unsupported`, and
+  operation/Observed routes remain unmounted.
+  Existing `/api/skills` routes are not a compatibility fallback, and Nexus must
+  not maintain a second canonical receiver OpenAPI.
 
 ## Commands: Root vs. Module
 
