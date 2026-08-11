@@ -56,6 +56,28 @@ def test_lightrag_statuses_map_to_the_closed_deerflow_state_machine(
     assert map_lightrag_tracking_status(_tracking(remote_status)).status == local_status
 
 
+def test_lightrag_status_mapping_preserves_real_stage_and_chunk_count() -> None:
+    tracking = LightRAGTrackStatus(
+        track_id="upload-remote",
+        documents=(
+            {
+                "id": "remote-document",
+                "status": "processing",
+                "chunks_count": 5,
+                "updated_at": "2026-07-15T01:02:00Z",
+            },
+        ),
+        total_count=1,
+        status_summary={"processing": 1},
+    )
+
+    mapped = map_lightrag_tracking_status(tracking)
+
+    assert mapped.status == "indexing"
+    assert mapped.stage == "processing"
+    assert mapped.chunks_count == 5
+
+
 def test_empty_tracking_result_remains_pending() -> None:
     assert map_lightrag_tracking_status(_tracking()).status == "pending"
 
@@ -225,6 +247,50 @@ async def test_ingestion_uploads_server_named_file_tracks_real_states_and_finish
     assert listed[0]["status"] == "ready"
     assert listed[0]["completed_at"] is not None
     assert [item["id"] for item in await repo.list_ready_candidates_for_user("alice")] == ["doc-stable"]
+
+
+@pytest.mark.asyncio
+async def test_ingestion_persists_real_stage_and_chunks_between_polls(document_runtime) -> None:
+    repo, store = document_runtime
+    job_id, document = await _accepted_document(repo, store, suffix="progress")
+    client = FakeLightRAGClient(
+        tracking=[
+            LightRAGTrackStatus(
+                track_id="upload-remote",
+                documents=(
+                    {
+                        "id": "remote-document",
+                        "status": "processing",
+                        "chunks_count": 5,
+                        "updated_at": "2026-07-15T01:02:00Z",
+                    },
+                ),
+                total_count=1,
+                status_summary={"processing": 1},
+            )
+        ]
+    )
+    clock = MutableClock(datetime(2026, 7, 15, 1, 2, tzinfo=UTC))
+
+    async def stop_after_first_poll(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    service = KnowledgeIngestionService(
+        repo=repo,
+        file_store=store,
+        lightrag_client=client,
+        poll_interval_seconds=0,
+        clock=clock,
+        waiter=stop_after_first_poll,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.process(job_id=job_id, document=document)
+
+    persisted = (await repo.list_for_user("alice"))[0]
+    assert persisted["lightrag_stage"] == "processing"
+    assert persisted["lightrag_chunks_count"] == 5
+    assert persisted["lightrag_stage_updated_at"] == clock.value.isoformat()
 
 
 @pytest.mark.asyncio

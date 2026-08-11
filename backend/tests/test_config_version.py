@@ -173,6 +173,52 @@ def test_version_26_config_upgrades_to_checkpoint_channel_mode(tmp_path, caplog)
     assert upgraded["database"]["sqlite_dir"] == "custom-data"
 
 
+def test_version_29_config_upgrades_lightrag_query_timeout(tmp_path):
+    """A v29 config gains the new retrieval timeout without losing operator values."""
+    import subprocess
+
+    repo_root = Path(__file__).resolve().parents[2]
+    example_src = repo_root / "config.example.yaml"
+    example_data = yaml.safe_load(example_src.read_text(encoding="utf-8"))
+    assert example_data["config_version"] == 30
+
+    config_path = tmp_path / "config.yaml"
+    (tmp_path / "config.example.yaml").write_text(example_src.read_text(encoding="utf-8"), encoding="utf-8")
+    user_config = {
+        "config_version": 29,
+        "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+        "knowledge_base": {
+            "enabled": True,
+            "lightrag": {
+                "base_url": "http://lightrag.internal:9621",
+                "timeout_seconds": 2.5,
+            },
+        },
+    }
+    config_path.write_text(yaml.dump(user_config), encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(repo_root / "scripts" / "config-upgrade.sh")],
+        env={**os.environ, "DEER_FLOW_CONFIG_PATH": str(config_path)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+
+    upgraded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert upgraded["config_version"] == 30
+    assert upgraded["knowledge_base"] == {
+        "enabled": True,
+        "lightrag": {
+            "base_url": "http://lightrag.internal:9621",
+            "timeout_seconds": 2.5,
+            "api_key": None,
+            "query_timeout_seconds": 60.0,
+        },
+    }
+
+
 def _load_repo_example() -> dict:
     """Load the real repo config.example.yaml (first-run template)."""
     example_path = Path(__file__).resolve().parents[2] / "config.example.yaml"

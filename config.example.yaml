@@ -1813,6 +1813,7 @@ knowledge_base:
     base_url: null                  # Example: http://127.0.0.1:9621
     api_key: null                   # Example: $LIGHTRAG_API_KEY
     timeout_seconds: 5.0
+    query_timeout_seconds: 60.0     # Retrieval may include LLM keyword extraction
 
 # ============================================================================
 # Custom Agent Management API
