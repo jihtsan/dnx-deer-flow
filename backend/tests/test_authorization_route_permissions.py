@@ -20,6 +20,17 @@ from deerflow.authz.provider import AuthzDecision, AuthzReason
 from deerflow.authz.rbac import RbacAuthorizationProvider
 from deerflow.config.authorization_config import AuthorizationConfig, AuthorizationProviderConfig
 
+ALL_ROUTE_PERMISSIONS = [
+    Permissions.THREADS_READ,
+    Permissions.THREADS_WRITE,
+    Permissions.THREADS_DELETE,
+    Permissions.RUNS_CREATE,
+    Permissions.RUNS_READ,
+    Permissions.RUNS_CANCEL,
+    Permissions.KNOWLEDGE_READ,
+    Permissions.KNOWLEDGE_WRITE,
+]
+
 
 class _RecordingProvider:
     name = "recording"
@@ -83,14 +94,7 @@ async def test_route_permissions_disabled_preserves_all_permissions(monkeypatch)
 
     permissions = await resolve_route_permissions(_user(), is_internal=False)
 
-    assert permissions == [
-        Permissions.THREADS_READ,
-        Permissions.THREADS_WRITE,
-        Permissions.THREADS_DELETE,
-        Permissions.RUNS_CREATE,
-        Permissions.RUNS_READ,
-        Permissions.RUNS_CANCEL,
-    ]
+    assert permissions == ALL_ROUTE_PERMISSIONS
     cached.assert_not_called()
 
 
@@ -106,6 +110,8 @@ async def test_route_permissions_use_async_provider_and_trusted_principal(monkey
         Permissions.THREADS_WRITE,
         Permissions.RUNS_CREATE,
         Permissions.RUNS_READ,
+        Permissions.KNOWLEDGE_READ,
+        Permissions.KNOWLEDGE_WRITE,
     ]
     assert [(request.resource, request.action, request.target) for request in provider.requests] == [
         ("route", "read", Permissions.THREADS_READ),
@@ -114,6 +120,8 @@ async def test_route_permissions_use_async_provider_and_trusted_principal(monkey
         ("route", "create", Permissions.RUNS_CREATE),
         ("route", "read", Permissions.RUNS_READ),
         ("route", "cancel", Permissions.RUNS_CANCEL),
+        ("route", "read", Permissions.KNOWLEDGE_READ),
+        ("route", "write", Permissions.KNOWLEDGE_WRITE),
     ]
     principal = provider.requests[0].principal
     assert principal.user_id == "user-123"
@@ -130,13 +138,7 @@ async def test_route_permissions_fail_closed_denies_only_the_failed_permission(m
 
     permissions = await resolve_route_permissions(_user(), is_internal=False)
 
-    assert permissions == [
-        Permissions.THREADS_READ,
-        Permissions.THREADS_WRITE,
-        Permissions.THREADS_DELETE,
-        Permissions.RUNS_CREATE,
-        Permissions.RUNS_READ,
-    ]
+    assert permissions == [permission for permission in ALL_ROUTE_PERMISSIONS if permission != Permissions.RUNS_CANCEL]
 
 
 @pytest.mark.asyncio
@@ -146,14 +148,7 @@ async def test_route_permissions_fail_open_allows_the_failed_permission(monkeypa
 
     permissions = await resolve_route_permissions(_user(), is_internal=False)
 
-    assert permissions == [
-        Permissions.THREADS_READ,
-        Permissions.THREADS_WRITE,
-        Permissions.THREADS_DELETE,
-        Permissions.RUNS_CREATE,
-        Permissions.RUNS_READ,
-        Permissions.RUNS_CANCEL,
-    ]
+    assert permissions == ALL_ROUTE_PERMISSIONS
 
 
 @pytest.mark.asyncio
@@ -161,17 +156,7 @@ async def test_route_permissions_fail_open_allows_the_failed_permission(monkeypa
     ("fail_closed", "expected"),
     [
         (True, []),
-        (
-            False,
-            [
-                Permissions.THREADS_READ,
-                Permissions.THREADS_WRITE,
-                Permissions.THREADS_DELETE,
-                Permissions.RUNS_CREATE,
-                Permissions.RUNS_READ,
-                Permissions.RUNS_CANCEL,
-            ],
-        ),
+        (False, ALL_ROUTE_PERMISSIONS),
     ],
 )
 async def test_route_permissions_apply_failure_mode_to_provider_resolution(monkeypatch, fail_closed, expected):
