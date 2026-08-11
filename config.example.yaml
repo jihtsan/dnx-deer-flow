@@ -607,6 +607,8 @@ models:
   #   model: Qwen/Qwen3-32B
   #   api_key: $VLLM_API_KEY
   #   base_url: http://localhost:8000/v1
+  #   # Enable only when the endpoint reports cumulative usage on every stream chunk.
+  #   cumulative_stream_usage: true
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 8192
@@ -796,7 +798,7 @@ tools:
   #   use: deerflow.community.browserless.tools:web_capture_tool
   #   base_url: http://localhost:3032       # Browserless instance URL (Docker: http://browserless:3000)
   #   # token: $BROWSERLESS_TOKEN           # Required for Browserless Cloud; optional for self-hosted
-  #   timeout_s: 30                         # Request timeout in seconds
+  #   timeout_s: 30                         # Request timeout in seconds (`timeout` also accepted)
   #   output_format: png                    # png, jpeg, or webp
   #   full_page: true                       # Capture entire page instead of viewport only
   #   viewport_width: 1280
@@ -1050,6 +1052,7 @@ tool_output:
 
 suggestions:
   enabled: true
+  max_suggestions: 3
 
 
 # ============================================================================
@@ -1424,13 +1427,13 @@ sandbox:
 #       # token_budget:        # per-agent override of the global token_budget above
 #       #   max_tokens: 3000000  # raise the ceiling for deep-research tasks
 #       # model: qwen3:32b     # Use a specific model (default: inherit from lead agent)
-#       # skills:               # Skill whitelist (default: inherit all enabled skills)
+#       # skills:               # Skill discovery/activation allowlist (default: all enabled)
 #       #   - web-search
 #       #   - data-analysis
 #     bash:
 #       timeout_seconds: 300   # 5 minutes for quick command execution
 #       max_turns: 80
-#       # skills: []            # No skills for bash agent
+#       # skills: []            # No discoverable/activatable skills for bash agent
 #
 #   # Custom subagent types: define specialized agents with their own prompts,
 #   # tools, skills, and model configuration. Custom agents are available via
@@ -1447,7 +1450,7 @@ sandbox:
 #   #       - bash
 #   #       - read_file
 #   #       - write_file
-#   #     skills:                 # Skill whitelist (null = inherit all, [] = none)
+#   #     skills:                 # Skill discovery/activation allowlist (null = all, [] = none)
 #   #       - data-analysis
 #   #       - visualization
 #   #     model: inherit          # 'inherit' uses parent's model
@@ -1876,6 +1879,19 @@ database:
   # Restart required. Use one value across every process sharing this database.
   # full: current full-message checkpoints; delta: DeltaChannel for messages.
   checkpoint_channel_mode: full
+  # Delta-mode tuning (only applies when checkpoint_channel_mode is delta).
+  # Restart required, like the mode itself: the cadence is compiled into each
+  # graph's channel table. All processes sharing this database must agree.
+  # snapshot_frequency: full messages snapshot every N per-step writes
+  # (higher = smaller checkpoints, slower materialization).
+  checkpoint_delta:
+    snapshot_frequency: 10
+  # Size caps for the compiled checkpoint graph caches (per process).
+  # Hot-reloadable, no restart needed: the value is re-read on each eviction
+  # check and only changes when a cache evicts, never graph semantics.
+  checkpoint_graph_cache:
+    # Gateway thread-state accessor graphs (per assistant/mode/cadence).
+    accessor_graph_max: 64
 
 # ============================================================================
 # Run Events Configuration
