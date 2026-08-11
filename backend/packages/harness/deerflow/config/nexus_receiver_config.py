@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from typing import Self
+from pathlib import Path
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _REFERENCE_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 _POLICY_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-_ACCOUNT = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
 
 class ReceiverSecretReference(BaseModel):
@@ -34,7 +34,8 @@ class NexusReceiverConfig(BaseModel):
 
     enabled: bool = False
     recovery_poll_interval_seconds: float = Field(default=30.0, ge=1.0, le=3600.0)
-    ssh_account: str | None = None
+    ssh_account: Literal["nexus-receiver"] | None = None
+    recovery_signal_socket: str | None = None
     host_key_secret_ref: ReceiverSecretReference | None = None
     principal_map_secret_ref: ReceiverSecretReference | None = None
     directory_policy_revision: str | None = None
@@ -47,6 +48,7 @@ class NexusReceiverConfig(BaseModel):
             return self
         required = (
             "ssh_account",
+            "recovery_signal_socket",
             "host_key_secret_ref",
             "principal_map_secret_ref",
             "directory_policy_revision",
@@ -56,9 +58,9 @@ class NexusReceiverConfig(BaseModel):
         missing = [name for name in required if getattr(self, name) is None]
         if missing:
             raise ValueError(f"enabled Nexus receiver is missing release gates: {', '.join(missing)}")
-        if self.ssh_account is None or _ACCOUNT.fullmatch(self.ssh_account) is None:
-            raise ValueError("ssh_account has an invalid shape")
-        for name in required[3:]:
+        if self.recovery_signal_socket is None or not Path(self.recovery_signal_socket).is_absolute():
+            raise ValueError("recovery_signal_socket must be an absolute deployment path")
+        for name in required[4:]:
             value = getattr(self, name)
             if not isinstance(value, str) or _POLICY_REVISION.fullmatch(value) is None:
                 raise ValueError(f"{name} has an invalid shape")

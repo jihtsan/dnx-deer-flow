@@ -1415,8 +1415,10 @@ all capability dimensions stay default-deny, and the forced-command entry point
 has no production principal/runtime wiring. The opt-in restricted sshd Compose
 profile is loopback-bound, mounts host-key/principal-map Secrets, and generates
 exact forced-command authorized keys for a dedicated account; it is not part of
-the base stack. SSH submit is cross-process, so deployment IPC is still required
-for immediate Gateway wake-up; periodic recovery remains the durable fallback.
+the base stack. Its private shared Unix datagram socket wakes Gateway recovery
+after an SSH submit without carrying authority or operation data; periodic
+recovery remains the durable fallback. A stable multi-process ownership policy
+is still required before enabling more than the default single Gateway worker.
 Run runtime conformance with
 `PYTHONPATH=. uv run pytest tests/test_nexus_receiver_provider.py tests/test_nexus_receiver_runtime.py -q`.
 Do not generate or maintain a second receiver OpenAPI in Nexus, and do not adapt

@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import socket
+import stat
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -146,13 +150,21 @@ class _Recoverer(Protocol):
 class ReceiverRecoveryService:
     """Own startup, submit-triggered and periodic durable recovery passes."""
 
-    def __init__(self, recoverer: _Recoverer, *, poll_interval_seconds: float) -> None:
+    def __init__(
+        self,
+        recoverer: _Recoverer,
+        *,
+        poll_interval_seconds: float,
+        signal_path: Path | None = None,
+    ) -> None:
         self._recoverer = recoverer
         self._poll_interval_seconds = poll_interval_seconds
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._run_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
+        self._signal_path = signal_path
+        self._signal_socket: socket.socket | None = None
 
     @property
     def running(self) -> bool:
@@ -163,10 +175,47 @@ class ReceiverRecoveryService:
             return
         self._stop.clear()
         await self.run_now()
+        self._start_signal_listener()
         self._task = asyncio.create_task(self._run(), name="nexus-receiver-recovery")
 
     def notify_pending(self) -> None:
         self._wake.set()
+
+    def _start_signal_listener(self) -> None:
+        if self._signal_path is None:
+            return
+        self._signal_path.parent.mkdir(mode=0o711, parents=True, exist_ok=True)
+        try:
+            mode = self._signal_path.lstat().st_mode
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISSOCK(mode):
+                raise RuntimeError("receiver recovery signal path is not a socket")
+            self._signal_path.unlink()
+        signal_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            signal_socket.setblocking(False)
+            signal_socket.bind(str(self._signal_path))
+            # The socket carries no data or authority; write access only wakes a
+            # fenced durable-store scan in the two-container private volume.
+            os.chmod(self._signal_path, 0o622)
+            asyncio.get_running_loop().add_reader(signal_socket.fileno(), self._receive_signal)
+        except Exception:
+            signal_socket.close()
+            self._signal_path.unlink(missing_ok=True)
+            raise
+        self._signal_socket = signal_socket
+
+    def _receive_signal(self) -> None:
+        if self._signal_socket is None:
+            return
+        try:
+            payload = self._signal_socket.recv(32)
+        except BlockingIOError:
+            return
+        if payload == b"pending":
+            self.notify_pending()
 
     async def run_now(self) -> None:
         async with self._run_lock:
@@ -202,6 +251,50 @@ class ReceiverRecoveryService:
                 await task
         finally:
             self._task = None
+            if self._signal_socket is not None:
+                asyncio.get_running_loop().remove_reader(self._signal_socket.fileno())
+                self._signal_socket.close()
+                self._signal_socket = None
+            if self._signal_path is not None:
+                try:
+                    if stat.S_ISSOCK(self._signal_path.lstat().st_mode):
+                        self._signal_path.unlink()
+                except FileNotFoundError:
+                    pass
+
+
+class UnixDatagramReceiverRecoveryNotifier:
+    """Wake Gateway recovery from a separate forced-command process."""
+
+    def __init__(self, signal_path: Path) -> None:
+        if not signal_path.is_absolute():
+            raise ValueError("receiver recovery signal path must be absolute")
+        self._signal_path = signal_path
+
+    def notify_pending(self) -> None:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as signal_socket:
+            signal_socket.setblocking(False)
+            signal_socket.sendto(b"pending", str(self._signal_path))
+
+
+def build_receiver_forced_command_context_provider(
+    *,
+    config: NexusReceiverConfig,
+    handler: ReceiverRuntimeHandler,
+    secret_resolver: ReceiverSecretResolver,
+) -> MappedReceiverForcedCommandContextProvider:
+    """Compose the SSH principal mapper and cross-process submit wake-up."""
+    if not config.enabled or config.principal_map_secret_ref is None or config.recovery_signal_socket is None:
+        raise ValueError("receiver forced-command release gates are incomplete")
+    notifier = UnixDatagramReceiverRecoveryNotifier(Path(config.recovery_signal_socket))
+    handler.set_pending_recovery_notifier(notifier.notify_pending)
+    return MappedReceiverForcedCommandContextProvider(
+        handler=handler,
+        principal_mapper=SecretBackedReceiverPrincipalMapper(
+            resolver=secret_resolver,
+            reference=config.principal_map_secret_ref,
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +345,7 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
         recovery = ReceiverRecoveryService(
             components.runtime_handler,
             poll_interval_seconds=config.recovery_poll_interval_seconds,
+            signal_path=Path(config.recovery_signal_socket) if config.recovery_signal_socket is not None else None,
         )
         components.runtime_handler.set_pending_recovery_notifier(recovery.notify_pending)
         await recovery.start()

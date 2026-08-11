@@ -17,6 +17,8 @@ def test_receiver_sshd_is_opt_in_and_loopback_bound() -> None:
     assert service["ports"] == ["${NEXUS_RECEIVER_SSH_BIND_HOST:-127.0.0.1}:${NEXUS_RECEIVER_SSH_PORT:-2222}:22"]
     assert service["build"]["target"] == "nexus-receiver-sshd"
     assert service["secrets"] == ["nexus_receiver_host_key", "nexus_receiver_principal_map"]
+    assert "nexus-receiver-ipc:/run/nexus-receiver-ipc" in service["volumes"]
+    assert "nexus-receiver-ipc:/run/nexus-receiver-ipc" in overlay["services"]["gateway"]["volumes"]
 
 
 def test_receiver_sshd_forbids_interactive_and_forwarding_surfaces() -> None:
@@ -35,6 +37,14 @@ def test_receiver_sshd_forbids_interactive_and_forwarding_surfaces() -> None:
         assert directive in config
     assert "Subsystem sftp" not in config
     assert "AllowUsers nexus-receiver" in config
+
+
+def test_receiver_account_allows_public_key_auth_but_has_no_password() -> None:
+    dockerfile = (ROOT / "backend" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "passwd -l nexus-receiver" not in dockerfile
+    assert "usermod --password 'x' nexus-receiver" in dockerfile
+    assert "PasswordAuthentication no" in (ROOT / "docker" / "nexus-receiver-sshd" / "sshd_config").read_text(encoding="utf-8")
 
 
 def test_receiver_authorized_keys_generator_uses_exact_restrictions() -> None:
