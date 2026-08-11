@@ -1108,12 +1108,18 @@ binding. SSH accepts only the five allowlisted actions, reuses the canonical
 component schemas, and supports controlled directory reads plus exact `USER`
 first installation; it does not publish a separate CLI schema or enable `GLOBAL`.
 
-This contract definition does not mean the receiver runtime is enabled. Until
-machine authentication, directory privacy, native global activation, package
-trust, Runtime compatibility, and failure-recovery policies are approved and
-implemented, deployments must advertise `read_only` or `unsupported`. Nexus
-must not fall back to `/api/skills`, and browser clients must continue to call
-the Nexus public API instead of this service-to-service boundary.
+The Gateway mounts `GET /api/v1/nexus/skill-receiver/capabilities` and
+`GET /api/v1/nexus/skill-receiver/users` behind a dedicated service-auth Port.
+Production does not configure an authenticator or controlled-directory provider,
+so both remain default-deny (`401 AUTHENTICATION_REQUIRED` or
+`409 USER_DIRECTORY_UNSUPPORTED`). Browser sessions and generic internal tokens
+cannot authenticate this boundary. Authenticated capability responses identify
+the `http_v1` transport, remain `read_only` with every intrinsic dimension
+`unsupported`, and no operation or Observed route is mounted. The published
+`ssh_v1` binding does not mean the forced-command runtime is implemented or enabled.
+Until the human release decisions are approved and implemented, Nexus must not
+fall back to `/api/skills`, and browser clients must continue to call the Nexus
+public API instead of this service-to-service boundary.
 
 ## Embedded Python Client
 
