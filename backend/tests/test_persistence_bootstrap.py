@@ -26,12 +26,14 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from alembic import command
 from sqlalchemy.ext.asyncio import create_async_engine
 
 # Pre-import models so Base.metadata is populated before bootstrap reads it.
 import deerflow.persistence.models  # noqa: F401
 from deerflow.persistence.base import Base
 from deerflow.persistence.bootstrap import (
+    _BASELINE_INDEX_NAMES,
     _BASELINE_TABLE_NAMES,
     _decide_state,
     _get_alembic_config,
@@ -47,7 +49,7 @@ from deerflow.persistence.migrations._helpers import _normalize_default
 asyncio_test = pytest.mark.asyncio
 
 
-HEAD = "0003_scheduled_tasks"
+HEAD = "0012_merge_knowledge_and_mcp_tasks"
 BASELINE = "0001_baseline"
 
 
@@ -74,10 +76,21 @@ async def _runs_column_meta(engine, column_name: str) -> dict:
     raise AssertionError(f"column {column_name!r} not found in runs")
 
 
+async def _runs_index_names(engine) -> set[str]:
+    async with engine.connect() as conn:
+        return await conn.run_sync(lambda c: {ix["name"] for ix in sa.inspect(c).get_indexes("runs")})
+
+
 async def _alembic_version(engine) -> str | None:
     async with engine.connect() as conn:
         row = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
         return row.scalar()
+
+
+async def _alembic_versions(engine) -> set[str]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
+        return set(rows.scalars())
 
 
 async def _seed_legacy_without_column(engine) -> None:
@@ -137,11 +150,27 @@ async def test_empty_branch_creates_all_and_stamps_head(tmp_path: Path) -> None:
             "channel_credentials",
             "channel_conversations",
             "channel_oauth_states",
+            "knowledge_scopes",
+            "knowledge_documents",
+            "knowledge_directories",
+            "knowledge_remote_documents",
+            "knowledge_ingestion_jobs",
+            "knowledge_ingestion_retry_requests",
             "alembic_version",
         }:
             assert required in tables, f"missing table: {required}"
         assert "token_usage_by_model" in await _runs_columns(engine)
+        assert "cancel_action" in await _runs_columns(engine)
+        assert "cancel_requested_at" in await _runs_columns(engine)
+        operation_kind = await _runs_column_meta(engine, "operation_kind")
+        assert operation_kind["nullable"] is False
         assert await _alembic_version(engine) == HEAD
+        # The partial unique index on (thread_id WHERE status IN pending/running)
+        # must exist on a fresh DB because the empty-branch stamps head without
+        # running migrations, so the index has to come from ``Base.metadata``.
+        indexes = await _runs_index_names(engine)
+        assert "uq_runs_thread_active" in indexes, indexes
+        assert "ix_runs_lease" in indexes, indexes
     finally:
         await engine.dispose()
 
@@ -393,6 +422,224 @@ async def test_versioned_branch_is_noop_at_head(tmp_path: Path) -> None:
         await engine.dispose()
 
 
+@asyncio_test
+async def test_0005_jobs_are_normalized_for_recovery(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-0005.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0005_knowledge_documents")
+        created_at = "2026-07-13 09:00:00"
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO knowledge_scopes
+                        (id, singleton_key, owner_user_id, name, description, enabled, created_at, updated_at)
+                    VALUES ('scope', 1, 'alice', '统一知识库', '', 1, :now, :now)
+                    """
+                ),
+                {"now": created_at},
+            )
+            for suffix, document_status, job_status in (
+                ("tracking", "indexing", "tracking"),
+                ("failed", "failed", "failed"),
+            ):
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_documents
+                            (id, scope_id, owner_user_id, idempotency_key, original_filename,
+                             storage_name, content_type, size_bytes, content_sha256, status,
+                             lightrag_tracking_id, failure_code, failure_reason, ingestion_job_id,
+                             created_at, updated_at, completed_at)
+                        VALUES
+                            (:document_id, 'scope', 'alice', :key, :filename, :storage_name,
+                             'text/plain', 1, :sha, :document_status, :tracking_id,
+                             :failure_code, :failure_reason, :job_id, :now, :now, NULL)
+                        """
+                    ),
+                    {
+                        "document_id": f"doc-{suffix}",
+                        "job_id": f"job-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "filename": f"{suffix}.txt",
+                        "storage_name": f"doc-{suffix}.txt",
+                        "sha": suffix[0] * 64,
+                        "document_status": document_status,
+                        "tracking_id": "remote-track" if suffix == "tracking" else None,
+                        "failure_code": "lightrag_processing_failed" if suffix == "failed" else None,
+                        "failure_reason": "知识服务处理失败。" if suffix == "failed" else None,
+                        "now": created_at,
+                    },
+                )
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_ingestion_jobs
+                            (id, document_id, scope_id, idempotency_key, status,
+                             created_at, updated_at, started_at, completed_at)
+                        VALUES (:job_id, :document_id, 'scope', :key, :status, :now, :now, :now, NULL)
+                        """
+                    ),
+                    {
+                        "job_id": f"job-{suffix}",
+                        "document_id": f"doc-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "status": job_status,
+                        "now": created_at,
+                    },
+                )
+
+        await asyncio.to_thread(_upgrade, cfg, "head")
+
+        async with engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        sa.text(
+                            """
+                        SELECT id, status, attempt_count, max_attempts, next_attempt_at,
+                               lease_owner, lease_expires_at, last_error_code, last_error_message
+                        FROM knowledge_ingestion_jobs ORDER BY id
+                        """
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        assert rows[0]["id"] == "job-failed"
+        assert rows[0]["status"] == "dead"
+        assert rows[0]["last_error_code"] == "lightrag_processing_failed"
+        assert rows[0]["last_error_message"] == "知识服务处理失败。"
+        assert rows[1]["id"] == "job-tracking"
+        assert rows[1]["status"] == "pending"
+        assert rows[1]["next_attempt_at"] is not None
+        assert all(row["attempt_count"] == 0 and row["max_attempts"] == 5 for row in rows)
+        assert all(row["lease_owner"] is None and row["lease_expires_at"] is None for row in rows)
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_0006_database_upgrades_to_knowledge_catalog_schema(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-0006.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0006_reliable_knowledge_ingestion")
+
+        await asyncio.to_thread(_upgrade, cfg, "head")
+
+        tables = await _table_names(engine)
+        assert "knowledge_directories" in tables
+        assert "knowledge_remote_documents" in tables
+        async with engine.connect() as conn:
+            document_columns = await conn.run_sync(lambda sync_conn: {column["name"] for column in sa.inspect(sync_conn).get_columns("knowledge_documents")})
+        assert "directory_id" in document_columns
+        assert await _alembic_version(engine) == HEAD
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_0009_repairs_missing_knowledge_retry_request_table(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-missing-retry-table.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0008_knowledge_progress")
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("DROP TABLE knowledge_ingestion_retry_requests"))
+        assert "knowledge_ingestion_retry_requests" not in await _table_names(engine)
+
+        await asyncio.to_thread(_upgrade, cfg, "head")
+
+        assert "knowledge_ingestion_retry_requests" in await _table_names(engine)
+        assert await _alembic_version(engine) == HEAD
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_0006_downgrade_maps_terminal_states_before_restoring_0005_schema(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-0006-downgrade.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, HEAD)
+        created_at = "2026-07-13 09:00:00"
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO knowledge_scopes
+                        (id, singleton_key, owner_user_id, name, description, enabled, created_at, updated_at)
+                    VALUES ('scope', 1, 'alice', '统一知识库', '', 1, :now, :now)
+                    """
+                ),
+                {"now": created_at},
+            )
+            for suffix, status in (("dead", "dead"), ("cancelled", "cancelled")):
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_documents
+                            (id, scope_id, owner_user_id, idempotency_key, original_filename,
+                             storage_name, content_type, size_bytes, content_sha256, status,
+                             lightrag_tracking_id, failure_code, failure_reason, ingestion_job_id,
+                             created_at, updated_at, completed_at)
+                        VALUES
+                            (:document_id, 'scope', 'alice', :key, :filename, :storage_name,
+                             'text/plain', 1, :sha, 'failed', NULL, 'failure', 'failed', :job_id,
+                             :now, :now, :now)
+                        """
+                    ),
+                    {
+                        "document_id": f"doc-{suffix}",
+                        "job_id": f"job-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "filename": f"{suffix}.txt",
+                        "storage_name": f"doc-{suffix}.txt",
+                        "sha": suffix[0] * 64,
+                        "now": created_at,
+                    },
+                )
+                await conn.execute(
+                    sa.text(
+                        """
+                        INSERT INTO knowledge_ingestion_jobs
+                            (id, document_id, scope_id, idempotency_key, status, attempt_count,
+                             max_attempts, next_attempt_at, manual_retry_count, created_at, updated_at,
+                             started_at, completed_at)
+                        VALUES
+                            (:job_id, :document_id, 'scope', :key, :status, 1, 5, NULL, 0,
+                             :now, :now, :now, :now)
+                        """
+                    ),
+                    {
+                        "job_id": f"job-{suffix}",
+                        "document_id": f"doc-{suffix}",
+                        "key": f"upload-{suffix}",
+                        "status": status,
+                        "now": created_at,
+                    },
+                )
+
+        await asyncio.to_thread(command.downgrade, cfg, "0005_knowledge_documents")
+
+        async with engine.connect() as conn:
+            statuses = list((await conn.execute(sa.text("SELECT status FROM knowledge_ingestion_jobs ORDER BY id"))).scalars())
+            columns = await conn.run_sync(lambda sync_conn: {column["name"] for column in sa.inspect(sync_conn).get_columns("knowledge_ingestion_jobs")})
+        assert statuses == ["failed", "failed"]
+        assert "attempt_count" not in columns
+        assert "knowledge_ingestion_retry_requests" not in await _table_names(engine)
+        # Downgrading one side of the merged graph restores both branch heads.
+        assert await _alembic_versions(engine) == {
+            "0005_knowledge_documents",
+            "0006_agents",
+        }
+    finally:
+        await engine.dispose()
+
+
 # ---------------------------------------------------------------------------
 # Schema-parity guard: legacy-upgraded DB must end up structurally identical
 # to a fresh DB on the columns the migration touches. This is the property
@@ -548,6 +795,35 @@ async def test_baseline_table_names_constant_matches_0001(tmp_path: Path) -> Non
 
 
 @asyncio_test
+async def test_baseline_index_names_constant_matches_0001(tmp_path: Path) -> None:
+    """Guard: ``_BASELINE_INDEX_NAMES`` must match the set of indexes that
+    ``0001_baseline.upgrade()`` actually creates. Editing 0001 (or adding an
+    index to the ORM model without a corresponding migration guard) without
+    updating this constant fires this test.
+    """
+    engine = create_async_engine(_url(tmp_path))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0001_baseline")
+
+        async with engine.connect() as conn:
+            all_indexes: set[str] = set()
+            for table_name in _BASELINE_TABLE_NAMES:
+                indexes = await conn.run_sync(lambda c, t=table_name: {ix["name"] for ix in sa.inspect(c).get_indexes(t)})
+                all_indexes.update(indexes)
+
+        # alembic_version also gets an index from alembic's own table --
+        # filter it out like the table guard filters alembic_version.
+        all_indexes.discard("ix_alembic_version")
+
+        assert all_indexes == _BASELINE_INDEX_NAMES, (
+            f"_BASELINE_INDEX_NAMES drifted from 0001_baseline.upgrade()'s output:\nonly-in-0001={sorted(all_indexes - _BASELINE_INDEX_NAMES)}\nonly-in-constant={sorted(_BASELINE_INDEX_NAMES - all_indexes)}"
+        )
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
 async def test_legacy_backfill_skips_non_baseline_tables(tmp_path: Path) -> None:
     """Regression: legacy backfill must not create tables outside the baseline
     set, because a later ``op.create_table`` revision for the same name would
@@ -578,6 +854,197 @@ async def test_legacy_backfill_skips_non_baseline_tables(tmp_path: Path) -> None
             await engine.dispose()
     finally:
         Base.metadata.remove(phantom)
+
+
+# ---------------------------------------------------------------------------
+# Legacy backfill: an index added to the ORM model after the table was first
+# provisioned must also be created by the backfill helper, not only when the
+# table itself is missing. ``create_all`` with ``checkfirst=True`` skips a
+# table and all its ``Index`` objects when the table already exists (it only
+# checks the table, not each index). The backfill must therefore create every
+# baseline table's indexes explicitly, covering the case where the table is
+# present but one of its indexes was added in a later model change.
+# ---------------------------------------------------------------------------
+
+
+async def _channel_connections_index_names(engine) -> set[str]:
+    async with engine.connect() as conn:
+        return await conn.run_sync(lambda c: {ix["name"] for ix in sa.inspect(c).get_indexes("channel_connections")})
+
+
+@asyncio_test
+async def test_legacy_backfill_creates_missing_index_on_existing_table(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path))
+    try:
+        # Simulate a legacy DB where ``channel_connections`` was provisioned
+        # before the ``uq_channel_connection_active_identity`` partial unique
+        # index was added to the model -- create everything, then drop just
+        # that index.
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("DROP INDEX IF EXISTS uq_channel_connection_active_identity"))
+
+        # Confirm the index is gone.
+        indexes_before = await _channel_connections_index_names(engine)
+        assert "uq_channel_connection_active_identity" not in indexes_before, indexes_before
+
+        # Run the backfill helper -- this is what the legacy branch calls.
+        async with engine.begin() as conn:
+            await conn.run_sync(_run_baseline_create_all_sync)
+
+        # The index must now exist.
+        indexes_after = await _channel_connections_index_names(engine)
+        assert "uq_channel_connection_active_identity" in indexes_after, indexes_after
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_legacy_backfill_idempotent_when_index_already_exists(tmp_path: Path) -> None:
+    """The explicit index-creation pass must not raise when the index is already present."""
+    engine = create_async_engine(_url(tmp_path))
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        indexes_before = await _channel_connections_index_names(engine)
+        assert "uq_channel_connection_active_identity" in indexes_before
+
+        # Running the backfill helper over an already-correct DB must succeed.
+        async with engine.begin() as conn:
+            await conn.run_sync(_run_baseline_create_all_sync)
+
+        indexes_after = await _channel_connections_index_names(engine)
+        assert "uq_channel_connection_active_identity" in indexes_after
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_legacy_backfill_rejects_post_baseline_indexes(tmp_path: Path) -> None:
+    """Regression: the index loop must not create post-baseline indexes (e.g.
+    ``uq_runs_thread_active`` from 0004) that have data prerequisites. If the
+    backfill creates a partial unique index before the owning revision runs its
+    dedup step, duplicate rows in the legacy DB raise ``IntegrityError`` and
+    crash bootstrap.
+
+    We seed two active (status='pending') runs on the same thread -- the exact
+    case revision 0004's ``_dedupe_active_runs_per_thread`` was written for --
+    and assert the backfill helper succeeds without error, then confirm
+    0004 still runs correctly (dedup + index creation) during upgrade.
+    """
+    engine = create_async_engine(_url(tmp_path))
+    try:
+        # 1. Simulate a legacy DB: create baseline schema (0001 only), then
+        #    seed violating data that a post-baseline partial unique index
+        #    would reject.
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0001_baseline")
+
+        async with engine.begin() as conn:
+            # Insert two pending runs for the same thread -- violates the
+            # partial UNIQUE constraint uq_runs_thread_active that 0004 adds.
+            for i in range(2):
+                await conn.execute(
+                    sa.text(
+                        "INSERT INTO runs "
+                        "(run_id, thread_id, user_id, assistant_id, status, "
+                        "multitask_strategy, metadata_json, kwargs_json, "
+                        "message_count, total_input_tokens, total_output_tokens, "
+                        "total_tokens, llm_call_count, lead_agent_tokens, "
+                        "subagent_tokens, middleware_tokens, token_usage_by_model, "
+                        "created_at, updated_at) "
+                        "VALUES (:run_id, 'thread-1', 'u1', 'asst-1', 'pending', "
+                        "'reject', '{}', '{}', 0, 0, 0, 0, 0, 0, 0, 0, '{}', "
+                        ":created_at, :updated_at)"
+                    ),
+                    {
+                        "run_id": f"run-{i}",
+                        "created_at": f"2026-01-01T00:00:0{i}",
+                        "updated_at": f"2026-01-01T00:00:0{i}",
+                    },
+                )
+
+        # 2. Run the backfill helper -- must NOT crash on duplicate data.
+        async with engine.begin() as conn:
+            await conn.run_sync(_run_baseline_create_all_sync)
+
+        # 3. Stamp baseline and upgrade to head -- 0004 should dedupe then
+        #    create the index cleanly.
+        await asyncio.to_thread(_upgrade, cfg, "0001_baseline")  # stamp-like: 0001 already ran
+        await asyncio.to_thread(_upgrade, cfg, "head")
+
+        # 4. After upgrade, the index must exist and only one active run
+        #    should remain (0004's dedup cancelled the other).
+        async with engine.connect() as conn:
+            indexes = await conn.run_sync(lambda c: {ix["name"] for ix in sa.inspect(c).get_indexes("runs")})
+            assert "uq_runs_thread_active" in indexes, "0004 should have created uq_runs_thread_active after dedup"
+
+            # 0004's dedup cancels all-but-one active run per thread.
+            remaining = (await conn.execute(sa.text("SELECT COUNT(*) FROM runs WHERE thread_id='thread-1' AND status='pending'"))).scalar()
+            assert remaining == 1, f"Expected 1 pending run after 0004 dedup, got {remaining}"
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_legacy_backfill_duplicate_channel_connections_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    """The target index ``uq_channel_connection_active_identity`` is a baseline
+    partial UNIQUE. Seeding duplicate non-revoked channel connections must
+    NOT crash the backfill with ``IntegrityError``, since no revision dedupes
+    channel connections (unlike runs). A crash would brick bootstrap with no
+    self-heal path.
+
+    The backfill catches the creation error and logs a warning; the operator
+    must fix the duplicate data and re-run.
+    """
+    engine = create_async_engine(_url(tmp_path))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0001_baseline")
+
+        # Drop the index so the backfill has work to do.
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("DROP INDEX IF EXISTS uq_channel_connection_active_identity"))
+
+        # Seed duplicate non-revoked connections with the same identity.
+        async with engine.begin() as conn:
+            for i in range(2):
+                await conn.execute(
+                    sa.text(
+                        "INSERT INTO channel_connections "
+                        "(id, owner_user_id, provider, status, external_account_id, "
+                        "workspace_id, scopes_json, capabilities_json, metadata_json, "
+                        "created_at, updated_at) "
+                        "VALUES (:cid, :owner, 'slack', 'active', 'ext-1', 'ws-1', "
+                        "'[]', '{}', '{}', :created_at, :updated_at)"
+                    ),
+                    {
+                        "cid": f"cc-{i}",
+                        # The baseline owner+identity unique constraint requires
+                        # distinct owners; the partial active-identity index does not.
+                        "owner": f"u{i}",
+                        "created_at": "2026-01-01T00:00:00",
+                        "updated_at": "2026-01-01T00:00:00",
+                    },
+                )
+
+        # Backfill must not crash even with duplicate data.
+        async with engine.begin() as conn:
+            await conn.run_sync(_run_baseline_create_all_sync)
+
+        # The index won't exist (duplicate data prevents creation), but
+        # bootstrap must have survived -- the operator can fix data and retry.
+        async with engine.connect() as conn:
+            indexes = await conn.run_sync(lambda c: {ix["name"] for ix in sa.inspect(c).get_indexes("channel_connections")})
+        # Index missing is expected when data violates the constraint.
+        # The backfill logged a warning instead of crashing.
+        assert "uq_channel_connection_active_identity" not in indexes
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -615,7 +1082,7 @@ class TestDecideState:
 # ---------------------------------------------------------------------------
 
 
-def test_head_revision_is_token_usage_revision() -> None:
+def test_head_revision_matches_latest_schema_revision() -> None:
     assert _get_head_revision() == HEAD
 
 
