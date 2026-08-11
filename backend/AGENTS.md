@@ -1393,7 +1393,10 @@ CI.
 is the canonical DeerFlow-owned service contract; the adjacent conformance
 fixture supplies positive, negative, transition, and exact-Observed cases.
 `tests/test_nexus_skill_receiver_contract.py` validates the OpenAPI surface and
-provider semantics without mounting receiver routes. Run it with
+provider semantics plus the shared `http_v1`/`ssh_v1` binding metadata without
+mounting receiver routes or implementing the forced-command dispatcher. The SSH
+mapping must reference the existing canonical component schemas instead of
+creating a parallel CLI schema. Run it with
 `PYTHONPATH=. uv run pytest tests/test_nexus_skill_receiver_contract.py -q`.
 Do not generate or maintain a second receiver OpenAPI in Nexus, and do not adapt
 the existing `/api/skills` current-user routes as a fallback.

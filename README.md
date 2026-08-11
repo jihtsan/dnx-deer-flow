@@ -1103,7 +1103,12 @@ and read scope-specific Observed state. The OpenAPI source is
 [`contracts/openapi/nexus-skill-receiver-v1.yaml`](contracts/openapi/nexus-skill-receiver-v1.yaml),
 with provider fixtures in the adjacent `.conformance.json` file.
 
-This published contract does not mean the receiver runtime is enabled. Until
+The same artifact defines the `http_v1` binding and the P0 `ssh_v1` forced-command
+binding. SSH accepts only the five allowlisted actions, reuses the canonical
+component schemas, and supports controlled directory reads plus exact `USER`
+first installation; it does not publish a separate CLI schema or enable `GLOBAL`.
+
+This contract definition does not mean the receiver runtime is enabled. Until
 machine authentication, directory privacy, native global activation, package
 trust, Runtime compatibility, and failure-recovery policies are approved and
 implemented, deployments must advertise `read_only` or `unsupported`. Nexus

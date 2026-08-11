@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   summary: Canonical service-to-service contract for Nexus-managed Skill installation in DeerFlow.
   description: >-
-    This is the only published Nexus Skill receiver contract owned by DeerFlow. It is a
+    This is the only canonical Nexus Skill receiver contract owned by DeerFlow. It is a
     service-to-service API for one Nexus binding; browsers must use the Nexus public API.
     Version 1 defines capability discovery, a controlled user directory, first-install
     commands for native GLOBAL and exact USER targets, durable operations, and scope-specific
@@ -61,6 +61,89 @@ x-receiver-contract:
     - packageTrustPolicy
     - runtimeCompatibilityGrammar
     - activationFailureRecovery
+  bindings:
+    http_v1:
+      kind: http
+      authenticationProfiles: [oauth2_client_credentials, mtls, combined]
+      operationIds:
+        capabilities.get: getNexusSkillReceiverCapabilities
+        users.list: listNexusSkillReceiverUsers
+        install.submit: createNexusSkillReceiverOperation
+        operations.get: getNexusSkillReceiverOperation
+        observations.query: queryNexusSkillReceiverObservation
+    ssh_v1:
+      kind: ssh
+      authenticationProfile: ssh_forced_command
+      targetScopes: [USER]
+      forcedCommand: nexus-skill-receiver-v1
+      argvGrammar: '^nexus-skill-receiver-v1 (capabilities\.get|users\.list|install\.submit|operations\.get|observations\.query)$'
+      forbiddenFeatures:
+        - interactive_shell
+        - pty
+        - agent_forwarding
+        - port_forwarding
+        - x11_forwarding
+        - scp
+        - sftp
+      request:
+        jsonSerialization: RFC 8785 JSON Canonicalization Scheme encoded as UTF-8
+        maximumJsonFrameBytes: 65536
+        frameDelimiter: LF
+        packageAction: install.submit
+        packageEncoding: raw_octets
+        packageLengthField: command.packageSizeBytes
+        packageDigestField: command.packageDigest
+        endOfRequest: EOF
+      response:
+        jsonSerialization: RFC 8785 JSON Canonicalization Scheme encoded as UTF-8
+        documentCount: 1
+        terminator: LF_then_EOF
+        stdoutOtherBytes: forbidden
+        successExitCode: 0
+        problemExitCode: 10
+        problemSchema:
+          $ref: '#/components/schemas/ReceiverProblem'
+      actions:
+        capabilities.get:
+          httpOperationId: getNexusSkillReceiverCapabilities
+          serviceActions: [receiver:capabilities:read]
+          requiredFrameFields: [contractVersion, correlationId]
+          optionalFrameFields: []
+          successSchema:
+            $ref: '#/components/schemas/ReceiverCapabilitySnapshot'
+        users.list:
+          httpOperationId: listNexusSkillReceiverUsers
+          serviceActions: [receiver:user-directory:read]
+          requiredFrameFields: [contractVersion, correlationId, limit]
+          optionalFrameFields: [query, cursor]
+          successSchema:
+            $ref: '#/components/schemas/ReceiverUserPage'
+        install.submit:
+          httpOperationId: createNexusSkillReceiverOperation
+          serviceActions: [receiver:install:user]
+          requiredFrameFields: [contractVersion, correlationId, idempotencyKey, requestSha256, command]
+          optionalFrameFields: []
+          commandSchema:
+            $ref: '#/components/schemas/ReceiverInstallCommand'
+          successSchema:
+            $ref: '#/components/schemas/ReceiverOperation'
+          unsupportedTargetProblemCode: GLOBAL_INSTALL_UNSUPPORTED
+        operations.get:
+          httpOperationId: getNexusSkillReceiverOperation
+          serviceActions: [receiver:operations:read]
+          requiredFrameFields: [contractVersion, correlationId, operationId]
+          optionalFrameFields: []
+          successSchema:
+            $ref: '#/components/schemas/ReceiverOperation'
+        observations.query:
+          httpOperationId: queryNexusSkillReceiverObservation
+          serviceActions: [receiver:observe:user]
+          requiredFrameFields: [contractVersion, correlationId, query]
+          optionalFrameFields: []
+          querySchema:
+            $ref: '#/components/schemas/ObservationQuery'
+          successSchema:
+            $ref: '#/components/schemas/ObservedSkillInstallation'
 tags:
   - name: Nexus Skill Receiver
     description: Dedicated machine-to-machine receiver operations. This tag is never a browser API.
@@ -98,6 +181,7 @@ paths:
                   summary: Reachable receiver with unresolved release gates
                   value:
                     contractVersion: 1.0.0
+                    transportProfile: ssh_v1
                     runtimeVersion: 0.9.0
                     connection: healthy
                     accessMode: read_only
@@ -596,6 +680,9 @@ components:
     ReceiverConnectionStatus:
       type: string
       enum: [healthy, unreachable, unauthorized, incompatible, not_ready]
+    ReceiverTransportProfile:
+      type: string
+      enum: [http_v1, ssh_v1]
     ReceiverAccessMode:
       type: string
       enum: [read_write, read_only, unsupported]
@@ -613,7 +700,7 @@ components:
       enum: [global_and_user, global_only, user_only, unsupported]
     ReceiverAuthenticationProfile:
       type: string
-      enum: [unapproved, oauth2_client_credentials, mtls, combined]
+      enum: [unapproved, oauth2_client_credentials, mtls, combined, ssh_forced_command]
     ReceiverServiceAction:
       type: string
       enum:
@@ -674,6 +761,7 @@ components:
       additionalProperties: false
       required:
         - contractVersion
+        - transportProfile
         - runtimeVersion
         - connection
         - accessMode
@@ -685,6 +773,8 @@ components:
       properties:
         contractVersion:
           $ref: '#/components/schemas/SemVer'
+        transportProfile:
+          $ref: '#/components/schemas/ReceiverTransportProfile'
         runtimeVersion:
           oneOf:
             - type: string
@@ -712,15 +802,34 @@ components:
               format: date-time
             - type: 'null'
       not:
-        properties:
-          accessMode:
-            const: read_write
-          authorization:
-            properties:
-              profile:
-                const: unapproved
-            required: [profile]
-        required: [accessMode, authorization]
+        anyOf:
+          - properties:
+              accessMode:
+                const: read_write
+              authorization:
+                properties:
+                  profile:
+                    const: unapproved
+                required: [profile]
+            required: [accessMode, authorization]
+          - properties:
+              transportProfile:
+                const: ssh_v1
+              authorization:
+                properties:
+                  profile:
+                    enum: [oauth2_client_credentials, mtls, combined]
+                required: [profile]
+            required: [transportProfile, authorization]
+          - properties:
+              transportProfile:
+                const: http_v1
+              authorization:
+                properties:
+                  profile:
+                    const: ssh_forced_command
+                required: [profile]
+            required: [transportProfile, authorization]
     ReceiverUser:
       type: object
       additionalProperties: false
