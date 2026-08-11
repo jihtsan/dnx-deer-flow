@@ -1,0 +1,43 @@
+from deerflow.persistence.knowledge_documents.model import (
+    KnowledgeDirectoryRow,
+    KnowledgeDocumentRow,
+    KnowledgeIngestionJobRow,
+    KnowledgeIngestionRetryRequestRow,
+    KnowledgeRemoteDocumentRow,
+)
+from deerflow.persistence.knowledge_documents.sql import (
+    KnowledgeDirectoryConflictError,
+    KnowledgeDirectoryNotEmptyError,
+    KnowledgeDocumentCreateResult,
+    KnowledgeDocumentDeleteCandidate,
+    KnowledgeDocumentDeleteConflictError,
+    KnowledgeDocumentQuotaExceededError,
+    KnowledgeDocumentRepository,
+    KnowledgeIdempotencyConflictError,
+    KnowledgeIngestionClaim,
+    KnowledgeJobRetryConflictError,
+    KnowledgeJobRetryNotAllowedError,
+    KnowledgeManualRetryResult,
+    KnowledgeRemoteDocumentSnapshot,
+)
+
+__all__ = [
+    "KnowledgeDocumentCreateResult",
+    "KnowledgeDocumentDeleteCandidate",
+    "KnowledgeDocumentDeleteConflictError",
+    "KnowledgeDirectoryConflictError",
+    "KnowledgeDirectoryNotEmptyError",
+    "KnowledgeDirectoryRow",
+    "KnowledgeDocumentRepository",
+    "KnowledgeDocumentQuotaExceededError",
+    "KnowledgeDocumentRow",
+    "KnowledgeIdempotencyConflictError",
+    "KnowledgeIngestionClaim",
+    "KnowledgeIngestionJobRow",
+    "KnowledgeIngestionRetryRequestRow",
+    "KnowledgeJobRetryConflictError",
+    "KnowledgeJobRetryNotAllowedError",
+    "KnowledgeManualRetryResult",
+    "KnowledgeRemoteDocumentRow",
+    "KnowledgeRemoteDocumentSnapshot",
+]

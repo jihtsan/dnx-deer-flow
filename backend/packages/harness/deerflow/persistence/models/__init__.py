@@ -14,6 +14,7 @@ its storage implementation lives in ``deerflow.runtime.events.store.db`` and
 there is no matching entity directory.
 """
 
+from deerflow.persistence.agents.model import AgentRow
 from deerflow.persistence.channel_connections.model import (
     ChannelConnectionRow,
     ChannelConversationRow,
@@ -21,23 +22,42 @@ from deerflow.persistence.channel_connections.model import (
     ChannelOAuthStateRow,
 )
 from deerflow.persistence.feedback.model import FeedbackRow
+from deerflow.persistence.knowledge_documents.model import (
+    KnowledgeDirectoryRow,
+    KnowledgeDocumentRow,
+    KnowledgeIngestionJobRow,
+    KnowledgeIngestionRetryRequestRow,
+    KnowledgeRemoteDocumentRow,
+)
+from deerflow.persistence.knowledge_scope.model import KnowledgeScopeRow
+from deerflow.persistence.mcp_tasks.model import McpTaskRow
 from deerflow.persistence.models.run_event import RunEventRow
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.scheduled_task_runs.model import ScheduledTaskRunRow
 from deerflow.persistence.scheduled_tasks.model import ScheduledTaskRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 from deerflow.persistence.user.model import UserRow
+from deerflow.persistence.webhook_delivery.model import WebhookDeliveryRow
 
 __all__ = [
+    "AgentRow",
     "ChannelConnectionRow",
     "ChannelConversationRow",
     "ChannelCredentialRow",
     "ChannelOAuthStateRow",
     "FeedbackRow",
+    "KnowledgeDocumentRow",
+    "KnowledgeDirectoryRow",
+    "KnowledgeIngestionJobRow",
+    "KnowledgeIngestionRetryRequestRow",
+    "KnowledgeRemoteDocumentRow",
+    "KnowledgeScopeRow",
+    "McpTaskRow",
     "RunEventRow",
     "RunRow",
     "ScheduledTaskRow",
     "ScheduledTaskRunRow",
     "ThreadMetaRow",
     "UserRow",
+    "WebhookDeliveryRow",
 ]

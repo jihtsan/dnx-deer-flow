@@ -1,7 +1,10 @@
 from . import (
     artifacts,
     assistants_compat,
+    browser,
     input_polish,
+    knowledge_data,
+    knowledge_documents,
     mcp,
     models,
     scheduled_tasks,
@@ -15,7 +18,10 @@ from . import (
 __all__ = [
     "artifacts",
     "assistants_compat",
+    "browser",
     "input_polish",
+    "knowledge_data",
+    "knowledge_documents",
     "mcp",
     "models",
     "scheduled_tasks",
