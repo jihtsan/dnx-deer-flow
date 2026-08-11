@@ -106,7 +106,14 @@ Nexus Skill receiver note:
   `backend/tests/test_nexus_skill_receiver_contract.py` pin capabilities,
   controlled cursor-based user search, closed `GLOBAL|USER` targets, durable
   operation phases, exact Observed success, headers, stable errors, default
-  denial, and major-version rules.
+  denial, transport/authentication profiles, and major-version rules. Its
+  `http_v1` and `ssh_v1` bindings reuse those same component schemas; there is
+  no second CLI schema.
+- The P0 `ssh_v1` binding is a USER-only forced-command profile with five exact
+  actions, bounded canonical JSON framing, raw package streaming for
+  `install.submit`, and closed stdout/exit behavior. It does not authorize an
+  interactive shell, PTY, forwarding, SCP, SFTP, `GLOBAL`, or direct Skill-path
+  access.
 - Publishing the contract does not implement or enable receiver routes. Until
   the listed authentication, privacy, native-global, trust, compatibility, and
   recovery gates are approved, providers must report `read_only` or

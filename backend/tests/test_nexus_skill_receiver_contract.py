@@ -31,12 +31,63 @@ EXPECTED_TRANSITIONS = {
     "failed": set(),
 }
 EXPECTED_CAPABILITY_ENUMS = {
+    "ReceiverTransportProfile": {"http_v1", "ssh_v1"},
     "ReceiverConnectionStatus": {"healthy", "unreachable", "unauthorized", "incompatible", "not_ready"},
     "ReceiverAccessMode": {"read_write", "read_only", "unsupported"},
     "ReceiverFreshness": {"current", "stale", "unavailable"},
     "CapabilitySupport": {"supported", "unsupported"},
     "ReceiverObservationMode": {"global_and_user", "global_only", "user_only", "unsupported"},
     "ReceiverActivationMode": {"global_and_user", "global_only", "user_only", "unsupported"},
+}
+EXPECTED_AUTHENTICATION_PROFILES = {
+    "unapproved",
+    "oauth2_client_credentials",
+    "mtls",
+    "combined",
+    "ssh_forced_command",
+}
+EXPECTED_SSH_ACTIONS = {
+    "capabilities.get": {
+        "httpOperationId": "getNexusSkillReceiverCapabilities",
+        "serviceActions": {"receiver:capabilities:read"},
+        "requiredFrameFields": {"contractVersion", "correlationId"},
+        "optionalFrameFields": set(),
+        "successSchema": "ReceiverCapabilitySnapshot",
+    },
+    "users.list": {
+        "httpOperationId": "listNexusSkillReceiverUsers",
+        "serviceActions": {"receiver:user-directory:read"},
+        "requiredFrameFields": {"contractVersion", "correlationId", "limit"},
+        "optionalFrameFields": {"query", "cursor"},
+        "successSchema": "ReceiverUserPage",
+    },
+    "install.submit": {
+        "httpOperationId": "createNexusSkillReceiverOperation",
+        "serviceActions": {"receiver:install:user"},
+        "requiredFrameFields": {
+            "contractVersion",
+            "correlationId",
+            "idempotencyKey",
+            "requestSha256",
+            "command",
+        },
+        "optionalFrameFields": set(),
+        "successSchema": "ReceiverOperation",
+    },
+    "operations.get": {
+        "httpOperationId": "getNexusSkillReceiverOperation",
+        "serviceActions": {"receiver:operations:read"},
+        "requiredFrameFields": {"contractVersion", "correlationId", "operationId"},
+        "optionalFrameFields": set(),
+        "successSchema": "ReceiverOperation",
+    },
+    "observations.query": {
+        "httpOperationId": "queryNexusSkillReceiverObservation",
+        "serviceActions": {"receiver:observe:user"},
+        "requiredFrameFields": {"contractVersion", "correlationId", "query"},
+        "optionalFrameFields": set(),
+        "successSchema": "ObservedSkillInstallation",
+    },
 }
 EXPECTED_PROVIDER_ERROR_CODES = {
     "AUTHENTICATION_REQUIRED",
@@ -253,12 +304,138 @@ def test_closed_enums_and_state_machine_are_exhaustive() -> None:
     assert set(schemas["ReceiverOperationPhase"]["x-terminal-values"]) == {"succeeded", "rejected", "failed"}
     for name, expected in EXPECTED_CAPABILITY_ENUMS.items():
         assert set(schemas[name]["enum"]) == expected
+    assert set(schemas["ReceiverAuthenticationProfile"]["enum"]) == EXPECTED_AUTHENTICATION_PROFILES
 
     version_policy = contract["x-receiver-contract"]["versionPolicy"]
     assert version_policy["closedEnumsRequireMajor"] is True
     assert version_policy["optionalResponseFieldsAreAdditive"] is True
     assert version_policy["additiveErrorCodesRequireMinor"] is True
     assert version_policy["authorityOrHashChangesRequireMajor"] is True
+
+
+def test_ssh_binding_reuses_canonical_components_and_has_closed_wire_rules() -> None:
+    contract = _load_contract()
+    receiver_contract = contract["x-receiver-contract"]
+    bindings = receiver_contract["bindings"]
+
+    assert set(bindings) == {"http_v1", "ssh_v1"}
+    assert bindings["http_v1"]["kind"] == "http"
+
+    ssh = bindings["ssh_v1"]
+    assert ssh["kind"] == "ssh"
+    assert ssh["authenticationProfile"] == "ssh_forced_command"
+    assert ssh["targetScopes"] == ["USER"]
+    assert ssh["forcedCommand"] == "nexus-skill-receiver-v1"
+    assert ssh["argvGrammar"] == "^nexus-skill-receiver-v1 (capabilities\\.get|users\\.list|install\\.submit|operations\\.get|observations\\.query)$"
+    assert set(ssh["forbiddenFeatures"]) == {
+        "interactive_shell",
+        "pty",
+        "agent_forwarding",
+        "port_forwarding",
+        "x11_forwarding",
+        "scp",
+        "sftp",
+    }
+
+    request = ssh["request"]
+    assert request == {
+        "jsonSerialization": "RFC 8785 JSON Canonicalization Scheme encoded as UTF-8",
+        "maximumJsonFrameBytes": 65536,
+        "frameDelimiter": "LF",
+        "packageAction": "install.submit",
+        "packageEncoding": "raw_octets",
+        "packageLengthField": "command.packageSizeBytes",
+        "packageDigestField": "command.packageDigest",
+        "endOfRequest": "EOF",
+    }
+    response = ssh["response"]
+    assert response["jsonSerialization"] == "RFC 8785 JSON Canonicalization Scheme encoded as UTF-8"
+    assert response["documentCount"] == 1
+    assert response["terminator"] == "LF_then_EOF"
+    assert response["stdoutOtherBytes"] == "forbidden"
+    assert response["successExitCode"] == 0
+    assert response["problemExitCode"] == 10
+    assert response["problemSchema"] == {"$ref": "#/components/schemas/ReceiverProblem"}
+
+    assert set(ssh["actions"]) == set(EXPECTED_SSH_ACTIONS)
+    http_operations = {operation["operationId"]: operation for _, _, operation in _operations(contract)}
+    for action, expected in EXPECTED_SSH_ACTIONS.items():
+        mapping = ssh["actions"][action]
+        assert mapping["httpOperationId"] == expected["httpOperationId"]
+        assert set(mapping["serviceActions"]) == expected["serviceActions"]
+        assert set(mapping["requiredFrameFields"]) == expected["requiredFrameFields"]
+        assert set(mapping["optionalFrameFields"]) == expected["optionalFrameFields"]
+        assert mapping["successSchema"] == {"$ref": f"#/components/schemas/{expected['successSchema']}"}
+        for value in mapping.values():
+            if isinstance(value, dict) and "$ref" in value:
+                assert value["$ref"].startswith("#/components/schemas/")
+        assert "schemas" not in mapping
+
+        http_operation = http_operations[expected["httpOperationId"]]
+        if "x-required-service-actions" in http_operation:
+            assert set(http_operation["x-required-service-actions"]) == expected["serviceActions"]
+        else:
+            assert set(http_operation["x-required-service-actions-by-target"]["USER"]) == expected["serviceActions"]
+
+    assert ssh["actions"]["install.submit"]["commandSchema"] == {"$ref": "#/components/schemas/ReceiverInstallCommand"}
+    assert ssh["actions"]["install.submit"]["unsupportedTargetProblemCode"] == "GLOBAL_INSTALL_UNSUPPORTED"
+    assert ssh["actions"]["observations.query"]["querySchema"] == {"$ref": "#/components/schemas/ObservationQuery"}
+
+
+def test_ssh_action_conformance_frames_reuse_http_parameter_and_component_rules() -> None:
+    contract = _load_contract()
+    fixtures = _load_fixtures()
+    ssh = contract["x-receiver-contract"]["bindings"]["ssh_v1"]
+    cases = fixtures["sshActionCases"]
+
+    assert {case["action"] for case in cases} == set(EXPECTED_SSH_ACTIONS)
+    for case in cases:
+        action = case["action"]
+        mapping = ssh["actions"][action]
+        frame = case["frame"]
+        required = set(mapping["requiredFrameFields"])
+        allowed = required | set(mapping["optionalFrameFields"])
+
+        assert case["argv"] == f"{ssh['forcedCommand']} {action}"
+        assert required <= set(frame) <= allowed
+        assert frame["contractVersion"] == fixtures["contractVersion"]
+        assert not _validation_errors(contract, "SemVer", frame["contractVersion"])
+        correlation_schema = contract["components"]["parameters"]["CorrelationId"]["schema"]
+        assert not list(Draft202012Validator(correlation_schema).iter_errors(frame["correlationId"]))
+
+        if action == "users.list":
+            for field, parameter_name in (("query", "DirectoryQuery"), ("cursor", "Cursor"), ("limit", "Limit")):
+                if field in frame:
+                    schema = contract["components"]["parameters"][parameter_name]["schema"]
+                    assert not list(Draft202012Validator(schema).iter_errors(frame[field]))
+        elif action == "install.submit":
+            assert not _validation_errors(contract, "ReceiverInstallCommand", frame["command"])
+            for field, parameter_name in (("idempotencyKey", "IdempotencyKey"), ("requestSha256", "RequestSha256")):
+                schema = contract["components"]["parameters"][parameter_name]["schema"]
+                assert not list(Draft202012Validator(schema).iter_errors(frame[field]))
+            assert case["packageByteCount"] == frame["command"]["packageSizeBytes"]
+        elif action == "operations.get":
+            schema = contract["components"]["parameters"]["OperationId"]["schema"]
+            validator = Draft202012Validator(schema, format_checker=FormatChecker())
+            assert not list(validator.iter_errors(frame["operationId"]))
+        elif action == "observations.query":
+            assert not _validation_errors(contract, "ObservationQuery", frame["query"])
+
+        if action != "install.submit":
+            assert "packageByteCount" not in case
+
+
+def test_ssh_binding_rejects_global_without_changing_the_shared_command_schema() -> None:
+    contract = _load_contract()
+    fixtures = _load_fixtures()
+    case = fixtures["sshBindingProblemCases"][0]
+
+    assert case["action"] == "install.submit"
+    assert case["exitCode"] == 10
+    assert not _validation_errors(contract, "ReceiverInstallCommand", case["command"])
+    assert not _validation_errors(contract, "ReceiverProblem", case["problem"])
+    assert case["command"]["target"] == {"scope": "GLOBAL"}
+    assert case["problem"]["code"] == "GLOBAL_INSTALL_UNSUPPORTED"
 
 
 def test_error_code_is_open_but_known_provider_codes_are_unique() -> None:
