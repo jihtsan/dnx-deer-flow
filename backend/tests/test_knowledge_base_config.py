@@ -10,6 +10,8 @@ def test_knowledge_base_defaults_to_disabled_and_unconfigured() -> None:
     assert config.enabled is False
     assert config.lightrag.base_url is None
     assert config.lightrag.api_key is None
+    assert config.lightrag.timeout_seconds == 5.0
+    assert config.lightrag.query_timeout_seconds == 60.0
 
 
 def test_lightrag_api_key_is_masked_in_config_representation() -> None:
@@ -37,5 +39,6 @@ def test_config_example_documents_the_lightrag_connection() -> None:
             "base_url": None,
             "api_key": None,
             "timeout_seconds": 5.0,
+            "query_timeout_seconds": 60.0,
         },
     }

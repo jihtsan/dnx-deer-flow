@@ -14,11 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from deerflow.persistence.base import Base
 from deerflow.persistence.knowledge_documents import (
+    KnowledgeDirectoryConflictError,
+    KnowledgeDirectoryNotEmptyError,
     KnowledgeDocumentQuotaExceededError,
     KnowledgeDocumentRepository,
     KnowledgeIdempotencyConflictError,
     KnowledgeJobRetryConflictError,
     KnowledgeJobRetryNotAllowedError,
+    KnowledgeRemoteDocumentSnapshot,
 )
 from deerflow.persistence.knowledge_documents.model import (
     KnowledgeDocumentRow,
@@ -60,6 +63,7 @@ async def _exercise_contract(sf: async_sessionmaker[AsyncSession]) -> None:
         "id": "doc-stable",
         "scope_id": "scope-stable",
         "owner_user_id": "alice",
+        "directory_id": None,
         "original_filename": "产品说明.txt",
         "storage_name": "doc-stable.txt",
         "content_type": "text/plain",
@@ -67,12 +71,17 @@ async def _exercise_contract(sf: async_sessionmaker[AsyncSession]) -> None:
         "content_sha256": "a" * 64,
         "status": "pending",
         "lightrag_tracking_id": None,
+        "lightrag_stage": "pending",
+        "lightrag_chunks_count": None,
+        "lightrag_stage_updated_at": created.document["lightrag_stage_updated_at"],
         "failure_code": None,
         "failure_reason": None,
         "ingestion_job_id": "job-stable",
         "created_at": created.document["created_at"],
         "updated_at": created.document["updated_at"],
         "completed_at": None,
+        "source": "managed",
+        "original_available": True,
     }
     assert created.job["status"] == "pending"
 
@@ -188,6 +197,378 @@ async def sqlite_document_sf(tmp_path) -> AsyncIterator[async_sessionmaker[Async
 @pytest.mark.asyncio
 async def test_sqlite_repository_contract(sqlite_document_sf) -> None:
     await _exercise_contract(sqlite_document_sf)
+
+
+@pytest.mark.asyncio
+async def test_remote_reconciliation_persists_only_unmanaged_documents_and_updates_stats(sqlite_document_sf) -> None:
+    await _create_scope(sqlite_document_sf)
+    repo = KnowledgeDocumentRepository(sqlite_document_sf)
+    managed = await repo.create_document_with_job(
+        document_id="doc-managed",
+        job_id="job-managed",
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        idempotency_key="upload-managed",
+        original_filename="managed.txt",
+        storage_name="doc-managed.txt",
+        content_type="text/plain",
+        size_bytes=12,
+        content_sha256="a" * 64,
+    )
+    await repo.set_remote_tracking(job_id=managed.job["id"], tracking_id="track-managed")
+    await repo.set_document_status(job_id=managed.job["id"], status="ready")
+    synced_at = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+
+    synced = await repo.sync_remote_documents(
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        documents=(
+            KnowledgeRemoteDocumentSnapshot(
+                remote_document_id="remote-managed",
+                track_id="track-managed",
+                filename="doc-managed.txt",
+                content_type="text/plain",
+                content_length=12,
+                status="ready",
+                created_at=datetime(2026, 7, 13, 8, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 7, 13, 8, 1, tzinfo=UTC),
+            ),
+            KnowledgeRemoteDocumentSnapshot(
+                remote_document_id="remote-external",
+                track_id="track-external",
+                filename="legacy.pdf",
+                content_type="application/pdf",
+                content_length=2048,
+                status="ready",
+                created_at=datetime(2026, 7, 12, 8, 0, tzinfo=UTC),
+                updated_at=datetime(2026, 7, 12, 8, 1, tzinfo=UTC),
+            ),
+        ),
+        synced_at=synced_at,
+    )
+
+    assert synced == 1
+    remote_documents = await repo.list_remote_documents_for_user("alice")
+    assert remote_documents == [
+        {
+            "id": remote_documents[0]["id"],
+            "scope_id": "scope-stable",
+            "owner_user_id": "alice",
+            "directory_id": None,
+            "remote_document_id": "remote-external",
+            "original_filename": "legacy.pdf",
+            "content_type": "application/pdf",
+            "content_length": 2048,
+            "status": "ready",
+            "lightrag_tracking_id": "track-external",
+            "lightrag_stage": None,
+            "lightrag_chunks_count": None,
+            "lightrag_stage_updated_at": "2026-07-12T08:01:00+00:00",
+            "failure_code": None,
+            "failure_reason": None,
+            "created_at": "2026-07-12T08:00:00+00:00",
+            "updated_at": "2026-07-12T08:01:00+00:00",
+            "last_synced_at": synced_at.isoformat(),
+            "source": "remote",
+            "original_available": False,
+        }
+    ]
+    assert await repo.document_stats_for_user("alice") == {
+        "total": 2,
+        "pending": 0,
+        "indexing": 0,
+        "ready": 2,
+        "failed": 0,
+    }
+    assert (
+        await repo.sync_remote_documents(
+            scope_id="scope-stable",
+            owner_user_id="alice",
+            documents=(),
+            synced_at=synced_at + timedelta(minutes=1),
+        )
+        == 0
+    )
+    assert await repo.list_remote_documents_for_user("alice") == []
+    assert (await repo.document_stats_for_user("alice"))["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_document_delete_removes_job_and_retry_ledger(sqlite_document_sf) -> None:
+    await _create_scope(sqlite_document_sf)
+    repo = KnowledgeDocumentRepository(sqlite_document_sf)
+    created = await repo.create_document_with_job(
+        document_id="doc-delete",
+        job_id="job-delete",
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        idempotency_key="upload-delete",
+        original_filename="delete.txt",
+        storage_name="doc-delete.txt",
+        content_type="text/plain",
+        size_bytes=6,
+        content_sha256="d" * 64,
+    )
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=UTC)
+    claim = await repo.claim_job(
+        job_id=created.job["id"],
+        now=now,
+        lease_owner="delete-test",
+        lease_duration=timedelta(minutes=1),
+    )
+    assert claim is not None
+    failed = await repo.record_job_failure(
+        job_id=created.job["id"],
+        lease_owner="delete-test",
+        attempt_count=1,
+        now=now,
+        error_code="delete_retryable",
+        error_message="retryable",
+        retryable=False,
+        base_delay=timedelta(seconds=1),
+        max_delay=timedelta(seconds=10),
+    )
+    assert failed is not None
+    retried = await repo.retry_failed_document(
+        document_id=created.document["id"],
+        owner_user_id="alice",
+        retry_key="retry-delete",
+        now=now + timedelta(seconds=1),
+        allowed_error_codes=frozenset({"delete_retryable"}),
+    )
+    assert retried.activated is True
+    cancelled = await repo.cancel_job(
+        job_id=created.job["id"],
+        now=now + timedelta(seconds=2),
+    )
+    assert cancelled is not None
+
+    assert await repo.delete_document_for_user(document_id="doc-delete", owner_user_id="alice") is True
+
+    async with sqlite_document_sf() as session:
+        assert await session.scalar(select(func.count()).select_from(KnowledgeDocumentRow)) == 0
+        assert await session.scalar(select(func.count()).select_from(KnowledgeIngestionJobRow)) == 0
+        assert await session.scalar(select(func.count()).select_from(KnowledgeIngestionRetryRequestRow)) == 0
+
+
+@pytest.mark.asyncio
+async def test_remote_reconciliation_rejects_stale_snapshot_updates_and_deletes(sqlite_document_sf) -> None:
+    await _create_scope(sqlite_document_sf)
+    repo = KnowledgeDocumentRepository(sqlite_document_sf)
+    older = datetime(2026, 7, 14, 7, 0, tzinfo=UTC)
+    newer = older + timedelta(minutes=5)
+
+    await repo.sync_remote_documents(
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        documents=(
+            KnowledgeRemoteDocumentSnapshot(
+                remote_document_id="remote-stable",
+                track_id="track-new",
+                filename="new-name.pdf",
+                content_type="application/pdf",
+                content_length=20,
+                status="ready",
+                created_at=older,
+                updated_at=newer,
+            ),
+        ),
+        synced_at=newer,
+    )
+    await repo.sync_remote_documents(
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        documents=(
+            KnowledgeRemoteDocumentSnapshot(
+                remote_document_id="remote-stable",
+                track_id="track-old",
+                filename="old-name.pdf",
+                content_type="application/pdf",
+                content_length=10,
+                status="indexing",
+                created_at=older,
+                updated_at=older,
+            ),
+        ),
+        synced_at=older,
+    )
+    await repo.sync_remote_documents(
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        documents=(),
+        synced_at=older,
+    )
+
+    documents = await repo.list_remote_documents_for_user("alice")
+    assert len(documents) == 1
+    assert documents[0]["original_filename"] == "new-name.pdf"
+    assert documents[0]["content_length"] == 20
+    assert documents[0]["status"] == "ready"
+    assert documents[0]["lightrag_tracking_id"] == "track-new"
+    assert documents[0]["last_synced_at"] == newer.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_remote_reconciliation_converges_without_duplicate_rows(sqlite_document_sf) -> None:
+    await _create_scope(sqlite_document_sf)
+    repo = KnowledgeDocumentRepository(sqlite_document_sf)
+    synced_at = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+    snapshot = (
+        KnowledgeRemoteDocumentSnapshot(
+            remote_document_id="remote-concurrent",
+            track_id="track-concurrent",
+            filename="concurrent.txt",
+            content_type="text/plain",
+            content_length=10,
+            status="ready",
+            created_at=synced_at,
+            updated_at=synced_at,
+        ),
+    )
+
+    await asyncio.gather(
+        repo.sync_remote_documents(
+            scope_id="scope-stable",
+            owner_user_id="alice",
+            documents=snapshot,
+            synced_at=synced_at,
+        ),
+        repo.sync_remote_documents(
+            scope_id="scope-stable",
+            owner_user_id="alice",
+            documents=snapshot,
+            synced_at=synced_at,
+        ),
+    )
+
+    documents = await repo.list_remote_documents_for_user("alice")
+    assert [document["remote_document_id"] for document in documents] == ["remote-concurrent"]
+
+
+@pytest.mark.asyncio
+async def test_directory_tree_enforces_sibling_uniqueness_empty_delete_and_document_moves(sqlite_document_sf) -> None:
+    await _create_scope(sqlite_document_sf)
+    repo = KnowledgeDocumentRepository(sqlite_document_sf)
+    now = datetime(2026, 7, 14, 9, 0, tzinfo=UTC)
+    engineering = await repo.create_directory(
+        directory_id="dir-engineering",
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        parent_id=None,
+        name="工程资料",
+        normalized_name="工程资料",
+        now=now,
+    )
+    procedures = await repo.create_directory(
+        directory_id="dir-procedures",
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        parent_id=engineering["id"],
+        name="规程",
+        normalized_name="规程",
+        now=now,
+    )
+
+    with pytest.raises(KnowledgeDirectoryConflictError):
+        await repo.create_directory(
+            directory_id="dir-duplicate",
+            scope_id="scope-stable",
+            owner_user_id="alice",
+            parent_id=engineering["id"],
+            name="规程",
+            normalized_name="规程",
+            now=now,
+        )
+
+    created = await repo.create_document_with_job(
+        document_id="doc-in-directory",
+        job_id="job-in-directory",
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        idempotency_key="upload-in-directory",
+        original_filename="规程.txt",
+        storage_name="doc-in-directory.txt",
+        content_type="text/plain",
+        size_bytes=8,
+        content_sha256="d" * 64,
+        directory_id=procedures["id"],
+    )
+    assert created.document["directory_id"] == procedures["id"]
+
+    directories = await repo.list_directories_for_user("alice")
+    assert directories == [
+        {
+            **engineering,
+            "document_count": 0,
+            "child_count": 1,
+        },
+        {
+            **procedures,
+            "document_count": 1,
+            "child_count": 0,
+        },
+    ]
+    with pytest.raises(KnowledgeDirectoryNotEmptyError):
+        await repo.delete_directory(
+            directory_id=engineering["id"],
+            owner_user_id="alice",
+        )
+    with pytest.raises(KnowledgeDirectoryNotEmptyError):
+        await repo.delete_directory(
+            directory_id=procedures["id"],
+            owner_user_id="alice",
+        )
+
+    moved = await repo.move_document_to_directory(
+        document_id=created.document["id"],
+        owner_user_id="alice",
+        directory_id=engineering["id"],
+        now=now + timedelta(minutes=1),
+    )
+    assert moved is not None
+    assert moved["source"] == "managed"
+    assert moved["directory_id"] == engineering["id"]
+
+    await repo.sync_remote_documents(
+        scope_id="scope-stable",
+        owner_user_id="alice",
+        documents=(
+            KnowledgeRemoteDocumentSnapshot(
+                remote_document_id="remote-directory-document",
+                track_id="track-directory-document",
+                filename="远端规程.pdf",
+                content_type="application/pdf",
+                content_length=32,
+                status="ready",
+                created_at=now,
+                updated_at=now,
+            ),
+        ),
+        synced_at=now,
+    )
+    remote_document = (await repo.list_remote_documents_for_user("alice"))[0]
+    moved_remote = await repo.move_document_to_directory(
+        document_id=remote_document["id"],
+        owner_user_id="alice",
+        directory_id=engineering["id"],
+        now=now + timedelta(minutes=1),
+    )
+    assert moved_remote is not None
+    assert moved_remote["source"] == "remote"
+    assert moved_remote["directory_id"] == engineering["id"]
+
+    assert await repo.delete_directory(
+        directory_id=procedures["id"],
+        owner_user_id="alice",
+    )
+    renamed = await repo.rename_directory(
+        directory_id=engineering["id"],
+        owner_user_id="alice",
+        name="工程中心",
+        normalized_name="工程中心",
+        now=now + timedelta(minutes=2),
+    )
+    assert renamed is not None and renamed["name"] == "工程中心"
 
 
 @pytest.mark.asyncio

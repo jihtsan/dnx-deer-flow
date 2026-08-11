@@ -17,7 +17,7 @@ from app.gateway.authz import AuthContext
 from app.gateway.deps import get_config
 from app.gateway.routers import knowledge_documents, knowledge_scope
 from app.gateway.routers.features import get_lightrag_client
-from app.knowledge.lightrag import LightRAGHealth, LightRAGOfflineError
+from app.knowledge.lightrag import LightRAGDelete, LightRAGHealth, LightRAGOfflineError, LightRAGRemoteDocument
 from app.knowledge.storage import KnowledgeFileStore
 from deerflow.persistence.base import Base
 from deerflow.persistence.knowledge_documents import KnowledgeDocumentRepository
@@ -41,6 +41,157 @@ class HealthyLightRAG:
     async def upload_document(self, **_kwargs):
         self.upload_calls += 1
         raise AssertionError("HTTP request must not await or perform LightRAG upload")
+
+    async def list_documents(self) -> tuple[LightRAGRemoteDocument, ...]:
+        return ()
+
+
+class RemoteDocumentsLightRAG(HealthyLightRAG):
+    def __init__(self) -> None:
+        super().__init__()
+        self.available = True
+
+    async def list_documents(self) -> tuple[LightRAGRemoteDocument, ...]:
+        if not self.available:
+            raise LightRAGOfflineError("connection_failed")
+        return (
+            LightRAGRemoteDocument(
+                id="remote-existing",
+                track_id="track-existing",
+                status="processed",
+                file_path="/private/operator/AI-V1.1.pptx",
+                content_length=4096,
+                created_at="2026-07-10T08:00:00Z",
+                updated_at="2026-07-10T08:05:00Z",
+            ),
+        )
+
+
+class DeletingLightRAG(HealthyLightRAG):
+    def __init__(
+        self,
+        *,
+        track_id: str = "track-managed",
+        remote_id: str = "remote-managed",
+        delete_status: str = "deletion_started",
+        delete_error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self.track_id = track_id
+        self.remote_id = remote_id
+        self.delete_status = delete_status
+        self.delete_error = delete_error
+        self.deleted = False
+        self.find_calls: list[str] = []
+        self.delete_calls: list[tuple[list[str], bool, bool]] = []
+
+    async def find_document_by_filename(self, filename: str) -> LightRAGRemoteDocument | None:
+        self.find_calls.append(filename)
+        return LightRAGRemoteDocument(
+            id=self.remote_id,
+            track_id=self.track_id,
+            status="processed",
+            file_path=filename,
+        )
+
+    async def delete_documents(
+        self,
+        doc_ids: list[str],
+        *,
+        delete_file: bool = False,
+        delete_llm_cache: bool = False,
+    ) -> LightRAGDelete:
+        self.delete_calls.append((doc_ids, delete_file, delete_llm_cache))
+        if self.delete_error is not None:
+            raise self.delete_error
+        if self.delete_status == "deletion_started":
+            self.deleted = True
+        return LightRAGDelete(
+            status=self.delete_status,
+            message="accepted",
+            doc_id=", ".join(doc_ids),
+        )
+
+    async def list_documents(self) -> tuple[LightRAGRemoteDocument, ...]:
+        if self.deleted:
+            return ()
+        return (
+            LightRAGRemoteDocument(
+                id=self.remote_id,
+                track_id=self.track_id,
+                status="processed",
+                file_path="managed.txt",
+            ),
+        )
+
+
+class RemoteDeletingLightRAG(RemoteDocumentsLightRAG):
+    def __init__(self) -> None:
+        super().__init__()
+        self.deleted = False
+        self.delete_calls: list[tuple[list[str], bool, bool]] = []
+
+    async def list_documents(self) -> tuple[LightRAGRemoteDocument, ...]:
+        if self.deleted:
+            return ()
+        return await super().list_documents()
+
+    async def delete_documents(
+        self,
+        doc_ids: list[str],
+        *,
+        delete_file: bool = False,
+        delete_llm_cache: bool = False,
+    ) -> LightRAGDelete:
+        self.delete_calls.append((doc_ids, delete_file, delete_llm_cache))
+        self.deleted = True
+        return LightRAGDelete(
+            status="deletion_started",
+            message="accepted",
+            doc_id=", ".join(doc_ids),
+        )
+
+
+class MissingRemoteLightRAG(DeletingLightRAG):
+    async def find_document_by_filename(self, filename: str) -> LightRAGRemoteDocument | None:
+        self.find_calls.append(filename)
+        return None
+
+
+class PersistentDeletingLightRAG(DeletingLightRAG):
+    async def list_documents(self) -> tuple[LightRAGRemoteDocument, ...]:
+        return (
+            LightRAGRemoteDocument(
+                id=self.remote_id,
+                track_id=self.track_id,
+                status="processed",
+                file_path="managed.txt",
+            ),
+        )
+
+
+class OfflineAfterDeleteLightRAG(DeletingLightRAG):
+    async def list_documents(self) -> tuple[LightRAGRemoteDocument, ...]:
+        if self.deleted:
+            raise LightRAGOfflineError("private polling endpoint")
+        return await super().list_documents()
+
+
+class IncompatibleDeletingLightRAG(DeletingLightRAG):
+    async def health(self) -> LightRAGHealth:
+        return LightRAGHealth(status="healthy", core_version="0.0.0", api_version="0308", pipeline_active=False)
+
+    async def find_document_by_filename(self, filename: str) -> LightRAGRemoteDocument | None:
+        raise AssertionError("readiness must be checked before remote lookup")
+
+
+class FailingDeleteFileStore:
+    def __init__(self) -> None:
+        self.delete_calls: list[Path] = []
+
+    async def delete(self, path: Path) -> None:
+        self.delete_calls.append(path)
+        raise OSError("simulated file delete failure")
 
 
 class OfflineLightRAG:
@@ -105,6 +256,7 @@ def _app(
     app.state.knowledge_file_store = runtime.store
     app.state.knowledge_ingestion_service = runtime.service
     app.include_router(knowledge_documents.router)
+    app.include_router(knowledge_documents.directory_router)
     app.include_router(knowledge_scope.router)
     app.dependency_overrides[get_config] = lambda: _config(enabled=enabled, configured=configured)
     app.dependency_overrides[get_lightrag_client] = lambda: lightrag_client or HealthyLightRAG()
@@ -123,12 +275,29 @@ def _create_scope(runtime, *, owner: UUID = ALICE_ID, enabled: bool = True) -> N
     )
 
 
-def _upload(client: TestClient, *, key: str = "upload-stable", content: bytes = b"knowledge body"):
+def _upload(
+    client: TestClient,
+    *,
+    key: str = "upload-stable",
+    content: bytes = b"knowledge body",
+    directory_id: str | None = None,
+):
     return client.post(
         "/api/knowledge/documents",
         headers={"Idempotency-Key": key},
+        data={"directory_id": directory_id} if directory_id is not None else None,
         files={"file": ("产品说明.txt", content, "text/plain")},
     )
+
+
+def _cancel_ingestion(runtime, document: dict) -> None:
+    cancelled = anyio.run(
+        lambda: runtime.document_repo.cancel_job(
+            job_id=document["ingestion_job_id"],
+            now=datetime(2026, 7, 15, 7, 0, tzinfo=UTC),
+        )
+    )
+    assert cancelled is not None
 
 
 def test_upload_persists_file_and_atomic_records_then_returns_before_lightrag(document_runtime) -> None:
@@ -143,9 +312,11 @@ def test_upload_persists_file_and_atomic_records_then_returns_before_lightrag(do
     assert payload["deduplicated"] is False
     assert payload["document"] == {
         "id": payload["document"]["id"],
+        "directory_id": None,
         "original_filename": "产品说明.txt",
         "content_type": "text/plain",
         "size_bytes": len(b"knowledge body"),
+        "content_length": None,
         "status": "pending",
         "lightrag_tracking_id": None,
         "failure_code": None,
@@ -154,6 +325,8 @@ def test_upload_persists_file_and_atomic_records_then_returns_before_lightrag(do
         "created_at": payload["document"]["created_at"],
         "updated_at": payload["document"]["updated_at"],
         "completed_at": None,
+        "source": "managed",
+        "original_available": True,
         "ingestion": {
             "status": "pending",
             "attempt_count": 0,
@@ -164,6 +337,11 @@ def test_upload_persists_file_and_atomic_records_then_returns_before_lightrag(do
             "last_error_message": None,
             "manual_retry_count": 0,
             "retry_allowed": False,
+        },
+        "progress": {
+            "stage": "pending",
+            "chunks_count": None,
+            "stage_updated_at": payload["document"]["progress"]["stage_updated_at"],
         },
     }
     assert lightrag.upload_calls == 0
@@ -312,6 +490,461 @@ def test_list_recovers_persisted_state_and_preserves_owner_invisibility(document
     assert reloaded.json() == {"documents": [accepted]}
     assert invisible.status_code == 200
     assert invisible.json() == {"documents": []}
+
+
+def test_delete_managed_document_without_remote_state_removes_records_and_file(document_runtime) -> None:
+    _create_scope(document_runtime)
+    with TestClient(_app(document_runtime)) as client:
+        accepted = _upload(client).json()["document"]
+        _cancel_ingestion(document_runtime, accepted)
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        deleted = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+        after_delete = client.get("/api/knowledge/documents")
+        replayed_key = _upload(client)
+
+    assert deleted.status_code == 204
+    assert persisted_files and all(not path.exists() for path in persisted_files)
+    assert after_delete.json() == {"documents": []}
+    assert replayed_key.status_code == 202
+    assert replayed_key.json()["deduplicated"] is False
+
+
+def test_delete_managed_document_is_idempotent_when_original_file_is_already_missing(document_runtime) -> None:
+    _create_scope(document_runtime)
+    with TestClient(_app(document_runtime)) as client:
+        accepted = _upload(client).json()["document"]
+        _cancel_ingestion(document_runtime, accepted)
+        for path in document_runtime.root.rglob("*"):
+            if path.is_file():
+                path.unlink()
+
+        deleted = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert deleted.status_code == 204
+    assert anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID)) == []
+
+
+def test_delete_rejects_pending_managed_ingestion(document_runtime) -> None:
+    _create_scope(document_runtime)
+    with TestClient(_app(document_runtime)) as client:
+        accepted = _upload(client).json()["document"]
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        rejected = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "knowledge_document_delete_active"
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+
+
+def test_delete_managed_document_resolves_and_deletes_the_remote_document_id(document_runtime) -> None:
+    _create_scope(document_runtime)
+    lightrag = DeletingLightRAG()
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        deleted = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert deleted.status_code == 204
+    assert len(lightrag.find_calls) == 1
+    assert lightrag.find_calls[0].startswith(accepted["id"])
+    assert lightrag.delete_calls == [(["remote-managed"], True, False)]
+    assert persisted_files and all(not path.exists() for path in persisted_files)
+    assert anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID)) == []
+
+
+def test_delete_managed_document_allows_local_cleanup_when_remote_is_already_absent(document_runtime) -> None:
+    _create_scope(document_runtime)
+    lightrag = MissingRemoteLightRAG()
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+
+        deleted = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert deleted.status_code == 204
+    assert len(lightrag.find_calls) == 1
+    assert lightrag.delete_calls == []
+    assert anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID)) == []
+
+
+def test_delete_remote_document_uses_persisted_remote_id(document_runtime) -> None:
+    _create_scope(document_runtime)
+    lightrag = RemoteDeletingLightRAG()
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        synced = client.get("/api/knowledge/documents").json()["documents"][0]
+        deleted = client.delete(f"/api/knowledge/documents/{synced['id']}")
+
+    assert deleted.status_code == 204
+    assert lightrag.delete_calls == [(["remote-existing"], True, False)]
+    assert anyio.run(document_runtime.document_repo.list_remote_documents_for_user, str(ALICE_ID)) == []
+
+
+def test_delete_rejects_tracking_mismatch_without_changing_local_state(document_runtime) -> None:
+    _create_scope(document_runtime)
+    lightrag = DeletingLightRAG(track_id="different-track")
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        rejected = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert rejected.status_code == 502
+    assert rejected.json()["detail"]["code"] == "knowledge_data_plane_invalid_response"
+    assert lightrag.delete_calls == []
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+
+
+def test_delete_upstream_failure_is_sanitized_and_preserves_local_state(document_runtime) -> None:
+    _create_scope(document_runtime)
+    lightrag = DeletingLightRAG(delete_error=LightRAGOfflineError("private endpoint failed"))
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        rejected = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert rejected.status_code == 503
+    assert rejected.json()["detail"]["code"] == "knowledge_data_plane_unavailable"
+    assert "private endpoint" not in rejected.text
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+
+
+def test_delete_unconfirmed_upstream_response_returns_502_and_preserves_local_state(document_runtime) -> None:
+    _create_scope(document_runtime)
+    lightrag = DeletingLightRAG(delete_status="not_allowed")
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        rejected = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert rejected.status_code == 502
+    assert rejected.json()["detail"]["code"] == "knowledge_data_plane_invalid_response"
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+
+
+def test_delete_waits_for_remote_disappearance_and_times_out_without_local_changes(
+    document_runtime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_scope(document_runtime)
+    monkeypatch.setattr(knowledge_documents, "REMOTE_DELETE_POLL_ATTEMPTS", 2)
+    monkeypatch.setattr(knowledge_documents, "REMOTE_DELETE_POLL_INTERVAL_SECONDS", 0)
+    lightrag = PersistentDeletingLightRAG()
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        rejected = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert rejected.status_code == 502
+    assert rejected.json()["detail"]["code"] == "knowledge_data_plane_invalid_response"
+    assert lightrag.delete_calls == [(["remote-managed"], True, False)]
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+
+
+def test_delete_poll_offline_returns_503_without_local_changes(
+    document_runtime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_scope(document_runtime)
+    monkeypatch.setattr(knowledge_documents, "REMOTE_DELETE_POLL_ATTEMPTS", 2)
+    monkeypatch.setattr(knowledge_documents, "REMOTE_DELETE_POLL_INTERVAL_SECONDS", 0)
+    lightrag = OfflineAfterDeleteLightRAG()
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+        rejected = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert rejected.status_code == 503
+    assert rejected.json()["detail"]["code"] == "knowledge_data_plane_unavailable"
+    assert "private polling endpoint" not in rejected.text
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+
+
+def test_delete_checks_data_plane_readiness_before_remote_operations(document_runtime) -> None:
+    _create_scope(document_runtime)
+    lightrag = IncompatibleDeletingLightRAG()
+    with TestClient(_app(document_runtime)) as client:
+        accepted = _upload(client).json()["document"]
+        anyio.run(
+            lambda: document_runtime.document_repo.set_remote_tracking(
+                job_id=accepted["ingestion_job_id"],
+                tracking_id="track-managed",
+            )
+        )
+        anyio.run(
+            lambda: document_runtime.document_repo.set_document_status(
+                job_id=accepted["ingestion_job_id"],
+                status="ready",
+            )
+        )
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        rejected = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert rejected.status_code == 503
+    assert rejected.json()["detail"]["code"] == "knowledge_data_plane_unavailable"
+    assert lightrag.find_calls == []
+    assert lightrag.delete_calls == []
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+
+
+def test_delete_logs_file_cleanup_failure_after_committed_local_delete(
+    document_runtime,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _create_scope(document_runtime)
+    app = _app(document_runtime)
+    failing_store = FailingDeleteFileStore()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        accepted = _upload(client).json()["document"]
+        _cancel_ingestion(document_runtime, accepted)
+        persisted_files = [path for path in document_runtime.root.rglob("*") if path.is_file()]
+        app.state.knowledge_file_store = failing_store
+
+        with caplog.at_level("ERROR", logger="app.gateway.routers.knowledge_documents"):
+            failed = client.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert failed.status_code == 500
+    assert len(failing_store.delete_calls) == 1
+    assert "Failed to delete managed knowledge document file after database deletion" in caplog.text
+    assert persisted_files and all(path.exists() for path in persisted_files)
+    assert anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID)) == []
+
+
+def test_delete_hides_foreign_documents_and_rejects_active_ingestion(document_runtime) -> None:
+    _create_scope(document_runtime)
+    with TestClient(_app(document_runtime)) as alice:
+        accepted = _upload(alice).json()["document"]
+
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=UTC)
+    claim = anyio.run(
+        lambda: document_runtime.document_repo.claim_job(
+            job_id=accepted["ingestion_job_id"],
+            now=now,
+            lease_owner="delete-test",
+            lease_duration=timedelta(minutes=1),
+        )
+    )
+    assert claim is not None
+
+    with TestClient(_app(document_runtime, user_id=BOB_ID)) as bob:
+        invisible = bob.delete(f"/api/knowledge/documents/{accepted['id']}")
+    with TestClient(_app(document_runtime)) as alice:
+        active = alice.delete(f"/api/knowledge/documents/{accepted['id']}")
+
+    assert invisible.status_code == 404
+    assert active.status_code == 409
+    assert active.json()["detail"]["code"] == "knowledge_document_delete_active"
+    assert len(anyio.run(document_runtime.document_repo.list_for_user, str(ALICE_ID))) == 1
+    assert [path for path in document_runtime.root.rglob("*") if path.is_file()]
+
+
+def test_list_reconciles_existing_lightrag_documents_and_uses_cache_when_remote_is_offline(
+    document_runtime,
+) -> None:
+    _create_scope(document_runtime)
+    lightrag = RemoteDocumentsLightRAG()
+    with TestClient(_app(document_runtime, lightrag_client=lightrag)) as client:
+        synced = client.get("/api/knowledge/documents")
+        lightrag.available = False
+        cached = client.get("/api/knowledge/documents")
+        scope = client.get("/api/knowledge/scope")
+
+    assert synced.status_code == cached.status_code == 200
+    assert synced.json() == cached.json()
+    assert synced.json() == {
+        "documents": [
+            {
+                "id": synced.json()["documents"][0]["id"],
+                "directory_id": None,
+                "original_filename": "AI-V1.1.pptx",
+                "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "size_bytes": None,
+                "content_length": 4096,
+                "status": "ready",
+                "lightrag_tracking_id": "track-existing",
+                "failure_code": None,
+                "failure_reason": None,
+                "ingestion_job_id": None,
+                "created_at": "2026-07-10T08:00:00+00:00",
+                "updated_at": "2026-07-10T08:05:00+00:00",
+                "completed_at": None,
+                "source": "remote",
+                "original_available": False,
+                "ingestion": None,
+                "progress": {
+                    "stage": "processed",
+                    "chunks_count": None,
+                    "stage_updated_at": "2026-07-10T08:05:00+00:00",
+                },
+            }
+        ]
+    }
+    assert scope.json()["scope"]["document_stats"] == {
+        "total": 1,
+        "pending": 0,
+        "indexing": 0,
+        "ready": 1,
+        "failed": 0,
+    }
+
+
+def test_directory_crud_upload_assignment_and_document_move(document_runtime) -> None:
+    _create_scope(document_runtime)
+    with TestClient(_app(document_runtime)) as client:
+        engineering = client.post(
+            "/api/knowledge/directories",
+            json={"name": "工程资料", "parent_id": None},
+        )
+        child = client.post(
+            "/api/knowledge/directories",
+            json={"name": "规程", "parent_id": engineering.json()["id"]},
+        )
+        duplicate = client.post(
+            "/api/knowledge/directories",
+            json={"name": "  规程  ", "parent_id": engineering.json()["id"]},
+        )
+        uploaded = _upload(client, directory_id=child.json()["id"])
+        non_empty = client.delete(f"/api/knowledge/directories/{child.json()['id']}")
+        moved = client.patch(
+            f"/api/knowledge/documents/{uploaded.json()['document']['id']}",
+            json={"directory_id": engineering.json()["id"]},
+        )
+        renamed = client.patch(
+            f"/api/knowledge/directories/{engineering.json()['id']}",
+            json={"name": "工程中心"},
+        )
+        deleted = client.delete(f"/api/knowledge/directories/{child.json()['id']}")
+        directories = client.get("/api/knowledge/directories")
+
+    assert engineering.status_code == child.status_code == 201
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "knowledge_directory_name_conflict"
+    assert uploaded.status_code == 202
+    assert uploaded.json()["document"]["directory_id"] == child.json()["id"]
+    assert non_empty.status_code == 409
+    assert non_empty.json()["detail"]["code"] == "knowledge_directory_not_empty"
+    assert moved.status_code == 200
+    assert moved.json()["directory_id"] == engineering.json()["id"]
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "工程中心"
+    assert deleted.status_code == 204
+    assert directories.json() == {
+        "directories": [
+            {
+                **renamed.json(),
+                "document_count": 1,
+                "child_count": 0,
+            }
+        ]
+    }
+
+
+def test_upload_rejects_unknown_directory_before_persisting_file(document_runtime) -> None:
+    _create_scope(document_runtime)
+    with TestClient(_app(document_runtime)) as client:
+        response = _upload(client, directory_id="missing-directory")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "knowledge_directory_not_found"
+    assert [path for path in document_runtime.root.rglob("*") if path.is_file()] == []
 
 
 def test_failed_document_exposes_diagnostics_and_manual_retry_is_idempotent(document_runtime) -> None:
@@ -501,12 +1134,15 @@ def test_document_routes_require_knowledge_permissions(document_runtime) -> None
     app.state.knowledge_file_store = document_runtime.store
     app.state.knowledge_ingestion_service = document_runtime.service
     app.include_router(knowledge_documents.router)
+    app.include_router(knowledge_documents.directory_router)
     app.dependency_overrides[get_config] = lambda: _config()
     app.dependency_overrides[get_lightrag_client] = lambda: HealthyLightRAG()
 
     with TestClient(app) as client:
         assert client.get("/api/knowledge/documents").status_code == 403
+        assert client.get("/api/knowledge/directories").status_code == 403
         assert _upload(client).status_code == 403
+        assert client.delete("/api/knowledge/documents/missing").status_code == 403
         assert (
             client.post(
                 "/api/knowledge/documents/missing/retry",

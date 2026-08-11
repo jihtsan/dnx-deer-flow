@@ -49,7 +49,7 @@ from deerflow.persistence.migrations._helpers import _normalize_default
 asyncio_test = pytest.mark.asyncio
 
 
-HEAD = "0011_mcp_tasks"
+HEAD = "0012_merge_knowledge_and_mcp_tasks"
 BASELINE = "0001_baseline"
 
 
@@ -152,6 +152,8 @@ async def test_empty_branch_creates_all_and_stamps_head(tmp_path: Path) -> None:
             "channel_oauth_states",
             "knowledge_scopes",
             "knowledge_documents",
+            "knowledge_directories",
+            "knowledge_remote_documents",
             "knowledge_ingestion_jobs",
             "knowledge_ingestion_retry_requests",
             "alembic_version",
@@ -515,6 +517,44 @@ async def test_0005_jobs_are_normalized_for_recovery(tmp_path: Path) -> None:
         assert rows[1]["next_attempt_at"] is not None
         assert all(row["attempt_count"] == 0 and row["max_attempts"] == 5 for row in rows)
         assert all(row["lease_owner"] is None and row["lease_expires_at"] is None for row in rows)
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_0006_database_upgrades_to_knowledge_catalog_schema(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-0006.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0006_reliable_knowledge_ingestion")
+
+        await asyncio.to_thread(_upgrade, cfg, "head")
+
+        tables = await _table_names(engine)
+        assert "knowledge_directories" in tables
+        assert "knowledge_remote_documents" in tables
+        async with engine.connect() as conn:
+            document_columns = await conn.run_sync(lambda sync_conn: {column["name"] for column in sa.inspect(sync_conn).get_columns("knowledge_documents")})
+        assert "directory_id" in document_columns
+        assert await _alembic_version(engine) == HEAD
+    finally:
+        await engine.dispose()
+
+
+@asyncio_test
+async def test_0009_repairs_missing_knowledge_retry_request_table(tmp_path: Path) -> None:
+    engine = create_async_engine(_url(tmp_path, "knowledge-missing-retry-table.db"))
+    try:
+        cfg = _get_alembic_config(engine)
+        await asyncio.to_thread(_upgrade, cfg, "0008_knowledge_progress")
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("DROP TABLE knowledge_ingestion_retry_requests"))
+        assert "knowledge_ingestion_retry_requests" not in await _table_names(engine)
+
+        await asyncio.to_thread(_upgrade, cfg, "head")
+
+        assert "knowledge_ingestion_retry_requests" in await _table_names(engine)
+        assert await _alembic_version(engine) == HEAD
     finally:
         await engine.dispose()
 
