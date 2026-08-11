@@ -11,6 +11,7 @@ import {
 describe("route asset measurement", () => {
   it("covers every approved representative route", () => {
     expect(ROUTES).toContain("/login");
+    expect(ROUTES).not.toContain("/");
   });
 
   it("removes an inherited static-mode flag from the normal build", () => {

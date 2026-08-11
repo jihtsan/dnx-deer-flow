@@ -10,6 +10,13 @@ function source(relativePath: string) {
 }
 
 describe("layout performance boundaries", () => {
+  it("keeps the root route as the login entry", () => {
+    const rootPage = source("src/app/page.tsx");
+
+    expect(rootPage).toContain('redirect("/login")');
+    expect(rootPage).not.toContain("@/components/landing/");
+  });
+
   it("keeps request locale and rich-content styles out of the root layout", () => {
     const rootLayout = source("src/app/layout.tsx");
 

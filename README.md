@@ -19,7 +19,8 @@ https://github.com/user-attachments/assets/a8bcadc4-e040-4cf2-8fda-dd768b999c18
 ## Official Website
 
 Learn more and see **real demos** on our [**official website**](https://deerflow.tech).
-The landing-page case studies open as allowlisted, read-only showcases without requiring a sign-in.
+Bundled case studies are served through allowlisted, read-only `/showcase/...`
+routes without requiring a sign-in; the application root redirects to `/login`.
 
 ## Sister Projects
 
@@ -1448,7 +1449,8 @@ Frontend route asset budgets can be checked with `cd frontend && pnpm
 perf:check`. The command measures `/login` from a normal production build, then
 performs a production static-demo build for the fixture-backed workspace routes.
 It measures the unique JavaScript and CSS referenced by representative routes
-and writes the detailed result to `.next/performance-results.json`.
+and writes the detailed result to `.next/performance-results.json`. The
+redirect-only `/` route is excluded because it has no independent asset payload.
 
 ## License
 

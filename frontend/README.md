@@ -69,7 +69,7 @@ pnpm start
 ## Site Map
 
 ```
-├── /                    # Landing page
+├── /                    # Redirects to /login
 ├── /chats               # Chat list
 ├── /chats/new           # New chat page
 └── /chats/[thread_id]   # A specific chat page
@@ -103,7 +103,7 @@ src/
 ├── components/             # React components
 │   ├── ui/                 # Reusable UI components
 │   ├── workspace/          # Workspace-specific components
-│   ├── landing/            # Landing page components
+│   ├── landing/            # Shared docs/blog public-page components
 │   └── ai-elements/        # AI-related UI elements
 ├── core/                   # Core business logic
 │   ├── api/                # API client & data fetching

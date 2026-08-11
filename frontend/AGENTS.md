@@ -48,12 +48,12 @@ The frontend is a stateful chat application. Users create **threads** (conversat
 
 ### Source Layout (`src/`)
 
-- **`app/`** — Next.js App Router. Routes include `/` (landing), `/showcase/[thread_id]` (allowlisted public read-only demos), `/workspace/chats/[thread_id]` (authenticated chat), `/workspace/agents/[agent_name]` and `/workspace/agents/new` (custom agents), `/workspace/knowledge` (single Knowledge Scope management and LightRAG status), `/blog/…`, the `(auth)/{login,setup,auth/callback}` flow, `/[lang]/docs/…`, and `/api/…` route handlers (e.g. `/api/memory`).
+- **`app/`** — Next.js App Router. Routes include `/` (redirects to `/login`), `/showcase/[thread_id]` (allowlisted public read-only demos), `/workspace/chats/[thread_id]` (authenticated chat), `/workspace/agents/[agent_name]` and `/workspace/agents/new` (custom agents), `/workspace/knowledge` (single Knowledge Scope management and LightRAG status), `/blog/…`, the `(auth)/{login,setup,auth/callback}` flow, `/[lang]/docs/…`, and `/api/…` route handlers (e.g. `/api/memory`).
 - **`components/`** — React components:
   - `ui/` — Shadcn UI primitives (auto-generated, ESLint-ignored)
   - `ai-elements/` — Vercel AI SDK elements (auto-generated, ESLint-ignored)
   - `workspace/` — Chat page components (messages, artifacts, settings)
-  - `landing/` — Landing page sections
+  - `landing/` — shared public-page sections used by docs, blog, and showcase content
   - `docs/` — Docs / MDX rendering components
 - **`core/`** — Business logic, the heart of the app. Domains include `threads/` (creation, streaming, state), `api/` (LangGraph client singleton), `agents/` (custom agents), `auth/` (authentication), `artifacts/`, `channels/` (IM connections), `integrations/` (managed third-party integration status/install clients such as Lark CLI), `i18n/` (en-US, zh-CN), `knowledge/` (strict feature and singleton Knowledge Scope contracts), `settings/`, `memory/`, `skills/`, `messages/`, `mcp/`, `models/`, `input-polish/` (pre-send draft rewrite API), `voice-input/` (browser speech-recognition helpers), `suggestions/`, `tasks/`, `todos/`, `tools/`, `workspace-changes/` (run-scoped changed-file summaries and diff fetching), `config/`, `notification/`, `blog/`, plus rendering helpers (`rehype/`, `streamdown/`) and `utils/`.
 - **`hooks/`** — Shared React hooks
@@ -251,6 +251,13 @@ Route asset budgets are enforced with `pnpm perf:check`. The command measures
 fixture-backed workspace routes. It starts the production server on temporary local
 ports, measures the unique JavaScript and CSS files referenced by representative
 routes, writes the detailed result to `.next/performance-results.json`, and compares
-totals with `performance-budgets.json`. Fix route ownership or split points when a
+totals with `performance-budgets.json`. The redirect-only `/` route is intentionally
+excluded because it has no independent asset payload. Fix route ownership or split points when a
 budget fails; do not raise a ceiling without documenting and reviewing the measured
 regression.
+
+The upstream/local integration baseline measured 171,658 B CSS for `/login`,
+196,330 B CSS for both workspace representatives, and 274,628 B CSS / 4,245,082 B
+JavaScript for the docs and blog representatives. The checked-in ceilings round
+those combined DNX/Knowledge totals up by roughly 2–4%; do not treat the prior
+upstream-only ceilings as the local baseline.
