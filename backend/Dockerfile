@@ -92,7 +92,7 @@ CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app 
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 # Clean image without build-essential — reduces size (~200 MB) and attack surface.
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm AS runtime-base
 
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -124,3 +124,26 @@ EXPOSE 8001
 
 # Default command (can be overridden in docker-compose)
 CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001"]
+
+# Opt-in restricted SSH transport. It is built only by the dedicated Compose
+# overlay and cannot start until both environment and config release gates pass.
+FROM runtime-base AS nexus-receiver-sshd
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --home-dir /var/empty/nexus-receiver --shell /bin/sh nexus-receiver \
+    && chmod 0555 /var/empty/nexus-receiver \
+    && passwd -l nexus-receiver
+
+COPY docker/nexus-receiver-sshd/sshd_config /etc/ssh/nexus-receiver-sshd_config
+COPY docker/nexus-receiver-sshd/entrypoint.sh /usr/local/bin/nexus-receiver-sshd-entrypoint
+RUN chmod 0555 /usr/local/bin/nexus-receiver-sshd-entrypoint \
+    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec .venv/bin/python -m app.gateway.nexus_receiver.forced_command "$@"' > /usr/local/bin/nexus-receiver-forced-command \
+    && chmod 0555 /usr/local/bin/nexus-receiver-forced-command
+
+EXPOSE 22
+ENTRYPOINT ["/usr/local/bin/nexus-receiver-sshd-entrypoint"]
+
+# Keep the ordinary Gateway image as Dockerfile's default final target.
+FROM runtime-base AS runtime

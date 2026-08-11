@@ -28,6 +28,7 @@ from deerflow.config.loop_detection_config import LoopDetectionConfig
 from deerflow.config.mcp_tasks_config import McpTasksConfig
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
+from deerflow.config.nexus_receiver_config import NexusReceiverConfig
 from deerflow.config.read_before_write_config import ReadBeforeWriteConfig
 from deerflow.config.reload_boundary import format_field_description
 from deerflow.config.run_events_config import RunEventsConfig
@@ -301,6 +302,13 @@ class AppConfig(BaseModel):
         description=format_field_description(
             "mcp_tasks",
             field_doc="Long-running MCP task persistence and background polling runtime.",
+        ),
+    )
+    nexus_receiver: NexusReceiverConfig = Field(
+        default_factory=NexusReceiverConfig,
+        description=format_field_description(
+            "nexus_receiver",
+            field_doc="Fail-closed release wiring for Nexus receiver HTTP/SSH transports and durable recovery.",
         ),
     )
     checkpointer: CheckpointerConfig | None = Field(
