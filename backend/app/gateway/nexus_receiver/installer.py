@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +18,18 @@ _METADATA_FILE = ".nexus-receiver.json"
 class UserScopedReceiverInstaller:
     """Adapter over DeerFlow's existing secure, atomic USER Skill storage."""
 
-    def __init__(self, storage_factory: Callable[[str], Any] | None = None) -> None:
+    def __init__(
+        self,
+        storage_factory: Callable[[str], Any] | None = None,
+        *,
+        precommit_scan: Callable[[Path, str], Awaitable[None]] | None = None,
+    ) -> None:
         if storage_factory is None:
             from deerflow.skills.storage import get_or_new_user_skill_storage
 
             storage_factory = get_or_new_user_skill_storage
         self._storage_factory = storage_factory
+        self._precommit_scan = precommit_scan
 
     @staticmethod
     def _write_package(package: bytes) -> str:
@@ -52,10 +58,17 @@ class UserScopedReceiverInstaller:
                 "runtimeSkillName": command.runtime_skill_name,
                 "packageDigest": command.package_digest,
             }
-            result = await storage.ainstall_skill_from_archive_with_metadata(
-                archive_path,
-                receiver_metadata=metadata,
-            )
+            if self._precommit_scan is None:
+                result = await storage.ainstall_skill_from_archive_with_metadata(
+                    archive_path,
+                    receiver_metadata=metadata,
+                )
+            else:
+                result = await storage.ainstall_skill_from_archive_with_metadata(
+                    archive_path,
+                    receiver_metadata=metadata,
+                    precommit_scan=self._precommit_scan,
+                )
             if result.get("skill_name") != command.runtime_skill_name:
                 raise ValueError("installed Skill name does not match the validated receiver command")
         finally:
