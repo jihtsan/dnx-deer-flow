@@ -24,6 +24,7 @@ nexus_receiver:
   enabled: false
   recovery_poll_interval_seconds: 30
   # ssh_account: nexus-receiver
+  # recovery_signal_socket: /run/nexus-receiver-ipc/recovery.sock
   # host_key_secret_ref:
   #   name: deerflow-receiver-host-key
   #   key: ssh_host_ed25519_key

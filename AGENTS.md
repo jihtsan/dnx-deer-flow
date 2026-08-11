@@ -137,7 +137,9 @@ Nexus Skill receiver note:
   A complete deployment bootstrap installs HTTP auth, the shared runtime,
   transport-principal mapping, and a supervised recovery service atomically;
   missing any component installs none of them. Recovery runs immediately at
-  startup, after durable in-process submit notification, and periodically.
+  startup, after durable submit notification, and periodically. The opt-in SSH
+  overlay carries cross-process wake-up over a private Unix datagram socket;
+  its fixed payload contains no authority or operation data.
 - `docker/docker-compose.nexus-receiver-ssh.yaml` is an explicit opt-in profile
   for a loopback-bound dedicated sshd account. Mounted host-key and principal-map
   Secrets generate owner-only runtime files and exact `restrict,command` keys;
@@ -145,7 +147,7 @@ Nexus Skill receiver note:
   The repository forced-command entry has no production context provider.
 - Real service-auth and directory policy, trust/compatibility policy, Secret and
   host-key issuance/rotation, stable principal ownership, directory privacy,
-  native `GLOBAL`, and cross-process SSH submit wake-up remain release gates.
+  native `GLOBAL`, and stable multi-process ownership remain release gates.
   Their absence must never be replaced by an environment switch that enables
   production writes.
   Existing `/api/skills` routes are not a compatibility fallback, and Nexus must
