@@ -585,7 +585,9 @@ async def test_0006_downgrade_maps_terminal_states_before_restoring_0005_schema(
         assert statuses == ["failed", "failed"]
         assert "attempt_count" not in columns
         assert "knowledge_ingestion_retry_requests" not in await _table_names(engine)
-        assert await _alembic_version(engine) == "0005_knowledge_documents"
+        # Downgrading the knowledge branch leaves the parallel agent-storage
+        # branch at its latest pre-merge revision.
+        assert await _alembic_version(engine) == "0006_agents"
     finally:
         await engine.dispose()
 
