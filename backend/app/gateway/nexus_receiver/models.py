@@ -40,6 +40,7 @@ class ReceiverCapabilities(_ReceiverModel):
 
 class ReceiverCapabilitySnapshot(_ReceiverModel):
     contract_version: Literal["1.0.0"] = "1.0.0"
+    transport_profile: Literal["http_v1"] = "http_v1"
     runtime_version: str | None = Field(min_length=1, max_length=100)
     connection: Literal["healthy"] = "healthy"
     access_mode: Literal["read_only"] = "read_only"
