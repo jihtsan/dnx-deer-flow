@@ -1,22 +1,28 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, false, func, or_, select, update
+from sqlalchemy import case, delete, false, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from deerflow.persistence.knowledge_documents.model import (
+    KnowledgeDirectoryRow,
     KnowledgeDocumentRow,
     KnowledgeIngestionJobRow,
     KnowledgeIngestionRetryRequestRow,
+    KnowledgeRemoteDocumentRow,
 )
 from deerflow.persistence.knowledge_scope.model import KnowledgeScopeRow
 from deerflow.utils.time import coerce_iso
 
 DOCUMENT_STATUSES = frozenset({"pending", "indexing", "ready", "failed"})
+LIGHTRAG_STAGES = frozenset({"pending", "parsing", "analyzing", "processing", "preprocessed", "processed", "failed"})
 INGESTION_JOB_STATUSES = frozenset({"pending", "leased", "retry_wait", "succeeded", "dead", "cancelled"})
 
 
@@ -34,6 +40,18 @@ class KnowledgeJobRetryConflictError(RuntimeError):
 
 class KnowledgeJobRetryNotAllowedError(RuntimeError):
     """The job is terminal and cannot be manually retried."""
+
+
+class KnowledgeDirectoryConflictError(RuntimeError):
+    """A sibling directory already uses the requested normalized name."""
+
+
+class KnowledgeDirectoryNotEmptyError(RuntimeError):
+    """A directory with child directories or documents cannot be deleted."""
+
+
+class KnowledgeDocumentDeleteConflictError(RuntimeError):
+    """A document with active ingestion work cannot be deleted."""
 
 
 @dataclass(frozen=True)
@@ -56,6 +74,28 @@ class KnowledgeManualRetryResult:
     activated: bool
 
 
+@dataclass(frozen=True)
+class KnowledgeDocumentDeleteCandidate:
+    document: dict[str, Any]
+    job: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class KnowledgeRemoteDocumentSnapshot:
+    remote_document_id: str
+    track_id: str
+    filename: str
+    content_type: str
+    content_length: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    lightrag_stage: str | None = None
+    lightrag_chunks_count: int | None = None
+    failure_code: str | None = None
+    failure_reason: str | None = None
+
+
 class KnowledgeDocumentRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
@@ -66,6 +106,7 @@ class KnowledgeDocumentRepository:
             "id": row.id,
             "scope_id": row.scope_id,
             "owner_user_id": row.owner_user_id,
+            "directory_id": row.directory_id,
             "original_filename": row.original_filename,
             "storage_name": row.storage_name,
             "content_type": row.content_type,
@@ -73,12 +114,17 @@ class KnowledgeDocumentRepository:
             "content_sha256": row.content_sha256,
             "status": row.status,
             "lightrag_tracking_id": row.lightrag_tracking_id,
+            "lightrag_stage": row.lightrag_stage,
+            "lightrag_chunks_count": row.lightrag_chunks_count,
+            "lightrag_stage_updated_at": (coerce_iso(row.lightrag_stage_updated_at) if row.lightrag_stage_updated_at is not None else None),
             "failure_code": row.failure_code,
             "failure_reason": row.failure_reason,
             "ingestion_job_id": row.ingestion_job_id,
             "created_at": coerce_iso(row.created_at),
             "updated_at": coerce_iso(row.updated_at),
             "completed_at": coerce_iso(row.completed_at) if row.completed_at is not None else None,
+            "source": "managed",
+            "original_available": True,
         }
 
     @staticmethod
@@ -96,6 +142,452 @@ class KnowledgeDocumentRepository:
             if data.get(key) is not None:
                 data[key] = coerce_iso(data[key])
         return data
+
+    @staticmethod
+    def _remote_document_to_dict(row: KnowledgeRemoteDocumentRow) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "scope_id": row.scope_id,
+            "owner_user_id": row.owner_user_id,
+            "directory_id": row.directory_id,
+            "remote_document_id": row.remote_document_id,
+            "original_filename": row.original_filename,
+            "content_type": row.content_type,
+            "content_length": row.content_length,
+            "status": row.status,
+            "lightrag_tracking_id": row.lightrag_tracking_id,
+            "lightrag_stage": row.lightrag_stage,
+            "lightrag_chunks_count": row.lightrag_chunks_count,
+            "lightrag_stage_updated_at": (coerce_iso(row.lightrag_stage_updated_at) if row.lightrag_stage_updated_at is not None else None),
+            "failure_code": row.failure_code,
+            "failure_reason": row.failure_reason,
+            "created_at": coerce_iso(row.created_at),
+            "updated_at": coerce_iso(row.updated_at),
+            "last_synced_at": coerce_iso(row.last_synced_at),
+            "source": "remote",
+            "original_available": False,
+        }
+
+    @staticmethod
+    def _directory_to_dict(row: KnowledgeDirectoryRow) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "scope_id": row.scope_id,
+            "owner_user_id": row.owner_user_id,
+            "parent_id": row.parent_id,
+            "name": row.name,
+            "created_at": coerce_iso(row.created_at),
+            "updated_at": coerce_iso(row.updated_at),
+        }
+
+    async def create_directory(
+        self,
+        *,
+        directory_id: str,
+        scope_id: str,
+        owner_user_id: str,
+        parent_id: str | None,
+        name: str,
+        normalized_name: str,
+        now: datetime,
+    ) -> dict[str, Any]:
+        async with self._sf() as session:
+            scope_exists = await session.scalar(
+                select(KnowledgeScopeRow.id).where(
+                    KnowledgeScopeRow.id == scope_id,
+                    KnowledgeScopeRow.owner_user_id == owner_user_id,
+                )
+            )
+            if scope_exists is None:
+                raise LookupError("Knowledge Scope not found")
+            if parent_id is not None:
+                parent_exists = await session.scalar(
+                    select(KnowledgeDirectoryRow.id).where(
+                        KnowledgeDirectoryRow.id == parent_id,
+                        KnowledgeDirectoryRow.scope_id == scope_id,
+                        KnowledgeDirectoryRow.owner_user_id == owner_user_id,
+                    )
+                )
+                if parent_exists is None:
+                    raise LookupError("Knowledge directory not found")
+            row = KnowledgeDirectoryRow(
+                id=directory_id,
+                scope_id=scope_id,
+                owner_user_id=owner_user_id,
+                parent_id=parent_id,
+                name=name,
+                normalized_name=normalized_name,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                raise KnowledgeDirectoryConflictError("knowledge_directory_name_conflict") from exc
+            return self._directory_to_dict(row)
+
+    async def list_directories_for_user(self, owner_user_id: str) -> list[dict[str, Any]]:
+        async with self._sf() as session:
+            directories = list(
+                (
+                    await session.execute(
+                        select(KnowledgeDirectoryRow)
+                        .join(KnowledgeScopeRow, KnowledgeDirectoryRow.scope_id == KnowledgeScopeRow.id)
+                        .where(
+                            KnowledgeDirectoryRow.owner_user_id == owner_user_id,
+                            KnowledgeScopeRow.owner_user_id == owner_user_id,
+                        )
+                        .order_by(KnowledgeDirectoryRow.created_at, KnowledgeDirectoryRow.id)
+                    )
+                ).scalars()
+            )
+            managed_counts = {
+                directory_id: count
+                for directory_id, count in await session.execute(
+                    select(KnowledgeDocumentRow.directory_id, func.count())
+                    .where(
+                        KnowledgeDocumentRow.owner_user_id == owner_user_id,
+                        KnowledgeDocumentRow.directory_id.is_not(None),
+                    )
+                    .group_by(KnowledgeDocumentRow.directory_id)
+                )
+            }
+            remote_counts = {
+                directory_id: count
+                for directory_id, count in await session.execute(
+                    select(KnowledgeRemoteDocumentRow.directory_id, func.count())
+                    .where(
+                        KnowledgeRemoteDocumentRow.owner_user_id == owner_user_id,
+                        KnowledgeRemoteDocumentRow.directory_id.is_not(None),
+                    )
+                    .group_by(KnowledgeRemoteDocumentRow.directory_id)
+                )
+            }
+        child_counts: dict[str, int] = {}
+        for directory in directories:
+            if directory.parent_id is not None:
+                child_counts[directory.parent_id] = child_counts.get(directory.parent_id, 0) + 1
+        return [
+            {
+                **self._directory_to_dict(directory),
+                "document_count": managed_counts.get(directory.id, 0) + remote_counts.get(directory.id, 0),
+                "child_count": child_counts.get(directory.id, 0),
+            }
+            for directory in directories
+        ]
+
+    async def rename_directory(
+        self,
+        *,
+        directory_id: str,
+        owner_user_id: str,
+        name: str,
+        normalized_name: str,
+        now: datetime,
+    ) -> dict[str, Any] | None:
+        async with self._sf() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeDirectoryRow).where(
+                        KnowledgeDirectoryRow.id == directory_id,
+                        KnowledgeDirectoryRow.owner_user_id == owner_user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.name = name
+            row.normalized_name = normalized_name
+            row.updated_at = now
+            try:
+                await session.commit()
+            except IntegrityError as exc:
+                await session.rollback()
+                raise KnowledgeDirectoryConflictError("knowledge_directory_name_conflict") from exc
+            return self._directory_to_dict(row)
+
+    async def delete_directory(self, *, directory_id: str, owner_user_id: str) -> bool:
+        async with self._sf() as session:
+            row = (
+                await session.execute(
+                    select(KnowledgeDirectoryRow).where(
+                        KnowledgeDirectoryRow.id == directory_id,
+                        KnowledgeDirectoryRow.owner_user_id == owner_user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return False
+            child_exists = await session.scalar(select(KnowledgeDirectoryRow.id).where(KnowledgeDirectoryRow.parent_id == row.id).limit(1))
+            managed_exists = await session.scalar(select(KnowledgeDocumentRow.id).where(KnowledgeDocumentRow.directory_id == row.id).limit(1))
+            remote_exists = await session.scalar(select(KnowledgeRemoteDocumentRow.id).where(KnowledgeRemoteDocumentRow.directory_id == row.id).limit(1))
+            if child_exists is not None or managed_exists is not None or remote_exists is not None:
+                raise KnowledgeDirectoryNotEmptyError("knowledge_directory_not_empty")
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def move_document_to_directory(
+        self,
+        *,
+        document_id: str,
+        owner_user_id: str,
+        directory_id: str | None,
+        now: datetime,
+    ) -> dict[str, Any] | None:
+        async with self._sf() as session:
+            if directory_id is not None:
+                directory_exists = await session.scalar(
+                    select(KnowledgeDirectoryRow.id).where(
+                        KnowledgeDirectoryRow.id == directory_id,
+                        KnowledgeDirectoryRow.owner_user_id == owner_user_id,
+                    )
+                )
+                if directory_exists is None:
+                    raise LookupError("Knowledge directory not found")
+            managed = (
+                await session.execute(
+                    select(KnowledgeDocumentRow).where(
+                        KnowledgeDocumentRow.id == document_id,
+                        KnowledgeDocumentRow.owner_user_id == owner_user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if managed is not None:
+                managed.directory_id = directory_id
+                managed.updated_at = now
+                await session.commit()
+                return self._document_to_dict(managed)
+            remote = (
+                await session.execute(
+                    select(KnowledgeRemoteDocumentRow).where(
+                        KnowledgeRemoteDocumentRow.id == document_id,
+                        KnowledgeRemoteDocumentRow.owner_user_id == owner_user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if remote is None:
+                return None
+            remote.directory_id = directory_id
+            await session.commit()
+            return self._remote_document_to_dict(remote)
+
+    @staticmethod
+    def _assert_document_delete_allowed(
+        document: KnowledgeDocumentRow | KnowledgeRemoteDocumentRow,
+        job: KnowledgeIngestionJobRow | None,
+    ) -> None:
+        if isinstance(document, KnowledgeRemoteDocumentRow):
+            if document.status in {"pending", "indexing"}:
+                raise KnowledgeDocumentDeleteConflictError("knowledge_document_delete_active")
+            return
+        terminal_job_statuses = {"succeeded", "dead", "cancelled"}
+        if document.status == "indexing" or job is None or job.status not in terminal_job_statuses:
+            raise KnowledgeDocumentDeleteConflictError("knowledge_document_delete_active")
+
+    async def get_document_delete_candidate_for_user(
+        self,
+        *,
+        document_id: str,
+        owner_user_id: str,
+    ) -> KnowledgeDocumentDeleteCandidate | None:
+        async with self._sf() as session:
+            managed_result = await session.execute(
+                select(KnowledgeDocumentRow, KnowledgeIngestionJobRow)
+                .join(KnowledgeIngestionJobRow, KnowledgeIngestionJobRow.document_id == KnowledgeDocumentRow.id)
+                .where(
+                    KnowledgeDocumentRow.id == document_id,
+                    KnowledgeDocumentRow.owner_user_id == owner_user_id,
+                )
+            )
+            managed = managed_result.one_or_none()
+            if managed is not None:
+                document, job = managed
+                self._assert_document_delete_allowed(document, job)
+                return KnowledgeDocumentDeleteCandidate(
+                    document=self._document_to_dict(document),
+                    job=self._job_to_dict(job),
+                )
+
+            remote = (
+                await session.execute(
+                    select(KnowledgeRemoteDocumentRow).where(
+                        KnowledgeRemoteDocumentRow.id == document_id,
+                        KnowledgeRemoteDocumentRow.owner_user_id == owner_user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if remote is None:
+                return None
+            self._assert_document_delete_allowed(remote, None)
+            return KnowledgeDocumentDeleteCandidate(
+                document=self._remote_document_to_dict(remote),
+                job=None,
+            )
+
+    async def delete_document_for_user(self, *, document_id: str, owner_user_id: str) -> bool:
+        async with self._sf() as session:
+            managed_result = await session.execute(
+                select(KnowledgeDocumentRow, KnowledgeIngestionJobRow)
+                .join(KnowledgeIngestionJobRow, KnowledgeIngestionJobRow.document_id == KnowledgeDocumentRow.id)
+                .where(
+                    KnowledgeDocumentRow.id == document_id,
+                    KnowledgeDocumentRow.owner_user_id == owner_user_id,
+                )
+                .with_for_update()
+            )
+            managed = managed_result.one_or_none()
+            if managed is not None:
+                document, job = managed
+                self._assert_document_delete_allowed(document, job)
+                await session.execute(delete(KnowledgeIngestionRetryRequestRow).where(KnowledgeIngestionRetryRequestRow.job_id == job.id))
+                await session.delete(job)
+                await session.delete(document)
+                await session.commit()
+                return True
+
+            remote = (
+                await session.execute(
+                    select(KnowledgeRemoteDocumentRow)
+                    .where(
+                        KnowledgeRemoteDocumentRow.id == document_id,
+                        KnowledgeRemoteDocumentRow.owner_user_id == owner_user_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if remote is None:
+                await session.rollback()
+                return False
+            self._assert_document_delete_allowed(remote, None)
+            await session.delete(remote)
+            await session.commit()
+            return True
+
+    @staticmethod
+    def _remote_document_id(scope_id: str, remote_document_id: str) -> str:
+        digest = hashlib.sha256(f"{scope_id}:{remote_document_id}".encode()).hexdigest()[:32]
+        return f"krd-{digest}"
+
+    async def sync_remote_documents(
+        self,
+        *,
+        scope_id: str,
+        owner_user_id: str,
+        documents: tuple[KnowledgeRemoteDocumentSnapshot, ...],
+        synced_at: datetime,
+    ) -> int:
+        if any(document.status not in DOCUMENT_STATUSES for document in documents):
+            raise ValueError("Unsupported remote knowledge document status")
+        if any(document.content_length < 0 for document in documents):
+            raise ValueError("Remote knowledge document content length must not be negative")
+        if any(document.lightrag_stage is not None and document.lightrag_stage not in LIGHTRAG_STAGES for document in documents):
+            raise ValueError("Unsupported LightRAG progress stage")
+
+        async with self._sf() as session:
+            scope_exists = await session.scalar(
+                select(KnowledgeScopeRow.id).where(
+                    KnowledgeScopeRow.id == scope_id,
+                    KnowledgeScopeRow.owner_user_id == owner_user_id,
+                )
+            )
+            if scope_exists is None:
+                raise LookupError("Knowledge Scope not found")
+
+            managed_rows = (
+                await session.execute(
+                    select(
+                        KnowledgeDocumentRow.lightrag_tracking_id,
+                        KnowledgeDocumentRow.storage_name,
+                    ).where(
+                        KnowledgeDocumentRow.scope_id == scope_id,
+                        KnowledgeDocumentRow.owner_user_id == owner_user_id,
+                    )
+                )
+            ).all()
+            managed_tracking_ids = {tracking_id for tracking_id, _storage_name in managed_rows if tracking_id}
+            managed_storage_names = {storage_name for _tracking_id, storage_name in managed_rows}
+            unmanaged = tuple(document for document in documents if document.track_id not in managed_tracking_ids and document.filename not in managed_storage_names)
+            remote_ids = {document.remote_document_id for document in unmanaged}
+            for document in unmanaged:
+                values = {
+                    "id": self._remote_document_id(scope_id, document.remote_document_id),
+                    "scope_id": scope_id,
+                    "owner_user_id": owner_user_id,
+                    "remote_document_id": document.remote_document_id,
+                    "original_filename": document.filename,
+                    "content_type": document.content_type,
+                    "content_length": document.content_length,
+                    "status": document.status,
+                    "lightrag_tracking_id": document.track_id,
+                    "lightrag_stage": document.lightrag_stage,
+                    "lightrag_chunks_count": document.lightrag_chunks_count,
+                    "lightrag_stage_updated_at": document.updated_at,
+                    "failure_code": document.failure_code,
+                    "failure_reason": document.failure_reason,
+                    "created_at": document.created_at,
+                    "updated_at": document.updated_at,
+                    "last_synced_at": synced_at,
+                }
+                dialect_name = session.get_bind().dialect.name
+                if dialect_name == "sqlite":
+                    statement = sqlite_insert(KnowledgeRemoteDocumentRow).values(**values)
+                elif dialect_name == "postgresql":
+                    statement = postgresql_insert(KnowledgeRemoteDocumentRow).values(**values)
+                else:
+                    raise RuntimeError(f"Unsupported database backend: {dialect_name}")
+                excluded = statement.excluded
+                statement = statement.on_conflict_do_update(
+                    index_elements=[
+                        KnowledgeRemoteDocumentRow.scope_id,
+                        KnowledgeRemoteDocumentRow.remote_document_id,
+                    ],
+                    set_={
+                        "owner_user_id": excluded.owner_user_id,
+                        "original_filename": excluded.original_filename,
+                        "content_type": excluded.content_type,
+                        "content_length": excluded.content_length,
+                        "status": excluded.status,
+                        "lightrag_tracking_id": excluded.lightrag_tracking_id,
+                        "lightrag_stage": excluded.lightrag_stage,
+                        "lightrag_chunks_count": excluded.lightrag_chunks_count,
+                        "lightrag_stage_updated_at": excluded.lightrag_stage_updated_at,
+                        "failure_code": excluded.failure_code,
+                        "failure_reason": excluded.failure_reason,
+                        "created_at": excluded.created_at,
+                        "updated_at": excluded.updated_at,
+                        "last_synced_at": excluded.last_synced_at,
+                    },
+                    where=KnowledgeRemoteDocumentRow.last_synced_at < synced_at,
+                )
+                await session.execute(statement)
+
+            await session.execute(
+                delete(KnowledgeRemoteDocumentRow).where(
+                    KnowledgeRemoteDocumentRow.scope_id == scope_id,
+                    KnowledgeRemoteDocumentRow.owner_user_id == owner_user_id,
+                    KnowledgeRemoteDocumentRow.remote_document_id.not_in(remote_ids),
+                    KnowledgeRemoteDocumentRow.last_synced_at < synced_at,
+                )
+            )
+            await session.commit()
+            return len(unmanaged)
+
+    async def list_remote_documents_for_user(self, owner_user_id: str) -> list[dict[str, Any]]:
+        statement = (
+            select(KnowledgeRemoteDocumentRow)
+            .join(KnowledgeScopeRow, KnowledgeRemoteDocumentRow.scope_id == KnowledgeScopeRow.id)
+            .where(
+                KnowledgeRemoteDocumentRow.owner_user_id == owner_user_id,
+                KnowledgeScopeRow.owner_user_id == owner_user_id,
+            )
+            .order_by(KnowledgeRemoteDocumentRow.created_at.desc(), KnowledgeRemoteDocumentRow.id.desc())
+        )
+        async with self._sf() as session:
+            rows = (await session.execute(statement)).scalars()
+            return [self._remote_document_to_dict(row) for row in rows]
 
     @staticmethod
     def _assert_matching_fingerprint(
@@ -149,6 +641,7 @@ class KnowledgeDocumentRepository:
         content_type: str,
         size_bytes: int,
         content_sha256: str,
+        directory_id: str | None = None,
         max_total_size_bytes: int | None = None,
         max_attempts: int = 5,
     ) -> KnowledgeDocumentCreateResult:
@@ -166,6 +659,17 @@ class KnowledgeDocumentRepository:
             )
             if existing is not None:
                 return existing
+
+            if directory_id is not None:
+                directory_exists = await session.scalar(
+                    select(KnowledgeDirectoryRow.id).where(
+                        KnowledgeDirectoryRow.id == directory_id,
+                        KnowledgeDirectoryRow.scope_id == scope_id,
+                        KnowledgeDirectoryRow.owner_user_id == owner_user_id,
+                    )
+                )
+                if directory_exists is None:
+                    raise LookupError("Knowledge directory not found")
 
             scope_stmt = (
                 select(KnowledgeScopeRow)
@@ -206,6 +710,7 @@ class KnowledgeDocumentRepository:
                 id=document_id,
                 scope_id=scope_id,
                 owner_user_id=owner_user_id,
+                directory_id=directory_id,
                 idempotency_key=idempotency_key,
                 original_filename=original_filename,
                 storage_name=storage_name,
@@ -213,6 +718,8 @@ class KnowledgeDocumentRepository:
                 size_bytes=size_bytes,
                 content_sha256=content_sha256,
                 status="pending",
+                lightrag_stage="pending",
+                lightrag_stage_updated_at=now,
                 ingestion_job_id=job_id,
                 created_at=now,
                 updated_at=now,
@@ -388,6 +895,8 @@ class KnowledgeDocumentRepository:
                     .where(KnowledgeDocumentRow.id.in_(document_ids))
                     .values(
                         status="failed",
+                        lightrag_stage="failed",
+                        lightrag_stage_updated_at=now,
                         failure_code="ingestion_lease_expired",
                         failure_reason="入库任务在最后一次尝试中断后未能恢复。",
                         completed_at=now,
@@ -479,6 +988,9 @@ class KnowledgeDocumentRepository:
                 return None
             document.lightrag_tracking_id = tracking_id
             document.status = "indexing"
+            document.lightrag_stage = "pending"
+            document.lightrag_chunks_count = None
+            document.lightrag_stage_updated_at = now
             document.failure_code = None
             document.failure_reason = None
             document.completed_at = None
@@ -497,9 +1009,15 @@ class KnowledgeDocumentRepository:
         attempt_count: int,
         now: datetime,
         document_status: str,
+        lightrag_stage: str | None = None,
+        lightrag_chunks_count: int | None = None,
     ) -> KnowledgeIngestionClaim | None:
         if document_status not in {"pending", "indexing"}:
             raise ValueError("document_status must be pending or indexing")
+        if lightrag_stage is not None and lightrag_stage not in LIGHTRAG_STAGES - {"processed", "failed"}:
+            raise ValueError("Unsupported active LightRAG progress stage")
+        if lightrag_chunks_count is not None and lightrag_chunks_count < 0:
+            raise ValueError("lightrag_chunks_count must not be negative")
         statement = (
             update(KnowledgeIngestionJobRow)
             .where(
@@ -523,6 +1041,11 @@ class KnowledgeDocumentRepository:
                 await session.rollback()
                 return None
             document.status = "indexing" if document.lightrag_tracking_id else document_status
+            if lightrag_stage is not None and document.lightrag_stage != lightrag_stage:
+                document.lightrag_stage = lightrag_stage
+                document.lightrag_stage_updated_at = now
+            if lightrag_chunks_count is not None:
+                document.lightrag_chunks_count = lightrag_chunks_count
             document.failure_code = None
             document.failure_reason = None
             document.completed_at = None
@@ -540,7 +1063,10 @@ class KnowledgeDocumentRepository:
         lease_owner: str,
         attempt_count: int,
         now: datetime,
+        lightrag_chunks_count: int | None = None,
     ) -> KnowledgeIngestionClaim | None:
+        if lightrag_chunks_count is not None and lightrag_chunks_count < 0:
+            raise ValueError("lightrag_chunks_count must not be negative")
         statement = (
             update(KnowledgeIngestionJobRow)
             .where(
@@ -573,6 +1099,10 @@ class KnowledgeDocumentRepository:
                 await session.rollback()
                 return None
             document.status = "ready"
+            document.lightrag_stage = "processed"
+            if lightrag_chunks_count is not None:
+                document.lightrag_chunks_count = lightrag_chunks_count
+            document.lightrag_stage_updated_at = now
             document.failure_code = None
             document.failure_reason = None
             document.completed_at = now
@@ -595,9 +1125,12 @@ class KnowledgeDocumentRepository:
         retryable: bool,
         base_delay: timedelta,
         max_delay: timedelta,
+        lightrag_chunks_count: int | None = None,
     ) -> KnowledgeIngestionClaim | None:
         if base_delay <= timedelta(0) or max_delay <= timedelta(0):
             raise ValueError("retry delays must be positive")
+        if lightrag_chunks_count is not None and lightrag_chunks_count < 0:
+            raise ValueError("lightrag_chunks_count must not be negative")
         delay_seconds = min(
             max_delay.total_seconds(),
             base_delay.total_seconds() * (2 ** max(attempt_count - 1, 0)),
@@ -644,6 +1177,10 @@ class KnowledgeDocumentRepository:
                 document.completed_at = None
             else:
                 document.status = "failed"
+                document.lightrag_stage = "failed"
+                if lightrag_chunks_count is not None:
+                    document.lightrag_chunks_count = lightrag_chunks_count
+                document.lightrag_stage_updated_at = now
                 document.failure_code = error_code
                 document.failure_reason = error_message
                 document.completed_at = now
@@ -683,6 +1220,8 @@ class KnowledgeDocumentRepository:
                 await session.rollback()
                 return None
             document.status = "failed"
+            document.lightrag_stage = "failed"
+            document.lightrag_stage_updated_at = now
             document.failure_code = "ingestion_cancelled"
             document.failure_reason = "入库任务已取消。"
             document.completed_at = now
@@ -785,6 +1324,8 @@ class KnowledgeDocumentRepository:
                 raise KnowledgeJobRetryConflictError("knowledge_job_retry_already_active")
 
             document.status = "indexing" if document.lightrag_tracking_id else "pending"
+            document.lightrag_stage = "pending"
+            document.lightrag_stage_updated_at = now
             document.failure_code = None
             document.failure_reason = None
             document.completed_at = None
@@ -905,7 +1446,7 @@ class KnowledgeDocumentRepository:
             ]
 
     async def document_stats_for_user(self, owner_user_id: str) -> dict[str, int]:
-        stmt = (
+        managed_statement = (
             select(KnowledgeDocumentRow.status, func.count())
             .join(KnowledgeScopeRow, KnowledgeDocumentRow.scope_id == KnowledgeScopeRow.id)
             .where(
@@ -914,8 +1455,19 @@ class KnowledgeDocumentRepository:
             )
             .group_by(KnowledgeDocumentRow.status)
         )
+        remote_statement = (
+            select(KnowledgeRemoteDocumentRow.status, func.count())
+            .join(KnowledgeScopeRow, KnowledgeRemoteDocumentRow.scope_id == KnowledgeScopeRow.id)
+            .where(
+                KnowledgeRemoteDocumentRow.owner_user_id == owner_user_id,
+                KnowledgeScopeRow.owner_user_id == owner_user_id,
+            )
+            .group_by(KnowledgeRemoteDocumentRow.status)
+        )
         async with self._sf() as session:
-            counts = {status: count for status, count in await session.execute(stmt)}
+            counts = {status: count for status, count in await session.execute(managed_statement)}
+            for status, count in await session.execute(remote_statement):
+                counts[status] = counts.get(status, 0) + count
         return {
             "total": sum(counts.values()),
             "pending": counts.get("pending", 0),

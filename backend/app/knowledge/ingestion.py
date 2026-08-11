@@ -55,6 +55,8 @@ MANUALLY_RETRYABLE_ERROR_CODES = frozenset(
 @dataclass(frozen=True)
 class MappedKnowledgeStatus:
     status: str
+    stage: str
+    chunks_count: int | None = None
     failure_code: str | None = None
     failure_reason: str | None = None
 
@@ -69,25 +71,34 @@ class IngestionFailure:
 def map_lightrag_tracking_status(tracking: LightRAGTrackStatus) -> MappedKnowledgeStatus:
     """Map the pinned LightRAG states into DeerFlow's document state model."""
     statuses = [document.get("status") for document in tracking.documents]
+    chunk_values = [document.get("chunks_count") for document in tracking.documents]
+    known_chunk_values = [value for value in chunk_values if isinstance(value, int)]
+    chunks_count = sum(known_chunk_values) if known_chunk_values else None
     if not statuses:
-        return MappedKnowledgeStatus(status="pending")
+        return MappedKnowledgeStatus(status="pending", stage="pending")
     if any(not isinstance(status, str) or status not in _KNOWN_STATUSES for status in statuses):
         return MappedKnowledgeStatus(
             status="failed",
+            stage="failed",
+            chunks_count=chunks_count,
             failure_code="lightrag_unknown_status",
             failure_reason="LightRAG 返回了暂不支持的文档状态。",
         )
     if "failed" in statuses:
         return MappedKnowledgeStatus(
             status="failed",
+            stage="failed",
+            chunks_count=chunks_count,
             failure_code="lightrag_processing_failed",
             failure_reason="LightRAG 处理文档失败。",
         )
     if all(status == "processed" for status in statuses):
-        return MappedKnowledgeStatus(status="ready")
+        return MappedKnowledgeStatus(status="ready", stage="processed", chunks_count=chunks_count)
     if any(status in _INDEXING_STATUSES or status == "processed" for status in statuses):
-        return MappedKnowledgeStatus(status="indexing")
-    return MappedKnowledgeStatus(status="pending")
+        active_stages = [status for status in statuses if status != "processed"]
+        stage = max(active_stages, key=("pending", "parsing", "analyzing", "preprocessed", "processing").index)
+        return MappedKnowledgeStatus(status="indexing", stage=stage, chunks_count=chunks_count)
+    return MappedKnowledgeStatus(status="pending", stage="pending", chunks_count=chunks_count)
 
 
 class _LightRAGClient(Protocol):
@@ -356,6 +367,7 @@ class KnowledgeIngestionService:
                         lease_owner=self._lease_owner,
                         attempt_count=attempt_count,
                         now=self._clock(),
+                        lightrag_chunks_count=mapped.chunks_count,
                     )
                     return
                 if mapped.status == "failed":
@@ -369,6 +381,7 @@ class KnowledgeIngestionService:
                         retryable=False,
                         base_delay=self._retry_base_delay,
                         max_delay=self._retry_max_delay,
+                        lightrag_chunks_count=mapped.chunks_count,
                     )
                     return
                 progressed = await self._repo.mark_job_progress(
@@ -377,6 +390,8 @@ class KnowledgeIngestionService:
                     attempt_count=attempt_count,
                     now=self._clock(),
                     document_status=mapped.status,
+                    lightrag_stage=mapped.stage,
+                    lightrag_chunks_count=mapped.chunks_count,
                 )
                 if progressed is None:
                     return

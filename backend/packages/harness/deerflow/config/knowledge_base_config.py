@@ -14,6 +14,12 @@ class LightRAGConfig(BaseModel):
     base_url: str | None = Field(default=None, description="Base URL for the operator-managed LightRAG service.")
     api_key: SecretStr | None = Field(default=None, description="Optional LightRAG X-API-Key credential.")
     timeout_seconds: float = Field(default=5.0, gt=0, le=60, description="Timeout for LightRAG data-plane requests.")
+    query_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        le=300,
+        description="Timeout for structured retrieval requests, which may include LLM keyword extraction.",
+    )
 
 
 class KnowledgeBaseConfig(BaseModel):
