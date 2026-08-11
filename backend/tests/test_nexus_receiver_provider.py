@@ -299,7 +299,7 @@ def test_directory_limits_and_masked_account_projection_are_schema_enforced() ->
         )
 
 
-def test_production_gateway_mounts_only_the_stage_one_receiver_reads() -> None:
+def test_production_gateway_mounts_runtime_routes_but_keeps_writes_default_deny() -> None:
     from app.gateway.app import create_app
 
     gateway = create_app()
@@ -308,11 +308,25 @@ def test_production_gateway_mounts_only_the_stage_one_receiver_reads() -> None:
     assert ("GET", CAPABILITIES_PATH) in routes
     assert ("GET", USERS_PATH) in routes
     receiver_root = USERS_PATH.removesuffix("/users")
-    assert not any(path.startswith(f"{receiver_root}/operations") for _, path in routes)
-    assert not any(path.startswith(f"{receiver_root}/observations") for _, path in routes)
+    assert ("POST", f"{receiver_root}/operations") in routes
+    assert ("GET", f"{receiver_root}/operations/{{operation_id}}") in routes
+    assert ("POST", f"{receiver_root}/observations/query") in routes
     assert CAPABILITIES_PATH not in gateway.openapi()["paths"]
     assert USERS_PATH not in gateway.openapi()["paths"]
+    assert f"{receiver_root}/operations" not in gateway.openapi()["paths"]
+    assert f"{receiver_root}/observations/query" not in gateway.openapi()["paths"]
 
     response = TestClient(gateway).get(CAPABILITIES_PATH, headers=_headers())
+    assert response.status_code == 401
+    assert response.json()["code"] == "AUTHENTICATION_REQUIRED"
+
+    response = TestClient(gateway).post(
+        f"{receiver_root}/operations",
+        headers={**_headers(), "Idempotency-Key": "default-deny-test", "X-Request-SHA256": "sha256:" + "0" * 64},
+        files={
+            "command": (None, "{}"),
+            "package": ("skill.zip", b"not-a-package", "application/zip"),
+        },
+    )
     assert response.status_code == 401
     assert response.json()["code"] == "AUTHENTICATION_REQUIRED"

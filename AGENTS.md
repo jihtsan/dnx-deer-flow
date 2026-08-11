@@ -114,16 +114,28 @@ Nexus Skill receiver note:
   `install.submit`, and closed stdout/exit behavior. It does not authorize an
   interactive shell, PTY, forwarding, SCP, SFTP, `GLOBAL`, or direct Skill-path
   access.
-- Publishing the contract does not implement or enable receiver routes. Until
-  the listed authentication, privacy, native-global, trust, compatibility, and
-  recovery gates are approved, providers must report `read_only` or
-  `unsupported`.
-- The Gateway mounts only the receiver capability and controlled-directory GET
-  routes. They use dedicated service-auth and directory Ports with no production
-  provider or environment enablement: missing auth is `401`, missing directory
-  support is `409`, browser sessions/internal tokens are rejected, capabilities
-  report the `http_v1` transport and stay `read_only`/`unsupported`, and
-  operation/Observed routes remain unmounted.
+- The shared receiver handler implements durable, idempotent `USER` first
+  installation and exact Observed closure for both HTTP and the strict
+  forced-command dispatcher. It reuses `UserScopedSkillStorage` for guarded
+  archive installation, persists operation phase/request bindings and expiring
+  execution claims in `nexus_receiver_operations`, and stages package bytes in
+  an atomic owner-only package store for restart recovery. Receiver identity is
+  committed with the disabled Skill tree before a separate idempotent activation
+  and exact loaded observation; every resumed write attempt revalidates the exact
+  controlled USER identity and eligibility, and a post-commit failure preserves
+  the explicit disabled state. `GLOBAL` remains unsupported.
+- The Gateway mounts capability, controlled-directory, operation, operation
+  poll, and Observed routes behind dedicated service-auth/runtime Ports. No
+  production authenticator, install-target resolver, operation/package store,
+  recovery runner, or installer is injected: missing auth is `401`, a missing runtime is
+  `503 RECEIVER_NOT_READY`, browser sessions/internal tokens are rejected, and
+  capabilities stay `read_only`/`unsupported`. The forced-command module entry
+  likewise has no production runtime wiring and exits `10` with a canonical,
+  redacted Problem.
+- Real service-auth and directory policy, trust/compatibility policy, Secret and
+  host-key distribution, native `GLOBAL`, and SSH-account provisioning remain
+  release gates. Their absence must never be replaced by an environment switch
+  that enables production writes.
   Existing `/api/skills` routes are not a compatibility fallback, and Nexus must
   not maintain a second canonical receiver OpenAPI.
 

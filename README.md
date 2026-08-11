@@ -1108,18 +1108,33 @@ binding. SSH accepts only the five allowlisted actions, reuses the canonical
 component schemas, and supports controlled directory reads plus exact `USER`
 first installation; it does not publish a separate CLI schema or enable `GLOBAL`.
 
-The Gateway mounts `GET /api/v1/nexus/skill-receiver/capabilities` and
-`GET /api/v1/nexus/skill-receiver/users` behind a dedicated service-auth Port.
-Production does not configure an authenticator or controlled-directory provider,
-so both remain default-deny (`401 AUTHENTICATION_REQUIRED` or
-`409 USER_DIRECTORY_UNSUPPORTED`). Browser sessions and generic internal tokens
-cannot authenticate this boundary. Authenticated capability responses identify
-the `http_v1` transport, remain `read_only` with every intrinsic dimension
-`unsupported`, and no operation or Observed route is mounted. The published
-`ssh_v1` binding does not mean the forced-command runtime is implemented or enabled.
-Until the human release decisions are approved and implemented, Nexus must not
-fall back to `/api/skills`, and browser clients must continue to call the Nexus
-public API instead of this service-to-service boundary.
+The Gateway mounts the canonical capability, controlled-directory, operation,
+operation-poll, and Observed paths behind dedicated service-auth and runtime
+Ports. HTTP and SSH use one transport-neutral handler for durable, idempotent
+`USER` first installation, exact Observed success, and restart replay. Archive
+digest/size, traversal, symlink, expansion, manifest-name, target eligibility,
+same-name, and idempotency conflicts are checked before success. Durable phases
+and canonical request bindings live in `nexus_receiver_operations`; atomic,
+owner-only package staging plus expiring execution claims allow nonterminal
+operations to resume after restart without another submit. The Skill tree and
+redacted receiver identity commit together in disabled state, then activation
+and exact `enabled=true` / `loadState=loaded` observation close the operation.
+Each resumed write attempt revalidates the exact controlled USER identity and
+eligibility; failures after the atomic tree commit retain an explicit disabled
+state rather than falling back to the normal enabled-by-default behavior.
+
+This implementation is not production enablement. The production Gateway does
+not inject a receiver authenticator, install-target resolver, durable operation
+or package store, recovery runner, or USER installer, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
+`409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
+capabilities remain `read_only`/`unsupported`. The
+forced-command module entry accepts only the five exact `nexus-skill-receiver-v1`
+commands and canonical bounded frames, but it has no runtime wiring and returns
+one redacted Problem with exit `10`. Real service-auth/directory policy,
+trust/compatibility decisions, Secret and SSH host-key distribution, SSH account
+provisioning, and native `GLOBAL` support remain required release gates. Nexus
+must not fall back to `/api/skills`, and browser clients must continue to call
+the Nexus public API instead of this service-to-service boundary.
 
 ## Embedded Python Client
 
