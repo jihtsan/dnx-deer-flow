@@ -180,7 +180,8 @@ def test_version_29_config_upgrades_lightrag_query_timeout(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
     example_src = repo_root / "config.example.yaml"
     example_data = yaml.safe_load(example_src.read_text(encoding="utf-8"))
-    assert example_data["config_version"] == 30
+    expected_version = example_data["config_version"]
+    assert expected_version >= 30
 
     config_path = tmp_path / "config.yaml"
     (tmp_path / "config.example.yaml").write_text(example_src.read_text(encoding="utf-8"), encoding="utf-8")
@@ -207,7 +208,7 @@ def test_version_29_config_upgrades_lightrag_query_timeout(tmp_path):
     assert result.returncode == 0, result.stderr
 
     upgraded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert upgraded["config_version"] == 30
+    assert upgraded["config_version"] == expected_version
     assert upgraded["knowledge_base"] == {
         "enabled": True,
         "lightrag": {
