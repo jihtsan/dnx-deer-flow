@@ -3,7 +3,7 @@ import copy
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Annotated, Any, NotRequired, TypedDict
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage
@@ -811,6 +811,150 @@ async def test_run_agent_marks_llm_error_fallback_as_error_status():
     assert fetched is not None
     assert fetched.status == RunStatus.error
     assert fetched.error == "Connection error."
+    bridge.publish_end.assert_awaited_once_with(record.run_id)
+
+
+@pytest.mark.anyio
+async def test_run_agent_rolls_back_failed_edit_replay_and_publishes_restored_values():
+    run_manager = RunManager()
+    record = await run_manager.create(
+        "thread-1",
+        metadata={"replay_kind": "edit", "regenerate_from_run_id": "source-run"},
+    )
+    bridge = SimpleNamespace(
+        publish=AsyncMock(),
+        publish_end=AsyncMock(),
+        cleanup=AsyncMock(),
+    )
+    before_messages = [HumanMessage(id="h1", content="original"), AIMessage(id="a1", content="answer")]
+
+    class DummyCheckpointer:
+        async def aget_tuple(self, _config):
+            return SimpleNamespace(
+                config={
+                    "configurable": {
+                        "thread_id": "thread-1",
+                        "checkpoint_ns": "",
+                        "checkpoint_id": "checkpoint-1",
+                    }
+                },
+                checkpoint={"id": "checkpoint-1", "channel_values": {}},
+                metadata={"source": "loop"},
+                pending_writes=[],
+            )
+
+    class DummyAgent:
+        async def aget_state(self, _config):
+            return SimpleNamespace(
+                values={"messages": before_messages},
+                config={
+                    "configurable": {
+                        "thread_id": "thread-1",
+                        "checkpoint_ns": "",
+                        "checkpoint_id": "checkpoint-1",
+                    }
+                },
+                parent_config=None,
+                metadata={},
+                next=(),
+                tasks=(),
+                created_at=None,
+            )
+
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            raise RuntimeError("edit replay failed")
+            if False:
+                yield  # pragma: no cover - keep this an async generator
+
+    error_status_finalizing_states: list[bool] = []
+    original_set_status = run_manager.set_status
+
+    async def _set_status(run_id, status, **kwargs):
+        if run_id == record.run_id and status == RunStatus.error:
+            error_status_finalizing_states.append(record.finalizing)
+        return await original_set_status(run_id, status, **kwargs)
+
+    run_manager.set_status = _set_status  # type: ignore[method-assign]
+    with patch(
+        "deerflow.runtime.runs.worker._rollback_to_pre_run_checkpoint",
+        new_callable=AsyncMock,
+    ) as rollback:
+        rollback.return_value = True
+        await run_agent(
+            bridge,
+            run_manager,
+            record,
+            ctx=RunContext(checkpointer=DummyCheckpointer()),
+            agent_factory=lambda *, config: DummyAgent(),
+            graph_input={},
+            config={},
+        )
+
+    fetched = await run_manager.get(record.run_id)
+    assert fetched is not None
+    assert fetched.status == RunStatus.error
+    assert error_status_finalizing_states == [True]
+    rollback.assert_awaited_once()
+    publish_events = [call_args.args[1] for call_args in bridge.publish.await_args_list]
+    assert "error" in publish_events
+    assert "values" in publish_events
+    assert publish_events.index("values") > publish_events.index("error")
+    bridge.publish_end.assert_awaited_once_with(record.run_id)
+
+
+@pytest.mark.anyio
+async def test_failed_edit_replay_does_not_publish_restored_values_when_snapshot_capture_failed():
+    run_manager = RunManager()
+    record = await run_manager.create(
+        "thread-1",
+        metadata={"replay_kind": "edit", "regenerate_from_run_id": "source-run"},
+    )
+    bridge = SimpleNamespace(
+        publish=AsyncMock(),
+        publish_end=AsyncMock(),
+        cleanup=AsyncMock(),
+    )
+
+    class DummyCheckpointer:
+        async def aget_tuple(self, _config):
+            return SimpleNamespace(
+                config={
+                    "configurable": {
+                        "thread_id": "thread-1",
+                        "checkpoint_ns": "",
+                        "checkpoint_id": "checkpoint-1",
+                    }
+                },
+                checkpoint={"id": "checkpoint-1", "channel_values": {}},
+                metadata={"source": "loop"},
+                pending_writes=[],
+            )
+
+    class DummyAgent:
+        async def aget_state(self, _config):
+            raise RuntimeError("snapshot capture failed")
+
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            raise RuntimeError("edit replay failed")
+            if False:
+                yield  # pragma: no cover - keep this an async generator
+
+    await run_agent(
+        bridge,
+        run_manager,
+        record,
+        ctx=RunContext(checkpointer=DummyCheckpointer()),
+        agent_factory=lambda *, config: DummyAgent(),
+        graph_input={},
+        config={},
+    )
+
+    fetched = await run_manager.get(record.run_id)
+    assert fetched is not None
+    assert fetched.status == RunStatus.error
+    publish_events = [call_args.args[1] for call_args in bridge.publish.await_args_list]
+    assert "error" in publish_events
+    assert "values" not in publish_events
     bridge.publish_end.assert_awaited_once_with(record.run_id)
 
 
@@ -2849,4 +2993,46 @@ async def test_worker_finally_block_swallows_helper_exceptions(monkeypatch):
     # reflects the run outcome.
     assert helper_called.is_set()
     assert captured_status.get("status") == ("thread-1", "interrupted")
+    bridge.publish_end.assert_awaited_once_with(record.run_id)
+
+
+@pytest.mark.anyio
+async def test_worker_skips_execution_and_finalization_after_ownership_loss():
+    """A fenced worker closes its stream without starting or finalizing work."""
+    run_manager = RunManager()
+    record = await run_manager.create("thread-lease-lost")
+    record.ownership_lost = True
+    record.abort_event.set()
+    record.status = RunStatus.error
+
+    bridge = SimpleNamespace(
+        publish=AsyncMock(),
+        publish_end=AsyncMock(),
+        cleanup=AsyncMock(),
+    )
+    thread_store = SimpleNamespace(
+        update_display_name=AsyncMock(),
+        update_status=AsyncMock(),
+    )
+    on_run_completed = AsyncMock()
+    agent_factory = MagicMock(side_effect=AssertionError("fenced worker started the agent"))
+
+    await run_agent(
+        bridge,
+        run_manager,
+        record,
+        ctx=RunContext(
+            checkpointer=None,
+            thread_store=thread_store,
+            on_run_completed=on_run_completed,
+        ),
+        agent_factory=agent_factory,
+        graph_input={"messages": []},
+        config={},
+    )
+
+    agent_factory.assert_not_called()
+    thread_store.update_display_name.assert_not_awaited()
+    thread_store.update_status.assert_not_awaited()
+    on_run_completed.assert_not_awaited()
     bridge.publish_end.assert_awaited_once_with(record.run_id)

@@ -105,6 +105,22 @@ class MemoryRunStore(RunStore):
                 sources.add(source)
         return sources
 
+    async def list_edit_regenerate_runs(self, thread_id, *, user_id=None):
+        run_ids = self._runs_by_thread.get(thread_id) or ()
+        results = []
+        for run_id in run_ids:
+            run = self._runs.get(run_id)
+            if run is None:
+                continue
+            if user_id is not None and run.get("user_id") != user_id:
+                continue
+            metadata = run.get("metadata") or {}
+            source = metadata.get("regenerate_from_run_id")
+            if metadata.get("replay_kind") == "edit" and isinstance(source, str) and source:
+                results.append(run)
+        results.sort(key=lambda r: r["created_at"])
+        return results
+
     async def get_many_by_thread(self, thread_id, run_ids, *, user_id=None):
         thread_run_ids = self._runs_by_thread.get(thread_id) or ()
         return {run_id: run for run_id in thread_run_ids if run_id in run_ids and (run := self._runs.get(run_id)) is not None and run.get("operation_kind", "run") == "run" and (user_id is None or run.get("user_id") == user_id)}
@@ -144,14 +160,21 @@ class MemoryRunStore(RunStore):
             self._unindex_run(run_id, run["thread_id"])
 
     async def update_run_completion(self, run_id, *, status, **kwargs):
-        if run_id in self._runs:
-            self._runs[run_id]["status"] = status
-            for key, value in kwargs.items():
-                if value is not None:
-                    self._runs[run_id][key] = value
-            self._runs[run_id]["updated_at"] = datetime.now(UTC).isoformat()
-            return True
-        return False
+        run = self._runs.get(run_id)
+        if run is None:
+            return False
+        current_status = run.get("status")
+        allowed_sources = {"pending", "running", status}
+        if status == "error":
+            allowed_sources.add("interrupted")
+        if current_status not in allowed_sources:
+            return False
+        run["status"] = status
+        for key, value in kwargs.items():
+            if value is not None:
+                run[key] = value
+        run["updated_at"] = datetime.now(UTC).isoformat()
+        return True
 
     async def update_run_progress(self, run_id, **kwargs):
         if run_id in self._runs and self._runs[run_id].get("status") == "running":
