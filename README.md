@@ -1094,6 +1094,22 @@ DeerFlow is model-agnostic — it works with any LLM that implements the OpenAI-
 - **Multimodal inputs** for image understanding and video comprehension
 - **Strong tool-use** for reliable function calling and structured outputs
 
+## Nexus Skill Receiver Contract
+
+DeerFlow owns the canonical, versioned service contract used by DNX Nexus to
+discover receiver capabilities, search the controlled user directory, submit
+durable first-install operations for native `GLOBAL` or exact `USER` targets,
+and read scope-specific Observed state. The OpenAPI source is
+[`contracts/openapi/nexus-skill-receiver-v1.yaml`](contracts/openapi/nexus-skill-receiver-v1.yaml),
+with provider fixtures in the adjacent `.conformance.json` file.
+
+This published contract does not mean the receiver runtime is enabled. Until
+machine authentication, directory privacy, native global activation, package
+trust, Runtime compatibility, and failure-recovery policies are approved and
+implemented, deployments must advertise `read_only` or `unsupported`. Nexus
+must not fall back to `/api/skills`, and browser clients must continue to call
+the Nexus public API instead of this service-to-service boundary.
+
 ## Embedded Python Client
 
 DeerFlow can be used as an embedded Python library without running the full HTTP services. The `DeerFlowClient` provides direct in-process access to all agent and Gateway capabilities, returning the same response schemas as the HTTP Gateway API. The HTTP Gateway also exposes `DELETE /api/threads/{thread_id}` to remove DeerFlow-managed local thread data after the LangGraph thread itself has been deleted:
@@ -1252,6 +1268,7 @@ See [backend/docs/TUI.md](backend/docs/TUI.md) for the full guide.
 - [Configuration Guide](backend/docs/CONFIGURATION.md) - Setup and configuration instructions
 - [Architecture Overview](backend/CLAUDE.md) - Technical architecture details
 - [Backend Architecture](backend/README.md) - Backend architecture and API reference
+- [Nexus Skill Receiver OpenAPI](contracts/openapi/nexus-skill-receiver-v1.yaml) - Canonical receiver contract and version rules
 
 ## ⚠️ Security Notice
 

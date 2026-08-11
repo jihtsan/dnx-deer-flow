@@ -100,6 +100,19 @@ Knowledge-base note:
 - `knowledge_base` config points to one operator-managed LightRAG startup workspace. The app adapter owns health, upload, tracking, structured `/query/data`, and delete contract normalization; it never sends `LIGHTRAG-WORKSPACE` or exposes endpoint/key diagnostics.
 - `GET/POST /api/knowledge/documents` lists owner-visible documents and accepts one multipart `file` with `Idempotency-Key`; `POST /api/knowledge/documents/{document_id}/retry` idempotently reactivates eligible dead jobs through a durable per-job retry-key ledger. Original files are atomically persisted below the server-owned runtime directory before one SQL transaction creates the document and ingestion job. The existing ingestion service is a durable SQL-backed leased worker: atomic claims, bounded concurrency and tracking attempts, hot-reloaded LightRAG clients, bounded exponential retry, lease-expiry recovery, and startup discovery cover process restarts. LightRAG upload reconciliation uses the server-generated stable filename and must not be described as remote exactly-once. Only `ready` documents are retrieval candidates. The fixed safety limits are 25 MiB per file and 1 GiB total for the singleton Scope.
 
+Nexus Skill receiver note:
+- `contracts/openapi/nexus-skill-receiver-v1.yaml` is DeerFlow's only canonical,
+  versioned receiver contract. The adjacent `.conformance.json` fixture and
+  `backend/tests/test_nexus_skill_receiver_contract.py` pin capabilities,
+  controlled cursor-based user search, closed `GLOBAL|USER` targets, durable
+  operation phases, exact Observed success, headers, stable errors, default
+  denial, and major-version rules.
+- Publishing the contract does not implement or enable receiver routes. Until
+  the listed authentication, privacy, native-global, trust, compatibility, and
+  recovery gates are approved, providers must report `read_only` or
+  `unsupported`. Existing `/api/skills` routes are not a compatibility fallback,
+  and Nexus must not maintain a second canonical receiver OpenAPI.
+
 ## Commands: Root vs. Module
 
 **Root `make` targets drive the whole stack** (run from the repo root):
