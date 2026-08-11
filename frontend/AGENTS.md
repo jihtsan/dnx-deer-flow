@@ -89,9 +89,10 @@ upserts the accepted document into the cache, and polls while the document or
 its ingestion job is active (`pending`, `indexing`, `leased`, or `retry_wait`);
 `ready` and non-retryable `failed` states stop polling.
 Document queries consume TanStack Query's abort signal so route changes and
-unmounts cancel in-flight refreshes. Upload controls remain disabled whenever the
-feature, Scope, or LightRAG data plane is unavailable, while the server-backed
-list remains readable for refresh recovery and failure diagnosis. Rows and the
+unmounts cancel in-flight refreshes. When the LightRAG data plane is not `ready`,
+the tabs remain visible but each active tab renders only the shared offline/admin-
+contact alert and recheck action. Document, directory, graph, and retrieval
+components do not mount or issue downstream requests until readiness returns. Rows and the
 detail pane expose sanitized failure type, attempt counters, last-attempt and
 next-retry times, and stable error text. Eligible failed jobs expose a guarded
 manual-retry mutation; its per-document idempotency key survives request failure,
@@ -102,18 +103,32 @@ older network replay remains deduplicated after subsequent manual retry rounds.
 The page (`src/app/workspace/knowledge/`) is laid out as a workbench: a header
 `knowledge-status` LightRAG badge, an overview bar (Scope name + total / ready /
 processing / failed stats), and a Shadcn `Tabs` strip. When the Scope exists the
-tabs are 文档目录 (default), 知识图谱, and 检索测试. Only 文档目录 is wired to a
-real endpoint — it hosts the master-detail document catalog
-(`knowledge-documents.tsx`: a compact list that auto-selects a document and a
-detail pane carrying the `knowledge-document-{id}` / status testids). Scope
-editing and verbose LightRAG diagnostics are intentionally absent from this
-end-user workbench; the header badge and upload availability retain the
-operational state users need. 知识图谱 and 检索测试 (`knowledge-panels.tsx`) are
-intentional "coming soon" placeholders because the Gateway exposes no graph or
-retrieval endpoint yet (only scope + documents + features). The no-scope state
-skips the tabs and shows only the one-time create card. The E2E suite
-(`tests/e2e/knowledge-*.spec.ts`) pins these testids and expects 文档目录 to be the
-default tab.
+tabs are 文档目录 (default), 知识图谱, and 检索测试, and all three use real
+Gateway data endpoints. 文档目录 uses a two-column layout: a compact
+upload/refresh bar on top,
+then a directory-tree card (`knowledge-directory-tree.tsx`: one unified tree that
+nests each document under its folder with a status dot, plus folder CRUD) beside a
+detail card (`knowledge-documents.tsx`: auto-selects a document and renders a
+type badge, status pill, move-to selector, a LightRAG index pipeline derived from
+the real ingestion status, an indeterminate stage expansion with elapsed time and
+optional chunk count (never a guessed percentage), ingestion diagnostics, and a destructive document
+delete action with an explicit filename confirmation, pending/error states, and
+next-document selection after success — carrying the
+`knowledge-document-{id}` / `knowledge-document-status-{id}` /
+`knowledge-document-row-diagnostics-{id}` testids). Scope editing and verbose
+LightRAG diagnostics are intentionally absent from this end-user workbench; the
+header badge and upload availability retain the operational state users need.
+知识图谱 and 检索测试 (`knowledge-panels.tsx` + `knowledge-graph.tsx`) use the real
+Gateway global-graph, graph-label search, and retrieval-data endpoints. The graph
+opens without a center entity, renders up to 5,000 cross-document logical nodes on
+Canvas 2D, uses a deterministic O(V+E) component layout, Canvas pan/zoom/click and
+zoom-level label density, exposes the top 20 popular entities as client-side two-hop
+focus groups, and searches entities without replacing the global dataset. Retrieval renders LightRAG evidence only: keywords,
+entities, relationships, chunks, and referenced documents; it does not synthesize
+an answer. Both panels remain disabled unless the singleton Scope is enabled and the
+pinned LightRAG data plane is ready. The no-scope state skips the tabs and shows only
+the one-time create card. The E2E suite (`tests/e2e/knowledge-*.spec.ts`) pins the
+document and live-data behaviors and expects 文档目录 to be the default tab.
 
 `/goal` and `/compact` are built-in composer commands, not skill activations. `src/components/workspace/input-box.tsx` intercepts `/goal`, `/goal clear`, and `/goal <condition>` before normal chat submission, calling Gateway `GET/PUT/DELETE /api/threads/{thread_id}/goal`. Setting `/goal <condition>` also submits the condition text as the next user task so the agent starts running immediately; status and clear do not start a run. Goal and compact requests are tied to the current `threadId` with an `AbortController`, so switching threads or unmounting the composer aborts in-flight requests and stale responses cannot update the new thread's composer state. The chat pages render `GoalStatus` above the composer from `AgentThreadState.goal`, with local optimistic state until the next stream `values` update arrives. `/compact` calls `POST /api/threads/{thread_id}/compact` to summarize older active context while leaving the full visible chat history intact; it is skipped on new/empty threads and blocked server-side while a run is in flight.
 

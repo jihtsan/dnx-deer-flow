@@ -201,6 +201,9 @@ export interface Translations {
     requestErrorTitle: string;
     requestErrorDescription: string;
     retry: string;
+    offlineTitle: string;
+    offlineDescription: string;
+    checkAgain: string;
     createErrorTitle: string;
     retryCreate: string;
     emptyTitle: string;
@@ -234,13 +237,70 @@ export interface Translations {
       graph: string;
       retrieval: string;
     };
-    graphPlaceholder: {
+    graph: {
       title: string;
-      description: string;
+      nodes: string;
+      edges: string;
+      popularGroups: string;
+      showAll: string;
+      searchPlaceholder: string;
+      noSearchResults: string;
+      liveData: string;
+      loading: string;
+      errorTitle: string;
+      empty: string;
+      unavailable: string;
+      truncated: string;
+      retry: string;
+      refresh: string;
+      reset: string;
+      zoomIn: string;
+      zoomOut: string;
+      hint: string;
+      degree: string;
+      relations: string;
+      source: string;
+      close: string;
+      legend: Record<
+        | "document"
+        | "chunk"
+        | "org"
+        | "person"
+        | "product"
+        | "tech"
+        | "concept"
+        | "place",
+        string
+      >;
     };
-    retrievalPlaceholder: {
-      title: string;
-      description: string;
+    retrieval: {
+      modesTitle: string;
+      run: string;
+      running: string;
+      queryPlaceholder: string;
+      resultTitle: string;
+      sourcesTitle: string;
+      contextTitle: string;
+      hitEntities: string;
+      hitRelations: string;
+      referencesTitle: string;
+      keywordsTitle: string;
+      highLevelKeywords: string;
+      lowLevelKeywords: string;
+      liveData: string;
+      unavailable: string;
+      errorTitle: string;
+      empty: string;
+      retry: string;
+      entitiesCount: string;
+      relationsCount: string;
+      chunksCount: string;
+      referencesCount: string;
+      modes: Record<"naive" | "local" | "global" | "hybrid" | "mix", string>;
+      modeHints: Record<
+        "naive" | "local" | "global" | "hybrid" | "mix",
+        string
+      >;
     };
     status: Record<
       "unconfigured" | "disabled" | "offline" | "incompatible" | "ready",
@@ -296,8 +356,65 @@ export interface Translations {
       manualRetry: string;
       retrying: string;
       retryErrorTitle: string;
+      deleteDocument: string;
+      deletingDocument: string;
+      deleteDialogTitle: string;
+      deleteDialogDescription: string;
+      deleteConfirm: string;
+      deleteCancel: string;
+      deleteErrorTitle: string;
+      deleteErrorDescription: string;
       retryWaitTitle: string;
       retryWaitDescription: string;
+      directoryTitle: string;
+      newDirectory: string;
+      createDirectory: string;
+      createChildDirectory: string;
+      renameDirectory: string;
+      deleteDirectory: string;
+      directoryName: string;
+      directoryErrorTitle: string;
+      uploadDestination: string;
+      moveTo: string;
+      moving: string;
+      managedSource: string;
+      remoteSource: string;
+      remoteNotice: string;
+      contentLength: string;
+      noDocumentsInDirectory: string;
+      breadcrumbRoot: string;
+      refresh: string;
+      pipelineTitle: string;
+      diagnosticsTitle: string;
+      pipeline: Record<"upload" | "queue" | "index" | "ready", string>;
+      pipelineDetail: Record<
+        | "uploaded"
+        | "pending"
+        | "queued"
+        | "waiting"
+        | "indexing"
+        | "indexed"
+        | "retrying"
+        | "ready"
+        | "failed",
+        string
+      >;
+      progressStage: Record<
+        | "pending"
+        | "parsing"
+        | "analyzing"
+        | "processing"
+        | "preprocessed"
+        | "processed"
+        | "failed",
+        string
+      >;
+      progressPhase: Record<
+        "contentParsing" | "multimodal" | "entityExtraction" | "graphWriting",
+        string
+      >;
+      stageElapsed: string;
+      chunksCount: string;
       status: Record<"pending" | "indexing" | "ready" | "failed", string>;
     };
   };

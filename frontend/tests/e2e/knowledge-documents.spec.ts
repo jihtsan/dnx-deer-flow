@@ -48,9 +48,13 @@ function document(
 ) {
   return {
     id: "doc-stable",
+    source: "managed",
+    original_available: true,
+    directory_id: null,
     original_filename: "product-handbook.md",
     content_type: "text/markdown",
     size_bytes: 42,
+    content_length: null,
     status,
     lightrag_tracking_id: status === "pending" ? null : "track-stable",
     failure_code: status === "failed" ? "index_failed" : null,
@@ -61,6 +65,18 @@ function document(
     updated_at: "2026-07-13T01:01:00Z",
     completed_at:
       status === "ready" || status === "failed" ? "2026-07-13T01:01:00Z" : null,
+    progress: {
+      stage:
+        status === "ready"
+          ? "processed"
+          : status === "failed"
+            ? "failed"
+            : status === "indexing"
+              ? "processing"
+              : "pending",
+      chunks_count: status === "pending" ? null : 5,
+      stage_updated_at: "2026-07-13T01:01:00Z",
+    },
     ingestion: {
       status:
         status === "ready"
@@ -106,6 +122,9 @@ async function mockScope(
 
 async function mockWorkspaceAPI(page: Page) {
   mockLangGraphAPI(page);
+  await page.route("**/api/knowledge/directories", (route) =>
+    fulfill(route, { directories: [] }),
+  );
   await page.waitForTimeout(0);
 }
 
@@ -231,6 +250,47 @@ test("polls pending and indexing documents, stops at ready, and restores after r
   await expect(
     page.getByTestId("knowledge-document-status-doc-stable"),
   ).toHaveText("Ready");
+});
+
+test("shows real LightRAG stage, elapsed time, chunks, and active processing blocks", async ({
+  page,
+}) => {
+  await mockWorkspaceAPI(page);
+  await mockScope(page);
+  await page.route("**/api/knowledge/documents", (route) =>
+    fulfill(route, {
+      documents: [
+        document("indexing", {
+          progress: {
+            stage: "processing",
+            chunks_count: 5,
+            stage_updated_at: new Date(Date.now() - 65_000).toISOString(),
+          },
+        }),
+      ],
+    }),
+  );
+
+  await page.goto("/workspace/knowledge");
+
+  await expect(
+    page.getByTestId("knowledge-document-progress-stage"),
+  ).toHaveText("Extracting entities and relations, then writing the graph");
+  await expect(
+    page.getByTestId("knowledge-document-progress-elapsed"),
+  ).toContainText("Time in this stage");
+  await expect(
+    page.getByTestId("knowledge-document-progress-chunks"),
+  ).toHaveText("5 chunks");
+  await expect(
+    page.getByTestId("knowledge-document-index-progress"),
+  ).toContainText("Entity and relation extraction");
+  await expect(
+    page.getByTestId("knowledge-document-index-progress"),
+  ).toContainText("Graph writing");
+  await expect(
+    page.getByTestId("knowledge-document-index-progress"),
+  ).toHaveAttribute("role", "status");
 });
 
 test("shows a failed reason and stops polling", async ({ page }) => {
@@ -453,7 +513,7 @@ for (const scenario of [
     reason: "LightRAG must be ready before uploading documents.",
   },
 ]) {
-  test(`disables upload when ${scenario.name}`, async ({ page }) => {
+  test(`blocks or disables upload when ${scenario.name}`, async ({ page }) => {
     await mockWorkspaceAPI(page);
     await mockScope(page, {
       enabled: scenario.enabled,
@@ -464,10 +524,17 @@ for (const scenario of [
     );
 
     await page.goto("/workspace/knowledge");
-    await expect(page.getByTestId("knowledge-upload")).toBeDisabled();
-    await expect(page.getByTestId("knowledge-upload-unavailable")).toHaveText(
-      scenario.reason,
-    );
+    if (scenario.status === "ready") {
+      await expect(page.getByTestId("knowledge-upload")).toBeDisabled();
+      await expect(page.getByTestId("knowledge-upload-unavailable")).toHaveText(
+        scenario.reason,
+      );
+    } else {
+      await expect(
+        page.getByTestId("knowledge-workbench-unavailable"),
+      ).toBeVisible();
+      await expect(page.getByTestId("knowledge-upload")).toHaveCount(0);
+    }
   });
 }
 
@@ -476,10 +543,9 @@ test("shows document loading, error, retry, and empty states", async ({
 }) => {
   await mockWorkspaceAPI(page);
   await mockScope(page);
-  let listRequests = 0;
+  let listShouldFail = true;
   await page.route("**/api/knowledge/documents", async (route) => {
-    listRequests += 1;
-    if (listRequests <= 2) {
+    if (listShouldFail) {
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       return fulfill(
         route,
@@ -495,6 +561,7 @@ test("shows document loading, error, retry, and empty states", async ({
   await expect(page.getByTestId("knowledge-documents-error")).toContainText(
     "Try again.",
   );
+  listShouldFail = false;
   await page.getByTestId("knowledge-documents-retry").click();
   await expect(page.getByTestId("knowledge-documents-empty")).toBeVisible();
 });
@@ -514,4 +581,116 @@ test("renders the document workflow in Chinese", async ({ page, context }) => {
   await expect(
     page.getByTestId("knowledge-document-status-doc-stable"),
   ).toHaveText("已接收，等待索引");
+});
+
+test("keeps directory hover subtle without competing with document selection", async ({
+  page,
+}) => {
+  await mockWorkspaceAPI(page);
+  await mockScope(page);
+  await page.route("**/api/knowledge/documents", (route) =>
+    fulfill(route, { documents: [document("ready")] }),
+  );
+
+  await page.goto("/workspace/knowledge");
+  const rootButton = page.getByTestId("knowledge-directory-root");
+  const rootRow = rootButton.locator("xpath=..");
+  const backgroundBeforeHover = await rootRow.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+
+  await expect(rootButton).toHaveText("Product knowledge");
+  await expect(rootButton).toHaveAttribute("aria-current", "false");
+  await expect(
+    page.getByRole("button", { name: "New directory" }),
+  ).toBeVisible();
+
+  await rootButton.hover();
+  await expect
+    .poll(() =>
+      rootRow.evaluate((element) => getComputedStyle(element).backgroundColor),
+    )
+    .not.toBe(backgroundBeforeHover);
+});
+
+test("confirms permanent deletion, prevents duplicate requests, and selects the next document", async ({
+  page,
+}) => {
+  await mockWorkspaceAPI(page);
+  await mockScope(page);
+  let deleteRequests = 0;
+  let documents = [
+    document("ready", { id: "doc-first", original_filename: "first.md" }),
+    document("ready", { id: "doc-second", original_filename: "second.md" }),
+    document("ready", { id: "doc-third", original_filename: "third.md" }),
+  ];
+  await page.route("**/api/knowledge/documents", (route) =>
+    fulfill(route, { documents }),
+  );
+  await page.route("**/api/knowledge/documents/**", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    deleteRequests += 1;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    documents = documents.filter((item) => item.id !== "doc-second");
+    return route.fulfill({ status: 204, body: "" });
+  });
+
+  await page.goto("/workspace/knowledge");
+  await page.getByTestId("knowledge-document-row-doc-second").click();
+  const deleteButton = page.getByTestId("knowledge-document-delete-doc-second");
+  await deleteButton.click();
+  const dialog = page.getByTestId("knowledge-document-delete-dialog");
+  await expect(dialog).toContainText("second.md");
+  await expect(dialog).toContainText("permanently remove");
+
+  await page.getByTestId("knowledge-document-delete-cancel").click();
+  await expect(dialog).toBeHidden();
+  expect(deleteRequests).toBe(0);
+
+  await deleteButton.click();
+  const confirm = page.getByTestId("knowledge-document-delete-confirm");
+  await confirm.dispatchEvent("click");
+  await confirm.dispatchEvent("click");
+  await expect(dialog).toBeVisible();
+  await expect(confirm).toBeDisabled();
+  await expect(confirm).toContainText("Deleting");
+  await expect(
+    page.getByTestId("knowledge-document-row-doc-second"),
+  ).toBeHidden();
+  await expect(page.getByTestId("knowledge-document-doc-third")).toBeVisible();
+  expect(deleteRequests).toBe(1);
+});
+
+test("keeps the confirmation open and reports document deletion errors", async ({
+  page,
+}) => {
+  await mockWorkspaceAPI(page);
+  await mockScope(page);
+  await page.route("**/api/knowledge/documents", (route) =>
+    fulfill(route, { documents: [document("ready")] }),
+  );
+  await page.route("**/api/knowledge/documents/**", (route) =>
+    fulfill(
+      route,
+      {
+        detail: {
+          code: "knowledge_document_delete_conflict",
+          message: "The document is still being processed.",
+        },
+      },
+      409,
+    ),
+  );
+
+  await page.goto("/workspace/knowledge");
+  await page.getByTestId("knowledge-document-delete-doc-stable").click();
+  await page.getByTestId("knowledge-document-delete-confirm").click();
+
+  await expect(
+    page.getByTestId("knowledge-document-delete-dialog"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("knowledge-document-delete-error"),
+  ).toContainText("The document is still being processed.");
+  await expect(page.getByTestId("knowledge-document-doc-stable")).toBeVisible();
 });

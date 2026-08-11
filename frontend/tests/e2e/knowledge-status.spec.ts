@@ -64,6 +64,9 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/knowledge/documents", (route) =>
     fulfill(route, { documents: [] }),
   );
+  await page.route("**/api/knowledge/directories", (route) =>
+    fulfill(route, { directories: [] }),
+  );
 });
 
 for (const status of Object.keys(STATUS_LABELS) as KnowledgeStatus[]) {
@@ -125,6 +128,70 @@ test("keeps the document workbench without operator-only cards", async ({
   ).toHaveCount(1);
 });
 
+test("blocks every workbench tab and downstream requests while LightRAG is offline", async ({
+  page,
+}) => {
+  mockLangGraphAPI(page);
+  let documentRequests = 0;
+  let directoryRequests = 0;
+  let graphRequests = 0;
+  let dataPlaneStatus: KnowledgeStatus = "offline";
+  await page.route("**/api/knowledge/documents", (route) => {
+    documentRequests += 1;
+    return fulfill(route, { documents: [] });
+  });
+  await page.route("**/api/knowledge/directories", (route) => {
+    directoryRequests += 1;
+    return fulfill(route, { directories: [] });
+  });
+  await page.route("**/api/knowledge/graph/global**", (route) => {
+    graphRequests += 1;
+    return fulfill(route, {
+      nodes: [],
+      edges: [],
+      is_truncated: false,
+      total_labels: 0,
+      components: 0,
+    });
+  });
+  await page.route("**/api/knowledge/scope", (route) =>
+    fulfill(route, { scope: scope(), data_plane: dataPlane(dataPlaneStatus) }),
+  );
+
+  await page.goto("/workspace/knowledge");
+
+  const unavailable = page.getByTestId("knowledge-workbench-unavailable");
+  await expect(unavailable).toContainText("Knowledge base is offline");
+  await expect(unavailable).toContainText("Contact your administrator");
+  await expect(page.getByTestId("knowledge-documents-card")).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "Knowledge graph" }).click();
+  await expect(unavailable).toBeVisible();
+  await expect(page.getByTestId("knowledge-graph-panel")).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "Retrieval test" }).click();
+  await expect(unavailable).toBeVisible();
+  await expect(page.getByTestId("knowledge-retrieval-query")).toHaveCount(0);
+
+  expect(documentRequests).toBe(0);
+  expect(directoryRequests).toBe(0);
+  expect(graphRequests).toBe(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(unavailable).toBeVisible();
+  const mobileOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth,
+  );
+  expect(mobileOverflow).toBe(false);
+
+  await page.getByRole("tab", { name: "Documents" }).click();
+  dataPlaneStatus = "ready";
+  await page.getByRole("button", { name: "Check again" }).click();
+  await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
+  expect(documentRequests).toBeGreaterThan(0);
+  expect(directoryRequests).toBeGreaterThan(0);
+});
+
 test("creates the singleton scope and survives refresh", async ({ page }) => {
   mockLangGraphAPI(page);
   let storedScope: ReturnType<typeof scope> | null = null;
@@ -148,6 +215,40 @@ test("creates the singleton scope and survives refresh", async ({ page }) => {
     });
   });
 
+  const readyDoc = (index: number) => ({
+    id: `doc-${index}`,
+    source: "managed",
+    original_available: true,
+    progress: null,
+    directory_id: null,
+    original_filename: `doc-${index}.md`,
+    content_type: "text/markdown",
+    size_bytes: 10,
+    content_length: null,
+    status: "ready",
+    lightrag_tracking_id: "track",
+    failure_code: null,
+    failure_reason: null,
+    ingestion_job_id: `job-${index}`,
+    created_at: "2026-07-13T01:00:00Z",
+    updated_at: "2026-07-13T01:00:00Z",
+    completed_at: "2026-07-13T01:00:00Z",
+    ingestion: {
+      status: "succeeded",
+      attempt_count: 1,
+      max_attempts: 5,
+      last_attempt_at: null,
+      next_attempt_at: null,
+      last_error_code: null,
+      last_error_message: null,
+      manual_retry_count: 0,
+      retry_allowed: false,
+    },
+  });
+  await page.route("**/api/knowledge/documents", (route) =>
+    fulfill(route, { documents: [0, 1, 2, 3].map(readyDoc) }),
+  );
+
   await page.goto("/workspace/knowledge");
   await page.getByTestId("knowledge-scope-name").fill("Product handbook");
   await page
@@ -157,18 +258,22 @@ test("creates the singleton scope and survives refresh", async ({ page }) => {
 
   await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
   await expect(page.getByTestId("knowledge-scope-card")).toHaveCount(0);
-  await expect(page.getByText("Product handbook", { exact: true })).toHaveCount(
-    1,
-  );
+  await expect(
+    page
+      .getByTestId("knowledge-overview")
+      .getByText("Product handbook", { exact: true }),
+  ).toHaveCount(1);
   await expect(
     page.getByText("Documents").first().locator("..").getByText("4"),
   ).toBeVisible();
 
   await page.reload();
   await expect(page.getByTestId("knowledge-documents-card")).toBeVisible();
-  await expect(page.getByText("Product handbook", { exact: true })).toHaveCount(
-    1,
-  );
+  await expect(
+    page
+      .getByTestId("knowledge-overview")
+      .getByText("Product handbook", { exact: true }),
+  ).toHaveCount(1);
 });
 
 test("shows create loading and ignores repeated create clicks", async ({

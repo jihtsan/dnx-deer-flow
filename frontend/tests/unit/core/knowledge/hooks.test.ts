@@ -2,7 +2,11 @@ import { expect, test } from "@rstest/core";
 
 import {
   getKnowledgeDocumentsRefetchInterval,
+  getKnowledgeGraphSearchQueryKey,
   KNOWLEDGE_DOCUMENT_POLL_INTERVAL_MS,
+  knowledgeGraphLabelsQueryKey,
+  knowledgeGlobalGraphQueryKey,
+  removeKnowledgeDocument,
   upsertKnowledgeDocument,
 } from "@/core/knowledge/hooks";
 import type {
@@ -16,9 +20,11 @@ function document(
 ): KnowledgeDocument {
   return {
     id,
+    directory_id: null,
     original_filename: `${status}.md`,
     content_type: "text/markdown",
     size_bytes: 42,
+    content_length: null,
     status,
     lightrag_tracking_id: status === "pending" ? null : `track-${status}`,
     failure_code: status === "failed" ? "index_failed" : null,
@@ -28,6 +34,9 @@ function document(
     updated_at: "2026-07-13T01:01:00Z",
     completed_at:
       status === "ready" || status === "failed" ? "2026-07-13T01:01:00Z" : null,
+    source: "managed",
+    original_available: true,
+    progress: null,
     ingestion: {
       status:
         status === "ready"
@@ -69,6 +78,8 @@ test.each(["ready", "failed"] as const)(
 
 test("polls a retry_wait job even though its document business status stays pending", () => {
   const retrying = document("pending");
+  if (retrying.source !== "managed")
+    throw new Error("expected managed document");
   retrying.ingestion.status = "retry_wait";
   retrying.ingestion.next_attempt_at = "2026-07-13T01:05:00Z";
   expect(getKnowledgeDocumentsRefetchInterval({ documents: [retrying] })).toBe(
@@ -94,4 +105,40 @@ test("places an accepted upload in the list immediately and replaces replays", (
     indexing,
   );
   expect(replayed.documents).toEqual([indexing, ready]);
+});
+
+test("removes a deleted document from cached lists without mutating the input", () => {
+  const first = document("ready", "doc-first");
+  const deleted = document("ready", "doc-deleted");
+  const current = { documents: [first, deleted] };
+
+  expect(removeKnowledgeDocument(current, "doc-deleted")).toEqual({
+    documents: [first],
+  });
+  expect(current.documents).toEqual([first, deleted]);
+  expect(removeKnowledgeDocument(undefined, "doc-deleted")).toEqual({
+    documents: [],
+  });
+});
+
+test("knowledge graph query keys are stable and normalize labels", () => {
+  expect(knowledgeGraphLabelsQueryKey).toEqual([
+    "knowledge",
+    "graph",
+    "labels",
+    20,
+  ]);
+  expect(knowledgeGlobalGraphQueryKey).toEqual([
+    "knowledge",
+    "graph",
+    "global",
+    5000,
+  ]);
+  expect(getKnowledgeGraphSearchQueryKey("  光储充场站  ")).toEqual([
+    "knowledge",
+    "graph",
+    "search",
+    "光储充场站",
+    20,
+  ]);
 });

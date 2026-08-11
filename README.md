@@ -902,13 +902,34 @@ work unclaimed while no usable client exists, and uses bounded in-process
 concurrency plus a tracking-poll cap so one remote document cannot starve the
 queue. The page polls `GET /api/knowledge/documents` while a document is active
 or waiting to retry, displays sanitized attempts and failure diagnostics, and
-restores server state after a refresh. Eligible terminal failures can be retried
+restores server state after a refresh. The index step also shows LightRAG's
+persisted document stage, time spent in the current stage, and the chunk count
+when LightRAG provides one. It remains indeterminate instead of presenting a
+guessed percentage. Eligible terminal failures can be retried
 through `POST /api/knowledge/documents/{document_id}/retry`; duplicate clicks and
 network replays are deduplicated by a durable per-job retry-key ledger and
-reactivate the existing job at most once rather than creating another one. Fixed
-safety limits are 25 MiB per file and 1 GiB
-across the singleton Scope. Only `ready` documents are eligible for later
-retrieval; this release does not add preview, download, deletion, or agent
+reactivate the existing job at most once rather than creating another one.
+When the LightRAG data plane is not ready, each workbench tab renders only a
+service-offline notice with administrator guidance and a status recheck action.
+Document, directory, graph, and retrieval components do not mount or issue
+downstream requests until readiness returns.
+Documents can be permanently deleted from the detail pane after an explicit
+confirmation. Deletion waits until the corresponding LightRAG document is
+confirmed absent, then removes the owner-visible database record, ingestion
+history, retry ledger, and managed original file; non-terminal ingestion and
+upstream deletion failures leave local state intact so the operation can be
+retried safely. Fixed safety limits are 25 MiB per
+file and 1 GiB across the singleton Scope. Only `ready` documents are eligible
+for retrieval. The Knowledge Graph view merges disconnected LightRAG components
+into one cross-document global graph, renders up to 5,000 logical nodes through
+Canvas 2D, exposes the top 20 popular entities as focus groups, and supports
+server-backed entity search without requiring a center entity. Truncation stays
+explicit when node, component, or request limits are reached. The retrieval
+tester uses structured `/query/data` results for the supported
+`local`, `global`, `hybrid`, `naive`, and `mix` modes. Both surfaces require the
+owner-visible Scope to be enabled and the pinned data plane to be ready. DeerFlow
+normalizes response fields and filenames instead of exposing LightRAG's raw
+payload or operator paths. This release does not add preview, download, or agent
 retrieval controls.
 
 This integration targets LightRAG tag `v1.5.2-4-gab86f430` at commit
@@ -922,11 +943,13 @@ knowledge_base:
     base_url: http://127.0.0.1:9621
     api_key: $LIGHTRAG_API_KEY
     timeout_seconds: 5.0
+    query_timeout_seconds: 60.0
 ```
 
 Keep `LIGHTRAG_API_KEY` in `.env` or the process environment. DeerFlow uses
-LightRAG's health, upload, tracking, structured `/query/data`, and delete
-interfaces; it deliberately does not send the `LIGHTRAG-WORKSPACE` header or
+LightRAG's health, upload, tracking, popular-label, connected-graph, structured
+`/query/data`, and delete interfaces; it deliberately does not send the
+`LIGHTRAG-WORKSPACE` header or
 consume LightRAG's generated final answer. Workspace selection belongs to the
 LightRAG startup command, not to browser users. LightRAG does not expose an
 upload idempotency-key guarantee: DeerFlow uses a stable server-generated remote

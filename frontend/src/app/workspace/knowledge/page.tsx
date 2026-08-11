@@ -1,16 +1,17 @@
 "use client";
 
 import {
-  CheckCircle2Icon,
   CircleAlertIcon,
   DatabaseIcon,
+  FileTextIcon,
   LoaderCircleIcon,
   RefreshCwIcon,
+  SearchIcon,
+  Share2Icon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,6 +31,7 @@ import {
 import { useI18n } from "@/core/i18n/hooks";
 import { useCreateKnowledgeScope, useKnowledgeScope } from "@/core/knowledge";
 import type { KnowledgeBaseFeature, KnowledgeScope } from "@/core/knowledge";
+import type { KnowledgeDocumentStats } from "@/core/knowledge";
 import { cn } from "@/lib/utils";
 
 import { KnowledgeDocumentsCard } from "./knowledge-documents";
@@ -42,25 +44,35 @@ export default function KnowledgeBasePage() {
   const { t } = useI18n();
   const kb = t.knowledgeBase;
   const scopeQuery = useKnowledgeScope();
+  const [reconciledStats, setReconciledStats] =
+    useState<KnowledgeDocumentStats | null>(null);
 
   useEffect(() => {
     document.title = `${kb.title} - ${t.pages.appName}`;
   }, [kb.title, t.pages.appName]);
 
   const feature = scopeQuery.data?.data_plane;
+  const scopeId = scopeQuery.data?.scope?.id;
+  const dataPlaneReady = feature?.status === "ready";
+
+  useEffect(() => {
+    setReconciledStats(null);
+  }, [scopeId]);
 
   return (
     <WorkspaceContainer>
       <WorkspaceHeader />
-      <WorkspaceBody>
-        <div className="mx-auto flex w-full max-w-(--container-width-md) flex-col gap-6 p-6">
-          <div className="space-y-2">
+      <WorkspaceBody className="overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-5 px-4 py-6 sm:px-6 lg:px-10">
+          <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-3">
-              <DatabaseIcon className="text-muted-foreground size-6" />
-              <h1 className="text-2xl font-semibold">{kb.title}</h1>
+              <span className="bg-foreground text-background flex size-9 shrink-0 items-center justify-center rounded-[10px]">
+                <DatabaseIcon className="size-5" />
+              </span>
+              <h1 className="text-2xl font-bold">{kb.title}</h1>
               {feature ? <LightRAGBadge feature={feature} /> : null}
             </div>
-            <p className="text-muted-foreground max-w-2xl text-sm">
+            <p className="text-muted-foreground max-w-3xl text-sm leading-6">
               {kb.description}
             </p>
           </div>
@@ -81,28 +93,78 @@ export default function KnowledgeBasePage() {
               <OverviewBar
                 scope={scopeQuery.data.scope}
                 feature={scopeQuery.data.data_plane}
+                stats={reconciledStats ?? scopeQuery.data.scope.document_stats}
               />
-              <Tabs defaultValue="documents">
-                <TabsList variant="line" className="w-full justify-start">
-                  <TabsTrigger value="documents">
+              <Tabs defaultValue="documents" className="gap-3">
+                <TabsList
+                  variant="line"
+                  className="h-11 w-full justify-start gap-5 overflow-x-auto border-b p-0"
+                >
+                  <TabsTrigger
+                    value="documents"
+                    className="h-11 flex-none rounded-none px-1.5"
+                  >
+                    <FileTextIcon />
                     {kb.tabs.documents}
                   </TabsTrigger>
-                  <TabsTrigger value="graph">{kb.tabs.graph}</TabsTrigger>
-                  <TabsTrigger value="retrieval">
+                  <TabsTrigger
+                    value="graph"
+                    className="h-11 flex-none rounded-none px-1.5"
+                  >
+                    <Share2Icon />
+                    {kb.tabs.graph}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="retrieval"
+                    className="h-11 flex-none rounded-none px-1.5"
+                  >
+                    <SearchIcon />
                     {kb.tabs.retrieval}
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="documents" className="mt-4 space-y-6">
-                  <KnowledgeDocumentsCard
-                    scope={scopeQuery.data.scope}
-                    dataPlane={scopeQuery.data.data_plane}
-                  />
+                <TabsContent
+                  value="documents"
+                  className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-bottom-1 mt-2 space-y-6 data-[state=active]:duration-200 motion-reduce:animate-none"
+                >
+                  {dataPlaneReady ? (
+                    <KnowledgeDocumentsCard
+                      scope={scopeQuery.data.scope}
+                      dataPlane={scopeQuery.data.data_plane}
+                      onStatsChange={setReconciledStats}
+                    />
+                  ) : (
+                    <KnowledgeWorkbenchUnavailable
+                      onRetry={() => void scopeQuery.refetch()}
+                    />
+                  )}
                 </TabsContent>
-                <TabsContent value="graph" className="mt-4">
-                  <KnowledgeGraphPanel />
+                <TabsContent
+                  value="graph"
+                  className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-bottom-1 mt-2 data-[state=active]:duration-200 motion-reduce:animate-none"
+                >
+                  {dataPlaneReady ? (
+                    <KnowledgeGraphPanel
+                      enabled={scopeQuery.data.scope.enabled}
+                    />
+                  ) : (
+                    <KnowledgeWorkbenchUnavailable
+                      onRetry={() => void scopeQuery.refetch()}
+                    />
+                  )}
                 </TabsContent>
-                <TabsContent value="retrieval" className="mt-4">
-                  <KnowledgeRetrievalPanel />
+                <TabsContent
+                  value="retrieval"
+                  className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:slide-in-from-bottom-1 mt-2 data-[state=active]:duration-200 motion-reduce:animate-none"
+                >
+                  {dataPlaneReady ? (
+                    <KnowledgeRetrievalPanel
+                      enabled={scopeQuery.data.scope.enabled}
+                    />
+                  ) : (
+                    <KnowledgeWorkbenchUnavailable
+                      onRetry={() => void scopeQuery.refetch()}
+                    />
+                  )}
                 </TabsContent>
               </Tabs>
             </>
@@ -113,41 +175,73 @@ export default function KnowledgeBasePage() {
   );
 }
 
+function KnowledgeWorkbenchUnavailable({ onRetry }: { onRetry: () => void }) {
+  const { t } = useI18n();
+  const kb = t.knowledgeBase;
+  return (
+    <Alert
+      variant="destructive"
+      data-testid="knowledge-workbench-unavailable"
+      className="min-h-32 items-start"
+    >
+      <CircleAlertIcon />
+      <AlertTitle>{kb.offlineTitle}</AlertTitle>
+      <AlertDescription className="space-y-3">
+        <p className="max-w-3xl leading-6">{kb.offlineDescription}</p>
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCwIcon />
+          {kb.checkAgain}
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 function LightRAGBadge({ feature }: { feature: KnowledgeBaseFeature }) {
   const { t } = useI18n();
   const kb = t.knowledgeBase;
   const ready = feature.status === "ready";
   return (
-    <Badge
+    <span
       data-testid="knowledge-status"
-      variant={ready ? "default" : "outline"}
-      className={cn(
-        ready &&
-          "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-      )}
       title={feature.reason}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+        ready
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+      )}
     >
-      {ready ? <CheckCircle2Icon /> : <CircleAlertIcon />}
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          ready ? "bg-emerald-500" : "bg-amber-500",
+        )}
+      />
       {kb.status[feature.status]}
-    </Badge>
+    </span>
   );
 }
 
 function OverviewBar({
   scope,
   feature,
+  stats,
 }: {
   scope: KnowledgeScope;
   feature: KnowledgeBaseFeature;
+  stats: KnowledgeDocumentStats;
 }) {
   const { t } = useI18n();
   const kb = t.knowledgeBase;
-  const stats = scope.document_stats;
   const processing = stats.pending + stats.indexing;
   return (
-    <Card>
-      <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div className="flex items-center gap-2 pr-6 sm:border-r">
+    <Card
+      data-testid="knowledge-overview"
+      className="rounded-xl py-0 shadow-none"
+    >
+      <CardContent className="flex min-h-14 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3">
+        <div className="flex items-center gap-2 pr-5 sm:border-r">
           <DatabaseIcon className="text-muted-foreground size-4" />
           <span className="font-medium">{scope.name}</span>
           <span className="text-muted-foreground text-xs">
@@ -191,7 +285,12 @@ function OverviewStat({
 }) {
   return (
     <div className="flex items-baseline gap-1.5">
-      <span className={cn("font-mono text-lg font-semibold", className)}>
+      <span
+        className={cn(
+          "font-mono text-xl leading-none font-semibold",
+          className,
+        )}
+      >
         {value}
       </span>
       <span className="text-muted-foreground text-xs">{label}</span>
