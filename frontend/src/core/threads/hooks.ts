@@ -23,7 +23,7 @@ import { isHiddenFromUIMessage } from "../messages/utils";
 import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
 import { isSidecarThread, SIDECAR_METADATA_KEY } from "../sidecar/thread";
-import { useUpdateSubtask } from "../tasks/context";
+import { useSubtaskContext, useUpdateSubtask } from "../tasks/context";
 import { taskEventToSubtaskUpdate } from "../tasks/lifecycle";
 import { messageToStep } from "../tasks/steps";
 import type { UploadedFileInfo } from "../uploads";
@@ -94,6 +94,18 @@ type RegeneratePrepareResponse = {
   };
   metadata: Record<string, unknown>;
   target_run_id: string;
+};
+
+type EditRegeneratePrepareResponse = RegeneratePrepareResponse & {
+  replacement_human_message_id: string;
+  source_message_ids: string[];
+};
+
+export type PendingPreparedReplayMask = {
+  kind: "regenerate" | "edit";
+  targetRunId: string;
+  supersededMessageIds: string[];
+  replacementHumanMessageId?: string;
 };
 
 export function hasToolResult(messages: Message[], toolName: string): boolean {
@@ -742,6 +754,24 @@ export function getVisibleOptimisticMessages(
   return optimisticMessages;
 }
 
+export function areOptimisticMessagesConfirmed(
+  optimisticMessages: Message[],
+  persistedMessages: Message[],
+): boolean {
+  const optimisticIdentities = optimisticMessages
+    .map(messageIdentity)
+    .filter(isNonEmptyString);
+  if (optimisticIdentities.length === 0) {
+    return false;
+  }
+  const persistedIdentities = new Set(
+    persistedMessages.map(messageIdentity).filter(isNonEmptyString),
+  );
+  return optimisticIdentities.every((identity) =>
+    persistedIdentities.has(identity),
+  );
+}
+
 export function getSummarizationMiddlewareMessages(
   data: unknown,
 ): Message[] | undefined {
@@ -1143,6 +1173,9 @@ export function useThreadStream({
   const threadIdRef = useRef<string | null>(threadId ?? null);
   const startedRef = useRef(false);
   const pendingUsageBaselineMessageIdsRef = useRef<Set<string>>(new Set());
+  const pendingPreparedReplayRef = useRef<PendingPreparedReplayMask | null>(
+    null,
+  );
   const listeners = useRef({
     onSend,
     onStart,
@@ -1208,7 +1241,26 @@ export function useThreadStream({
   }, []);
 
   const queryClient = useQueryClient();
+  const { tasksRef, setTasks } = useSubtaskContext();
   const updateSubtask = useUpdateSubtask();
+
+  const clearPreparedReplayMasks = useCallback(
+    (replay: PendingPreparedReplayMask | null) => {
+      if (!replay) {
+        return;
+      }
+      setPendingSupersededRunIds((current) =>
+        removeSetItems(current, [replay.targetRunId]),
+      );
+      setPendingSupersededMessageIds((current) =>
+        removeSetItems(current, replay.supersededMessageIds),
+      );
+      if (pendingPreparedReplayRef.current === replay) {
+        pendingPreparedReplayRef.current = null;
+      }
+    },
+    [],
+  );
 
   const thread = useStream<AgentThreadState>({
     client: getAPIClient(isMock),
@@ -1343,6 +1395,25 @@ export function useThreadStream({
           ? (event as { type: unknown }).type
           : undefined;
 
+      if (eventType === "stream_replay_gap") {
+        setOptimisticMessages([]);
+        setOptimisticThreadId(null);
+        setLiveMessagesThreadId(null);
+        setPendingSupersededRunIds(new Set());
+        setPendingSupersededMessageIds(new Set());
+        messagesRef.current = [];
+        transientHistoryBridgeRef.current = [];
+        transientHistoryOrderRef.current = [];
+        transientHistoryThreadIdRef.current = null;
+        summarizedRef.current = new Set<string>();
+        pendingUsageBaselineMessageIdsRef.current = new Set();
+        tasksRef.current = {};
+        setTasks({});
+        invalidateStoppedThreadCaches(queryClient, threadIdRef.current, isMock);
+        toast.warning(t.conversation.streamReplayGap);
+        return;
+      }
+
       const taskUpdate = taskEventToSubtaskUpdate(event);
       if (taskUpdate) {
         updateSubtask(taskUpdate);
@@ -1377,6 +1448,7 @@ export function useThreadStream({
       setOptimisticMessages([]);
       setOptimisticThreadId(null);
       setLiveMessagesThreadId(null);
+      pendingPreparedReplayRef.current = null;
       setPendingSupersededRunIds(new Set());
       setPendingSupersededMessageIds(new Set());
       toast.error(getStreamErrorMessage(error));
@@ -1396,6 +1468,7 @@ export function useThreadStream({
     },
     onFinish(state) {
       listeners.current.onFinish?.(state.values);
+      pendingPreparedReplayRef.current = null;
       pendingUsageBaselineMessageIdsRef.current = new Set(
         messagesRef.current
           .map(messageIdentity)
@@ -1408,13 +1481,26 @@ export function useThreadStream({
   const stopThread = useCallback(async () => {
     const stoppedThreadId =
       threadIdRef.current ?? displayThreadId ?? threadId ?? null;
+    const pendingReplay = pendingPreparedReplayRef.current;
     await stopThreadAndInvalidateCaches(
       queryClient,
       () => thread.stop(),
       stoppedThreadId,
       isMock,
     );
-  }, [displayThreadId, isMock, queryClient, thread, threadId]);
+    if (pendingReplay) {
+      setOptimisticMessages([]);
+      setOptimisticThreadId(null);
+      clearPreparedReplayMasks(pendingReplay);
+    }
+  }, [
+    clearPreparedReplayMasks,
+    displayThreadId,
+    isMock,
+    queryClient,
+    thread,
+    threadId,
+  ]);
 
   const hasVisibleStreamState =
     Boolean(threadId) || liveMessagesThreadId === currentViewThreadId;
@@ -1470,6 +1556,7 @@ export function useThreadStream({
     transientHistoryThreadIdRef.current = null;
     summarizedRef.current = new Set<string>();
     pendingUsageBaselineMessageIdsRef.current = new Set();
+    pendingPreparedReplayRef.current = null;
     setPendingSupersededRunIds(new Set());
     setPendingSupersededMessageIds(new Set());
     prevHumanMsgCountRef.current =
@@ -1533,6 +1620,16 @@ export function useThreadStream({
       setOptimisticThreadId(null);
     }
   }, [hasHumanOptimistic, humanMessageCount, optimisticMessageCount]);
+
+  useEffect(() => {
+    if (
+      optimisticMessageCount > 0 &&
+      areOptimisticMessagesConfirmed(optimisticMessages, persistedMessages)
+    ) {
+      setOptimisticMessages([]);
+      setOptimisticThreadId(null);
+    }
+  }, [optimisticMessageCount, optimisticMessages, persistedMessages]);
 
   const sendMessage = useCallback(
     async (
@@ -1741,14 +1838,20 @@ export function useThreadStream({
     ],
   );
 
-  const regenerateMessage = useCallback(
-    async (
-      threadId: string,
-      messageId: string,
-      supersededMessageIds: string[] = [messageId],
-    ) => {
-      if (sendInFlightRef.current || !threadId || !messageId) {
-        return;
+  const submitPreparedReplay = useCallback(
+    async <TPrepared extends RegeneratePrepareResponse>({
+      threadId,
+      prepare,
+      getSupersededMessageIds,
+      getOptimisticMessages,
+    }: {
+      threadId: string;
+      prepare: () => Promise<TPrepared>;
+      getSupersededMessageIds: (prepared: TPrepared) => string[];
+      getOptimisticMessages?: (prepared: TPrepared) => Message[];
+    }) => {
+      if (sendInFlightRef.current || !threadId) {
+        return false;
       }
       sendInFlightRef.current = true;
       prevHumanMsgCountRef.current = humanMessageCount;
@@ -1763,25 +1866,21 @@ export function useThreadStream({
       let preparedSupersededMessageIds: string[] = [];
 
       try {
-        const response = await fetch(
-          `${getBackendBaseURL()}/api/threads/${encodeURIComponent(
-            threadId,
-          )}/runs/regenerate/prepare`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            credentials: "include",
-            body: JSON.stringify({ message_id: messageId }),
-          },
-        );
-        if (!response.ok) {
-          throw new Error(await readResponseErrorMessage(response));
-        }
-        const prepared = (await response.json()) as RegeneratePrepareResponse;
+        const prepared = await prepare();
         preparedSupersededRunId = prepared.target_run_id;
-        preparedSupersededMessageIds = supersededMessageIds;
+        preparedSupersededMessageIds = getSupersededMessageIds(prepared);
+        const replacementHumanMessageId =
+          "replacement_human_message_id" in prepared &&
+          typeof prepared.replacement_human_message_id === "string"
+            ? prepared.replacement_human_message_id
+            : undefined;
+        const pendingReplay: PendingPreparedReplayMask = {
+          kind: replacementHumanMessageId ? "edit" : "regenerate",
+          targetRunId: prepared.target_run_id,
+          supersededMessageIds: preparedSupersededMessageIds,
+          replacementHumanMessageId,
+        };
+        pendingPreparedReplayRef.current = pendingReplay;
         setPendingSupersededRunIds((current) => {
           const next = new Set(current);
           next.add(prepared.target_run_id);
@@ -1789,11 +1888,17 @@ export function useThreadStream({
         });
         setPendingSupersededMessageIds((current) => {
           const next = new Set(current);
-          for (const id of supersededMessageIds) {
+          for (const id of preparedSupersededMessageIds) {
             next.add(id);
           }
           return next;
         });
+
+        const nextOptimisticMessages = getOptimisticMessages?.(prepared) ?? [];
+        if (nextOptimisticMessages.length > 0) {
+          setOptimisticThreadId(threadId);
+          setOptimisticMessages(nextOptimisticMessages);
+        }
 
         await thread.submit(prepared.input, {
           threadId,
@@ -1827,12 +1932,19 @@ export function useThreadStream({
           queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
         });
         void queryClient.invalidateQueries({
+          queryKey: threadHistoryQueryKey(threadId),
+        });
+        void queryClient.invalidateQueries({
           queryKey: threadTokenUsageQueryKey(threadId),
         });
+        return true;
       } catch (error) {
+        setOptimisticMessages([]);
+        setOptimisticThreadId(null);
         setLiveMessagesThreadId(null);
         if (preparedSupersededRunId) {
           const supersededRunId = preparedSupersededRunId;
+          pendingPreparedReplayRef.current = null;
           setPendingSupersededRunIds((current) =>
             removeSetItems(current, [supersededRunId]),
           );
@@ -1841,11 +1953,88 @@ export function useThreadStream({
           );
         }
         toast.error(getStreamErrorMessage(error));
+        return false;
       } finally {
         sendInFlightRef.current = false;
       }
     },
     [context, humanMessageCount, persistedMessages, queryClient, thread],
+  );
+
+  const regenerateMessage = useCallback(
+    async (
+      threadId: string,
+      messageId: string,
+      supersededMessageIds: string[] = [messageId],
+    ) => {
+      if (!messageId) {
+        return false;
+      }
+      return submitPreparedReplay({
+        threadId,
+        prepare: async () => {
+          const response = await fetch(
+            `${getBackendBaseURL()}/api/threads/${encodeURIComponent(
+              threadId,
+            )}/runs/regenerate/prepare`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              credentials: "include",
+              body: JSON.stringify({ message_id: messageId }),
+            },
+          );
+          if (!response.ok) {
+            throw new Error(await readResponseErrorMessage(response));
+          }
+          return (await response.json()) as RegeneratePrepareResponse;
+        },
+        getSupersededMessageIds: () => supersededMessageIds,
+      });
+    },
+    [submitPreparedReplay],
+  );
+
+  const editAndRegenerateMessage = useCallback(
+    async (
+      threadId: string,
+      humanMessageId: string,
+      replacementText: string,
+    ) => {
+      if (!humanMessageId) {
+        return false;
+      }
+      return submitPreparedReplay<EditRegeneratePrepareResponse>({
+        threadId,
+        prepare: async () => {
+          const response = await fetch(
+            `${getBackendBaseURL()}/api/threads/${encodeURIComponent(
+              threadId,
+            )}/runs/edit-regenerate/prepare`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              credentials: "include",
+              body: JSON.stringify({
+                human_message_id: humanMessageId,
+                replacement_text: replacementText,
+              }),
+            },
+          );
+          if (!response.ok) {
+            throw new Error(await readResponseErrorMessage(response));
+          }
+          return (await response.json()) as EditRegeneratePrepareResponse;
+        },
+        getSupersededMessageIds: (prepared) => prepared.source_message_ids,
+        getOptimisticMessages: (prepared) => prepared.input.messages ?? [],
+      });
+    },
+    [submitPreparedReplay],
   );
 
   // Cache the latest thread messages in a ref to compare against incoming history messages for deduplication,
@@ -1941,6 +2130,7 @@ export function useThreadStream({
     pendingUsageMessages,
     sendMessage,
     regenerateMessage,
+    editAndRegenerateMessage,
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
