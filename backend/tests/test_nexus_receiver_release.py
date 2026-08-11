@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -12,6 +14,8 @@ from app.gateway.nexus_receiver.release import (
     ReceiverRecoveryService,
     ReceiverReleaseComponents,
     SecretBackedReceiverPrincipalMapper,
+    UnixDatagramReceiverRecoveryNotifier,
+    build_receiver_forced_command_context_provider,
     start_receiver_release_wiring,
 )
 from app.gateway.nexus_receiver.runtime import ReceiverTransportPrincipal
@@ -20,6 +24,7 @@ from deerflow.config.nexus_receiver_config import NexusReceiverConfig, ReceiverS
 _COMPLETE_CONFIG = {
     "enabled": True,
     "ssh_account": "nexus-receiver",
+    "recovery_signal_socket": "/run/nexus-receiver-ipc/recovery.sock",
     "host_key_secret_ref": {"name": "deerflow-receiver-host-key", "key": "ssh_host_ed25519_key"},
     "principal_map_secret_ref": {"name": "deerflow-receiver-principals", "key": "principals.json"},
     "directory_policy_revision": "directory-policy-v1",
@@ -40,6 +45,7 @@ def test_receiver_config_is_disabled_by_default() -> None:
     "missing",
     [
         "ssh_account",
+        "recovery_signal_socket",
         "host_key_secret_ref",
         "principal_map_secret_ref",
         "directory_policy_revision",
@@ -60,6 +66,14 @@ def test_receiver_config_contains_references_not_secret_values() -> None:
 
     assert config.host_key_secret_ref == ReceiverSecretReference(name="deerflow-receiver-host-key", key="ssh_host_ed25519_key")
     assert "secret_value" not in config.model_dump_json()
+
+
+def test_receiver_config_account_must_match_the_dedicated_image_account() -> None:
+    values = dict(_COMPLETE_CONFIG)
+    values["ssh_account"] = "another-account"
+
+    with pytest.raises(ValidationError, match="nexus-receiver"):
+        NexusReceiverConfig.model_validate(values)
 
 
 class _SecretResolver:
@@ -180,6 +194,28 @@ async def test_forced_command_context_maps_the_transport_principal() -> None:
     assert context.principal.subject == "nexus.release.prod"
 
 
+@pytest.mark.asyncio
+async def test_forced_command_release_factory_wires_secret_mapping_and_cross_process_wakeup() -> None:
+    callbacks: list[object] = []
+
+    class _Runtime:
+        def set_pending_recovery_notifier(self, callback) -> None:
+            callbacks.append(callback)
+
+    runtime = _Runtime()
+    provider = build_receiver_forced_command_context_provider(
+        config=NexusReceiverConfig.model_validate(_COMPLETE_CONFIG),
+        handler=runtime,
+        secret_resolver=_SecretResolver(_principal_map()),
+    )
+
+    context = await provider.get_context("nexus-release-key-1")
+
+    assert context.handler is runtime
+    assert context.principal.subject == "nexus.release.prod"
+    assert len(callbacks) == 1
+
+
 class _Recoverer:
     def __init__(self) -> None:
         self.calls = 0
@@ -215,6 +251,26 @@ async def test_recovery_service_runs_at_startup_after_submit_and_periodically() 
     assert recoverer.calls >= 3
 
     await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_service_accepts_cross_process_submit_signal() -> None:
+    recoverer = _Recoverer()
+    signal_path = Path("/tmp") / f"nexus-receiver-{uuid4().hex}.sock"
+    service = ReceiverRecoveryService(
+        recoverer,
+        poll_interval_seconds=60,
+        signal_path=signal_path,
+    )
+    await service.start()
+    recoverer.called.clear()
+
+    UnixDatagramReceiverRecoveryNotifier(signal_path).notify_pending()
+
+    await asyncio.wait_for(recoverer.called.wait(), timeout=0.2)
+    assert recoverer.calls == 2
+    await service.stop()
+    assert not signal_path.exists()
 
 
 @pytest.mark.asyncio
@@ -339,7 +395,9 @@ async def test_release_wiring_injects_complete_components_and_recovery_together(
         )
     )
 
-    service = await start_receiver_release_wiring(state, NexusReceiverConfig.model_validate(_COMPLETE_CONFIG))
+    config_values = dict(_COMPLETE_CONFIG)
+    config_values["recovery_signal_socket"] = str(Path("/tmp") / f"nexus-receiver-{uuid4().hex}.sock")
+    service = await start_receiver_release_wiring(state, NexusReceiverConfig.model_validate(config_values))
 
     assert service is not None
     assert state.nexus_receiver_runtime_handler is runtime

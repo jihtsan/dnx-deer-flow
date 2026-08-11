@@ -129,12 +129,14 @@ CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gatewa
 # overlay and cannot start until both environment and config release gates pass.
 FROM runtime-base AS nexus-receiver-sshd
 
+# Public-key login is permitted, but the deliberately invalid shadow value can
+# never authenticate even if PasswordAuthentication is misconfigured.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-server \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --home-dir /var/empty/nexus-receiver --shell /bin/sh nexus-receiver \
     && chmod 0555 /var/empty/nexus-receiver \
-    && passwd -l nexus-receiver
+    && usermod --password 'x' nexus-receiver
 
 COPY docker/nexus-receiver-sshd/sshd_config /etc/ssh/nexus-receiver-sshd_config
 COPY docker/nexus-receiver-sshd/entrypoint.sh /usr/local/bin/nexus-receiver-sshd-entrypoint

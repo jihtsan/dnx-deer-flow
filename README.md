@@ -1142,11 +1142,13 @@ config gates. Its repository entry point intentionally has no runtime context
 provider and returns one redacted Problem with exit `10` until the deployment
 bootstrap is approved. When a complete Gateway bootstrap is injected, one
 supervised recovery service runs `recover_pending` at startup, after durable
-HTTP submit notifications, and periodically. SSH is a one-shot process, so
-cross-process submit wake-up requires deployment IPC; periodic recovery remains
-the fail-safe until that is supplied. Real credentials and rotation,
+submit notifications, and periodically. The opt-in overlay shares a private
+Unix datagram socket between Gateway and the one-shot SSH process; the datagram
+carries only a fixed wake token and merely triggers a fenced durable-store scan.
+Periodic recovery remains the fail-safe if notification is unavailable. Real credentials and rotation,
 service-auth/directory privacy policy, stable RBAC principal ownership,
-trust/compatibility decisions, and native `GLOBAL` support remain release gates. Nexus
+trust/compatibility decisions, a stable single-worker/process ownership policy,
+and native `GLOBAL` support remain release gates. Nexus
 must not fall back to `/api/skills`, and browser clients must continue to call
 the Nexus public API instead of this service-to-service boundary.
 

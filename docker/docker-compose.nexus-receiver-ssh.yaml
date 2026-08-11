@@ -2,6 +2,10 @@
 # Invoke only after provisioning the referenced files and enabling both the
 # Compose environment gate and config.yaml nexus_receiver release gate.
 services:
+  gateway:
+    volumes:
+      - nexus-receiver-ipc:/run/nexus-receiver-ipc
+
   nexus-receiver-sshd:
     profiles: ["nexus-receiver-ssh"]
     build:
@@ -20,6 +24,7 @@ services:
     volumes:
       - ${DEER_FLOW_CONFIG_PATH}:/app/backend/config.yaml:ro
       - ${DEER_FLOW_HOME}:/app/backend/.deer-flow
+      - nexus-receiver-ipc:/run/nexus-receiver-ipc
     secrets:
       - nexus_receiver_host_key
       - nexus_receiver_principal_map
@@ -32,3 +37,6 @@ secrets:
     file: ${NEXUS_RECEIVER_HOST_KEY_FILE}
   nexus_receiver_principal_map:
     file: ${NEXUS_RECEIVER_PRINCIPAL_MAP_FILE}
+
+volumes:
+  nexus-receiver-ipc:
