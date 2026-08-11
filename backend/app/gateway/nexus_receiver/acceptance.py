@@ -15,12 +15,16 @@ from typing import Any, Literal, NoReturn
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.engine import make_url
 
-from app.gateway.nexus_receiver.auth import ReceiverServiceAuthenticationRequired
+from app.gateway.nexus_receiver.auth import (
+    ReceiverServiceAuthenticationRequired,
+    ReceiverServicePrincipal,
+)
 from app.gateway.nexus_receiver.directory import ReceiverDirectoryCursorRejected
 from app.gateway.nexus_receiver.installer import UserScopedReceiverInstaller
 from app.gateway.nexus_receiver.models import ReceiverCursorPage, ReceiverInstallCommand, ReceiverUser, ReceiverUserPage
 from app.gateway.nexus_receiver.package_store import LocalReceiverPackageStore
 from app.gateway.nexus_receiver.release import (
+    ReceiverPrincipalMapper,
     ReceiverReleaseComponents,
     SecretBackedReceiverPrincipalMapper,
 )
@@ -28,6 +32,7 @@ from app.gateway.nexus_receiver.runtime import (
     ReceiverRuntimeError,
     ReceiverRuntimeHandler,
     ReceiverTargetUser,
+    ReceiverTransportPrincipal,
 )
 from app.gateway.nexus_receiver.store import SqlReceiverOperationStore
 from deerflow.config.app_config import get_app_config
@@ -42,7 +47,7 @@ ACCEPTANCE_OPENAPI_SHA256 = "bf3c6a98c8686695cd6518f27817b2f1b184acab17863dc2ae5
 ACCEPTANCE_CONFORMANCE_SHA256 = "300e4be74bf66749718d4bdc0d7845ed51dc4e4f0498be8c1fbe47ef871fe81c"
 
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
-_FAULTS = (
+ACCEPTANCE_FAULTS = (
     "disconnect_after_receiver_accept",
     "restart_nexus_after_outcome_unknown",
     "restart_deer_flow_before_activation",
@@ -201,6 +206,7 @@ class _FixtureSsh(BaseModel):
 
     account: str
     key_id: str = Field(alias="keyId")
+    client_identity_secret_reference: str = Field(alias="clientIdentitySecretReference")
     host_key_secret_reference: str = Field(alias="hostKeySecretReference")
     principal_map_secret_reference: str = Field(alias="principalMapSecretReference")
     material_provisioned: bool = Field(alias="materialProvisioned")
@@ -252,6 +258,15 @@ class _ManifestDocument(BaseModel):
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptancePackageDecision:
+    skill_version_id: str
+    runtime_skill_name: str
+    package_digest: str
+    package_size_bytes: int
+    package_media_type: str
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptanceManifest:
     deer_flow_deployment_revision: str
     deer_flow_acceptance_harness_revision: str
@@ -262,6 +277,7 @@ class AcceptanceManifest:
     trust_revision: str
     compatibility_revision: str
     recovery_signal_socket: str
+    compatible_packages: tuple[AcceptancePackageDecision, ...]
 
     @classmethod
     def load(cls, settings: AcceptanceSettings) -> AcceptanceManifest:
@@ -333,6 +349,7 @@ class AcceptanceManifest:
         if (
             fixture.ssh.account != "nexus-receiver"
             or fixture.ssh.key_id != "nexus-joint-acceptance-key-1"
+            or fixture.ssh.client_identity_secret_reference != "secret://joint-acceptance/ssh/client-identity"
             or fixture.ssh.host_key_secret_reference != "secret://joint-acceptance/ssh/host-key"
             or fixture.ssh.principal_map_secret_reference != "secret://joint-acceptance/ssh/principal-map"
             or fixture.ssh.material_provisioned
@@ -345,7 +362,7 @@ class AcceptanceManifest:
             or policies.compatibility_revision != "acceptance-compatibility-v1"
             or not policies.synthetic_acceptance_policies
             or policies.production_approved
-            or tuple(fixture.faults) != _FAULTS
+            or tuple(fixture.faults) != ACCEPTANCE_FAULTS
         ):
             raise ValueError("acceptance synthetic policy or fault fixture is invalid")
         expected_packages = (
@@ -378,6 +395,16 @@ class AcceptanceManifest:
             trust_revision=policies.trust_revision,
             compatibility_revision=policies.compatibility_revision,
             recovery_signal_socket=topology.deer_flow.recovery_signal_socket,
+            compatible_packages=tuple(
+                AcceptancePackageDecision(
+                    skill_version_id=package.skill_version_id,
+                    runtime_skill_name=package.runtime_skill_name,
+                    package_digest=package.digest,
+                    package_size_bytes=package.size_bytes,
+                    package_media_type=package.media_type,
+                )
+                for package in fixture.packages
+            ),
         )
 
 
@@ -389,7 +416,7 @@ class AcceptanceFaultController:
 
     @staticmethod
     def _validate(fault: str) -> None:
-        if fault not in _FAULTS:
+        if fault not in ACCEPTANCE_FAULTS:
             raise ValueError("acceptance fault name is invalid")
 
     def _arm(self, fault: str) -> None:
@@ -546,10 +573,26 @@ class AcceptanceReceiverRuntimeHandler(ReceiverRuntimeHandler):
 
     async def submit_install(self, *, command_payload: dict[str, Any], **kwargs: Any):
         command = self.validate_command(command_payload)
+        principal = kwargs.get("principal")
+        if not isinstance(principal, (ReceiverServicePrincipal, ReceiverTransportPrincipal)) or principal.subject != self._manifest.principal_id or str(command.actor_audit.principal_id) != self._manifest.principal_id:
+            raise ReceiverRuntimeError(code="FORBIDDEN", detail="The acceptance principal binding does not match.", status_code=403)
         if command.receiver_binding_id != "df-joint-acceptance":
             raise ReceiverRuntimeError(code="INVALID_INSTALLATION_TARGET", detail="The acceptance receiver binding does not match.", status_code=422)
         if command.policy_revision != self._manifest.trust_revision:
             raise ReceiverRuntimeError(code="TRUST_POLICY_NOT_CONFIGURED", detail="The acceptance trust revision does not match.")
+        package_decision = AcceptancePackageDecision(
+            skill_version_id=command.skill_version_id,
+            runtime_skill_name=command.runtime_skill_name,
+            package_digest=command.package_digest,
+            package_size_bytes=command.package_size_bytes,
+            package_media_type=command.package_media_type,
+        )
+        if package_decision not in self._manifest.compatible_packages:
+            raise ReceiverRuntimeError(
+                code="SKILL_INCOMPATIBLE",
+                detail="The package is not allowed by the frozen synthetic compatibility policy.",
+                status_code=422,
+            )
         operation = await super().submit_install(command_payload=command_payload, **kwargs)
         if await self._faults.consume("disconnect_after_receiver_accept"):
             raise AcceptanceTransportDisconnect
@@ -574,6 +617,29 @@ class _DenyAcceptanceHttpAuthenticator:
     async def authenticate(self, request: object):
         del request
         raise ReceiverServiceAuthenticationRequired()
+
+
+class _AcceptancePrincipalMapper:
+    def __init__(self, delegate: ReceiverPrincipalMapper, manifest: AcceptanceManifest) -> None:
+        self._delegate = delegate
+        self._manifest = manifest
+
+    async def map_principal(self, key_id: str) -> ReceiverTransportPrincipal:
+        if key_id != self._manifest.key_id:
+            raise ValueError("acceptance principal key ID is not authorized")
+        principal = await self._delegate.map_principal(key_id)
+        expected_actions = frozenset(
+            {
+                "receiver:capabilities:read",
+                "receiver:user-directory:read",
+                "receiver:install:user",
+                "receiver:observe:user",
+                "receiver:operations:read",
+            }
+        )
+        if principal.subject != self._manifest.principal_id or principal.actions != expected_actions:
+            raise ValueError("acceptance principal binding is invalid")
+        return principal
 
 
 class AcceptanceReceiverReleaseBootstrap:
@@ -627,13 +693,14 @@ class AcceptanceReceiverReleaseBootstrap:
             user_install_ready=True,
         )
         resolver = _AcceptanceSecretResolver(self._settings.principal_map_path, expected_principal_map)
+        principal_mapper = SecretBackedReceiverPrincipalMapper(
+            resolver=resolver,
+            reference=expected_principal_map,
+        )
         return ReceiverReleaseComponents(
             runtime_handler=handler,
             service_authenticator=_DenyAcceptanceHttpAuthenticator(),
-            principal_mapper=SecretBackedReceiverPrincipalMapper(
-                resolver=resolver,
-                reference=expected_principal_map,
-            ),
+            principal_mapper=_AcceptancePrincipalMapper(principal_mapper, manifest),
         )
 
 

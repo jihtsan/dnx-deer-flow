@@ -8,18 +8,10 @@ import json
 from typing import cast
 
 from app.gateway.nexus_receiver.acceptance import (
+    ACCEPTANCE_FAULTS,
     AcceptanceFault,
     AcceptanceFaultController,
     load_acceptance_settings,
-)
-
-_FAULTS = (
-    "disconnect_after_receiver_accept",
-    "restart_nexus_after_outcome_unknown",
-    "restart_deer_flow_before_activation",
-    "fail_activation_after_atomic_install",
-    "disable_after_success",
-    "observation_unavailable",
 )
 
 
@@ -30,6 +22,9 @@ async def _run(action: str, fault: str) -> None:
         await controller.arm(accepted_fault)
     elif action == "clear":
         await controller.clear(accepted_fault)
+    elif action == "consume":
+        consumed = await controller.consume(accepted_fault)
+        print(json.dumps({"consumed": consumed, "fault": fault}, separators=(",", ":")))
     else:
         state = "armed" if await controller.is_armed(accepted_fault) else "not_armed"
         print(json.dumps({"fault": fault, "state": state}, separators=(",", ":")))
@@ -37,8 +32,8 @@ async def _run(action: str, fault: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("arm", "clear", "status"))
-    parser.add_argument("fault", choices=_FAULTS)
+    parser.add_argument("action", choices=("arm", "clear", "consume", "status"))
+    parser.add_argument("fault", choices=ACCEPTANCE_FAULTS)
     args = parser.parse_args()
     asyncio.run(_run(args.action, args.fault))
 

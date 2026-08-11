@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 import yaml
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.gateway.nexus_receiver.acceptance import (
@@ -41,6 +43,7 @@ from app.gateway.nexus_receiver.runtime import (
 from app.gateway.nexus_receiver.store import SqlReceiverOperationStore
 from deerflow.config.nexus_receiver_config import NexusReceiverConfig
 from deerflow.config.paths import Paths
+from deerflow.persistence.engine import close_engine, get_engine, get_session_factory, init_engine
 from deerflow.persistence.receiver_operations.model import ReceiverOperationRow
 from deerflow.skills.storage.user_scoped_skill_storage import UserScopedSkillStorage
 
@@ -177,9 +180,18 @@ def _manifest(*, harness_revision: str | None = HARNESS_REVISION) -> dict:
     }
 
 
-def _write_manifest(tmp_path: Path, *, harness_revision: str | None = HARNESS_REVISION) -> Path:
+def _write_manifest(
+    tmp_path: Path,
+    *,
+    harness_revision: str | None = HARNESS_REVISION,
+    package: bytes | None = None,
+) -> Path:
+    document = _manifest(harness_revision=harness_revision)
+    compatible_package = package if package is not None else _archive()
+    document["fixture"]["packages"][0]["digest"] = f"sha256:{hashlib.sha256(compatible_package).hexdigest()}"
+    document["fixture"]["packages"][0]["sizeBytes"] = len(compatible_package)
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(_manifest(harness_revision=harness_revision)), encoding="utf-8")
+    path.write_text(json.dumps(document), encoding="utf-8")
     return path
 
 
@@ -192,7 +204,7 @@ def _environment(tmp_path: Path, manifest_path: Path) -> dict[str, str]:
                 "principals": [
                     {
                         "keyId": "nexus-joint-acceptance-key-1",
-                        "subject": "nexus.joint.acceptance",
+                        "subject": "11111111-1111-4111-8111-111111111111",
                         "actions": [
                             "receiver:capabilities:read",
                             "receiver:user-directory:read",
@@ -314,13 +326,20 @@ def test_acceptance_manifest_requires_exact_frozen_revisions_and_default_deny_fl
     with pytest.raises(ValueError, match="package fixture"):
         AcceptanceManifest.load(settings)
 
+    changed = _manifest()
+    del changed["fixture"]["ssh"]["clientIdentitySecretReference"]
+    manifest_path.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest is invalid"):
+        AcceptanceManifest.load(settings)
+
 
 @pytest.mark.asyncio
 async def test_controlled_directory_exposes_only_fixture_users_and_revalidates_targets(tmp_path: Path) -> None:
-    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path)))
+    package = _archive()
+    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path, package=package)))
     directory = ControlledAcceptanceDirectory(AcceptanceManifest.load(settings))
     principal = ReceiverTransportPrincipal(
-        subject="nexus.joint.acceptance",
+        subject="11111111-1111-4111-8111-111111111111",
         profile="ssh_forced_command",
         actions=frozenset({"receiver:user-directory:read"}),
     )
@@ -409,7 +428,8 @@ async def test_acceptance_sql_composition_closes_native_user_install_and_survive
     def storage_factory(user_id: str) -> UserScopedSkillStorage:
         return UserScopedSkillStorage(user_id, host_path=str(tmp_path / "skills"))
 
-    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path)))
+    package = _archive()
+    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path, package=package)))
     manifest = AcceptanceManifest.load(settings)
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'receiver.db'}")
     async with engine.begin() as connection:
@@ -435,11 +455,10 @@ async def test_acceptance_sql_composition_closes_native_user_install_and_survive
         user_install_ready=True,
     )
     principal = ReceiverTransportPrincipal(
-        subject="nexus.joint.acceptance",
+        subject="11111111-1111-4111-8111-111111111111",
         profile="ssh_forced_command",
         actions=frozenset({"receiver:install:user"}),
     )
-    package = _archive()
     command = _command(package)
 
     try:
@@ -454,7 +473,7 @@ async def test_acceptance_sql_composition_closes_native_user_install_and_survive
         reopened = await SqlReceiverOperationStore(session_factory).get(command["receiverOperationId"])
 
         assert accepted.phase == "accepted"
-        assert [operation.phase for operation in recovered] == ["succeeded"]
+        assert [operation.phase for operation in recovered] == ["succeeded"], recovered
         assert reopened is not None and reopened.operation.phase == "succeeded"
         assert reopened.operation.observed is not None
         assert reopened.operation.observed.enabled is True
@@ -469,9 +488,78 @@ async def test_acceptance_sql_composition_closes_native_user_install_and_survive
         await engine.dispose()
 
 
+@pytest.mark.skipif(
+    not os.getenv("DEERFLOW_NEXUS_RECEIVER_ACCEPTANCE_POSTGRES_URL"),
+    reason="set DEERFLOW_NEXUS_RECEIVER_ACCEPTANCE_POSTGRES_URL to run the acceptance PostgreSQL container test",
+)
+@pytest.mark.asyncio
+async def test_acceptance_composition_uses_isolated_postgres_and_native_user_installer(tmp_path: Path, monkeypatch) -> None:
+    import app.gateway.nexus_receiver.acceptance as acceptance_module
+    import deerflow.config.paths as paths_module
+    import deerflow.skills.storage as storage_module
+
+    monkeypatch.setattr(paths_module, "_paths", Paths(tmp_path / "home"))
+
+    def storage_factory(user_id: str) -> UserScopedSkillStorage:
+        return UserScopedSkillStorage(user_id, host_path=str(tmp_path / "skills"))
+
+    monkeypatch.setattr(storage_module, "get_or_new_user_skill_storage", storage_factory)
+    postgres_url = os.environ["DEERFLOW_NEXUS_RECEIVER_ACCEPTANCE_POSTGRES_URL"]
+    if postgres_url.startswith("postgresql://"):
+        postgres_url = postgres_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    await init_engine("postgres", url=postgres_url, postgres_schema="deerflow")
+    engine = get_engine()
+    session_factory = get_session_factory()
+    assert engine is not None and session_factory is not None
+    async with engine.begin() as connection:
+        identity = (await connection.execute(text("SELECT current_database(), current_user, current_schema()"))).one()
+    assert identity == ("deerflow_acceptance", "deerflow_acceptance", "deerflow")
+
+    package = _archive()
+    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path, package=package)))
+    monkeypatch.setattr(
+        acceptance_module,
+        "get_app_config",
+        lambda: SimpleNamespace(
+            database=SimpleNamespace(
+                backend="postgres",
+                postgres_url=postgres_url,
+                postgres_schema="deerflow",
+            )
+        ),
+    )
+    components = await AcceptanceReceiverReleaseBootstrap(settings).build(_config())
+    handler = components.runtime_handler
+    installer = handler.installer
+    command = _command(package)
+    principal = ReceiverTransportPrincipal(
+        subject="11111111-1111-4111-8111-111111111111",
+        profile="ssh_forced_command",
+        actions=frozenset({"receiver:install:user"}),
+    )
+    try:
+        await handler.submit_install(
+            principal=principal,
+            idempotency_key=f"acceptance-postgres-{command['receiverOperationId']}",
+            request_sha256=handler.canonical_command_digest(command),
+            command_payload=command,
+            package=package,
+        )
+        recovered = await handler.recover_pending()
+        reopened = await SqlReceiverOperationStore(session_factory).get(command["receiverOperationId"])
+
+        assert isinstance(handler.store, SqlReceiverOperationStore)
+        assert isinstance(installer.delegate, UserScopedReceiverInstaller)
+        assert [operation.phase for operation in recovered] == ["succeeded"], recovered
+        assert reopened is not None and reopened.operation.phase == "succeeded"
+    finally:
+        await close_engine()
+
+
 @pytest.mark.asyncio
 async def test_disconnect_fault_occurs_only_after_durable_receiver_acceptance(tmp_path: Path) -> None:
-    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path)))
+    package = _archive()
+    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path, package=package)))
     manifest = AcceptanceManifest.load(settings)
     faults = AcceptanceFaultController(tmp_path / "faults")
     store = InMemoryReceiverOperationStore()
@@ -497,10 +585,9 @@ async def test_disconnect_fault_occurs_only_after_durable_receiver_acceptance(tm
         installer=_Installer(),
         user_install_ready=True,
     )
-    package = _archive()
     command = _command(package)
     principal = ReceiverTransportPrincipal(
-        subject="nexus.joint.acceptance",
+        subject="11111111-1111-4111-8111-111111111111",
         profile="ssh_forced_command",
         actions=frozenset({"receiver:install:user"}),
     )
@@ -517,6 +604,42 @@ async def test_disconnect_fault_occurs_only_after_durable_receiver_acceptance(tm
 
     entry = await store.get(command["receiverOperationId"])
     assert entry is not None and entry.operation.phase == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_acceptance_rejects_package_outside_frozen_compatibility_decision(tmp_path: Path) -> None:
+    package = _archive()
+    settings = load_acceptance_settings(_environment(tmp_path, _write_manifest(tmp_path, package=package)))
+    manifest = AcceptanceManifest.load(settings)
+    handler = AcceptanceReceiverRuntimeHandler(
+        manifest=manifest,
+        faults=AcceptanceFaultController(tmp_path / "faults"),
+        store=InMemoryReceiverOperationStore(),
+        package_store=InMemoryReceiverPackageStore(),
+        directory=ControlledAcceptanceDirectory(manifest),
+        user_directory=ControlledAcceptanceDirectory(manifest),
+        installer=object(),
+        user_install_ready=True,
+    )
+    command = _command(package)
+    command["skillVersionId"] = "sv.unapproved.1.0.0"
+    principal = ReceiverTransportPrincipal(
+        subject="11111111-1111-4111-8111-111111111111",
+        profile="ssh_forced_command",
+        actions=frozenset({"receiver:install:user"}),
+    )
+
+    with pytest.raises(ReceiverRuntimeError) as incompatible:
+        await handler.submit_install(
+            principal=principal,
+            idempotency_key="acceptance-incompatible-0001",
+            request_sha256=handler.canonical_command_digest(command),
+            command_payload=command,
+            package=package,
+        )
+
+    assert incompatible.value.code == "SKILL_INCOMPATIBLE"
+    assert incompatible.value.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -548,6 +671,7 @@ async def test_bootstrap_uses_real_sql_store_native_installer_and_write_ready_us
     assert components.runtime_handler.store._session_factory is session_factory
     assert isinstance(components.runtime_handler.package_store, LocalReceiverPackageStore)
     assert isinstance(components.runtime_handler.installer.delegate, UserScopedReceiverInstaller)
+    assert principal.subject == "11111111-1111-4111-8111-111111111111"
     assert capability.access_mode == "read_write"
     assert capability.capabilities.user_install == "supported"
     assert capability.capabilities.global_install == "unsupported"
@@ -555,6 +679,13 @@ async def test_bootstrap_uses_real_sql_store_native_installer_and_write_ready_us
     assert capability.blocked_by == []
     with pytest.raises(ReceiverServiceAuthenticationRequired):
         await components.service_authenticator.authenticate(object())
+
+    principal_map = settings.principal_map_path
+    changed = json.loads(principal_map.read_text(encoding="utf-8"))
+    changed["principals"][0]["subject"] = "wrong.acceptance.subject"
+    principal_map.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="principal binding"):
+        await components.principal_mapper.map_principal("nexus-joint-acceptance-key-1")
 
 
 @pytest.mark.asyncio
