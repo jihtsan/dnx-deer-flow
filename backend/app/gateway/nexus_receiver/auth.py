@@ -10,6 +10,13 @@ from typing import Literal, Protocol
 from fastapi import Request
 
 ReceiverAuthenticationProfile = Literal["oauth2_client_credentials", "mtls", "combined"]
+ReceiverAuthorizationProfile = Literal[
+    "unapproved",
+    "oauth2_client_credentials",
+    "mtls",
+    "combined",
+    "ssh_forced_command",
+]
 ReceiverServiceAction = Literal[
     "receiver:capabilities:read",
     "receiver:user-directory:read",

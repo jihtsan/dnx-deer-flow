@@ -49,7 +49,7 @@ from deerflow.persistence.migrations._helpers import _normalize_default
 asyncio_test = pytest.mark.asyncio
 
 
-HEAD = "0012_merge_knowledge_and_mcp_tasks"
+HEAD = "0013_nexus_receiver_operations"
 BASELINE = "0001_baseline"
 
 
