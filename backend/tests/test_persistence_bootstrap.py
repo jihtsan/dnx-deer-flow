@@ -87,6 +87,12 @@ async def _alembic_version(engine) -> str | None:
         return row.scalar()
 
 
+async def _alembic_versions(engine) -> set[str]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(sa.text("SELECT version_num FROM alembic_version"))
+        return set(rows.scalars())
+
+
 async def _seed_legacy_without_column(engine) -> None:
     """Build the pre-#3658 schema: create_all, then drop the new column."""
     async with engine.begin() as conn:
@@ -585,9 +591,11 @@ async def test_0006_downgrade_maps_terminal_states_before_restoring_0005_schema(
         assert statuses == ["failed", "failed"]
         assert "attempt_count" not in columns
         assert "knowledge_ingestion_retry_requests" not in await _table_names(engine)
-        # Downgrading the knowledge branch leaves the parallel agent-storage
-        # branch at its latest pre-merge revision.
-        assert await _alembic_version(engine) == "0006_agents"
+        # Downgrading one side of the merged graph restores both branch heads.
+        assert await _alembic_versions(engine) == {
+            "0005_knowledge_documents",
+            "0006_agents",
+        }
     finally:
         await engine.dispose()
 
