@@ -252,6 +252,8 @@ Docker builds use the upstream `uv` registry by default. If you need faster mirr
 
 Backend processes automatically pick up `config.yaml` changes on the next config access, so model metadata updates do not require a manual restart during development.
 
+For deployments managed by DNX Nexus, `scripts/nexus-apply-models.py` accepts a versioned model catalog on standard input. The script validates the complete candidate `AppConfig` and atomically replaces only `config.yaml -> models`; it is intended for a trusted, fixed SSH command and never prints model credentials.
+
 > [!TIP]
 > On Linux, if Docker-based commands fail with `permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock`, add your user to the `docker` group and re-login before retrying. See [CONTRIBUTING.md](CONTRIBUTING.md#linux-docker-daemon-permission-denied) for the full fix.
 
