@@ -132,10 +132,22 @@ Nexus Skill receiver note:
   capabilities stay `read_only`/`unsupported`. The forced-command module entry
   likewise has no production runtime wiring and exits `10` with a canonical,
   redacted Problem.
+- `nexus_receiver` is a startup-only, default-disabled release gate. It stores
+  only opaque host-key/principal-map Secret references and policy revision IDs.
+  A complete deployment bootstrap installs HTTP auth, the shared runtime,
+  transport-principal mapping, and a supervised recovery service atomically;
+  missing any component installs none of them. Recovery runs immediately at
+  startup, after durable in-process submit notification, and periodically.
+- `docker/docker-compose.nexus-receiver-ssh.yaml` is an explicit opt-in profile
+  for a loopback-bound dedicated sshd account. Mounted host-key and principal-map
+  Secrets generate owner-only runtime files and exact `restrict,command` keys;
+  interactive shells, PTY, forwarding, SCP/SFTP and password auth remain closed.
+  The repository forced-command entry has no production context provider.
 - Real service-auth and directory policy, trust/compatibility policy, Secret and
-  host-key distribution, native `GLOBAL`, and SSH-account provisioning remain
-  release gates. Their absence must never be replaced by an environment switch
-  that enables production writes.
+  host-key issuance/rotation, stable principal ownership, directory privacy,
+  native `GLOBAL`, and cross-process SSH submit wake-up remain release gates.
+  Their absence must never be replaced by an environment switch that enables
+  production writes.
   Existing `/api/skills` routes are not a compatibility fallback, and Nexus must
   not maintain a second canonical receiver OpenAPI.
 
