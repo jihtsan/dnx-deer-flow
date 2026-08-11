@@ -9,6 +9,7 @@ import os
 import re
 import socket
 import stat
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,15 +133,26 @@ class ReceiverForcedCommandContextProvider(Protocol):
 
 
 class MappedReceiverForcedCommandContextProvider:
-    def __init__(self, *, handler: ReceiverRuntimeHandler, principal_mapper: ReceiverPrincipalMapper) -> None:
+    def __init__(
+        self,
+        *,
+        handler: ReceiverRuntimeHandler,
+        principal_mapper: ReceiverPrincipalMapper,
+        close_callback: Callable[[], None] | None = None,
+    ) -> None:
         self._handler = handler
         self._principal_mapper = principal_mapper
+        self._close_callback = close_callback
 
     async def get_context(self, key_id: str) -> ReceiverForcedCommandContext:
         return ReceiverForcedCommandContext(
             handler=self._handler,
             principal=await self._principal_mapper.map_principal(key_id),
         )
+
+    def close(self) -> None:
+        if callable(self._close_callback):
+            self._close_callback()
 
 
 class _Recoverer(Protocol):
@@ -175,35 +187,53 @@ class ReceiverRecoveryService:
             return
         self._stop.clear()
         await self.run_now()
-        self._start_signal_listener()
+        await self._start_signal_listener()
         self._task = asyncio.create_task(self._run(), name="nexus-receiver-recovery")
 
     def notify_pending(self) -> None:
         self._wake.set()
 
-    def _start_signal_listener(self) -> None:
-        if self._signal_path is None:
-            return
-        self._signal_path.parent.mkdir(mode=0o711, parents=True, exist_ok=True)
+    @staticmethod
+    def _open_signal_socket(signal_path: Path) -> socket.socket:
+        signal_path.parent.mkdir(mode=0o711, parents=True, exist_ok=True)
         try:
-            mode = self._signal_path.lstat().st_mode
+            mode = signal_path.lstat().st_mode
         except FileNotFoundError:
             pass
         else:
             if not stat.S_ISSOCK(mode):
                 raise RuntimeError("receiver recovery signal path is not a socket")
-            self._signal_path.unlink()
+            signal_path.unlink()
         signal_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         try:
             signal_socket.setblocking(False)
-            signal_socket.bind(str(self._signal_path))
+            signal_socket.bind(str(signal_path))
             # The socket carries no data or authority; write access only wakes a
             # fenced durable-store scan in the two-container private volume.
-            os.chmod(self._signal_path, 0o622)
+            os.chmod(signal_path, 0o622)
+        except Exception:
+            signal_socket.close()
+            signal_path.unlink(missing_ok=True)
+            raise
+        return signal_socket
+
+    @staticmethod
+    def _remove_signal_path(signal_path: Path) -> None:
+        try:
+            if stat.S_ISSOCK(signal_path.lstat().st_mode):
+                signal_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    async def _start_signal_listener(self) -> None:
+        if self._signal_path is None:
+            return
+        signal_socket = await asyncio.to_thread(self._open_signal_socket, self._signal_path)
+        try:
             asyncio.get_running_loop().add_reader(signal_socket.fileno(), self._receive_signal)
         except Exception:
             signal_socket.close()
-            self._signal_path.unlink(missing_ok=True)
+            await asyncio.to_thread(self._remove_signal_path, self._signal_path)
             raise
         self._signal_socket = signal_socket
 
@@ -256,11 +286,7 @@ class ReceiverRecoveryService:
                 self._signal_socket.close()
                 self._signal_socket = None
             if self._signal_path is not None:
-                try:
-                    if stat.S_ISSOCK(self._signal_path.lstat().st_mode):
-                        self._signal_path.unlink()
-                except FileNotFoundError:
-                    pass
+                await asyncio.to_thread(self._remove_signal_path, self._signal_path)
 
 
 class UnixDatagramReceiverRecoveryNotifier:
@@ -270,11 +296,14 @@ class UnixDatagramReceiverRecoveryNotifier:
         if not signal_path.is_absolute():
             raise ValueError("receiver recovery signal path must be absolute")
         self._signal_path = signal_path
+        self._signal_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self._signal_socket.setblocking(False)
 
     def notify_pending(self) -> None:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as signal_socket:
-            signal_socket.setblocking(False)
-            signal_socket.sendto(b"pending", str(self._signal_path))
+        self._signal_socket.sendto(b"pending", str(self._signal_path))
+
+    def close(self) -> None:
+        self._signal_socket.close()
 
 
 def build_receiver_forced_command_context_provider(
@@ -287,14 +316,19 @@ def build_receiver_forced_command_context_provider(
     if not config.enabled or config.principal_map_secret_ref is None or config.recovery_signal_socket is None:
         raise ValueError("receiver forced-command release gates are incomplete")
     notifier = UnixDatagramReceiverRecoveryNotifier(Path(config.recovery_signal_socket))
-    handler.set_pending_recovery_notifier(notifier.notify_pending)
-    return MappedReceiverForcedCommandContextProvider(
-        handler=handler,
-        principal_mapper=SecretBackedReceiverPrincipalMapper(
-            resolver=secret_resolver,
-            reference=config.principal_map_secret_ref,
-        ),
-    )
+    try:
+        handler.set_pending_recovery_notifier(notifier.notify_pending)
+        return MappedReceiverForcedCommandContextProvider(
+            handler=handler,
+            principal_mapper=SecretBackedReceiverPrincipalMapper(
+                resolver=secret_resolver,
+                reference=config.principal_map_secret_ref,
+            ),
+            close_callback=notifier.close,
+        )
+    except Exception:
+        notifier.close()
+        raise
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,10 +358,8 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
         "nexus_receiver_principal_mapper",
         "nexus_receiver_recovery_service",
     ):
-        try:
+        if hasattr(app_state, attribute):
             delattr(app_state, attribute)
-        except AttributeError:
-            pass
     if not config.enabled:
         return None
     bootstrap: ReceiverReleaseBootstrap | None = getattr(app_state, "nexus_receiver_release_bootstrap", None)

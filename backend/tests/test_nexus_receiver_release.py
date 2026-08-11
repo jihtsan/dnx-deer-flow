@@ -214,6 +214,7 @@ async def test_forced_command_release_factory_wires_secret_mapping_and_cross_pro
     assert context.handler is runtime
     assert context.principal.subject == "nexus.release.prod"
     assert len(callbacks) == 1
+    provider.close()
 
 
 class _Recoverer:
@@ -265,7 +266,9 @@ async def test_recovery_service_accepts_cross_process_submit_signal() -> None:
     await service.start()
     recoverer.called.clear()
 
-    UnixDatagramReceiverRecoveryNotifier(signal_path).notify_pending()
+    notifier = UnixDatagramReceiverRecoveryNotifier(signal_path)
+    notifier.notify_pending()
+    notifier.close()
 
     await asyncio.wait_for(recoverer.called.wait(), timeout=0.2)
     assert recoverer.calls == 2
