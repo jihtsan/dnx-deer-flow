@@ -141,9 +141,9 @@ RUN apt-get update \
 COPY docker/nexus-receiver-sshd/sshd_config /etc/ssh/nexus-receiver-sshd_config
 COPY docker/nexus-receiver-sshd/entrypoint.sh /usr/local/bin/nexus-receiver-sshd-entrypoint
 RUN chmod 0555 /usr/local/bin/nexus-receiver-sshd-entrypoint \
-    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec .venv/bin/python -m app.gateway.nexus_receiver.forced_command "$@"' > /usr/local/bin/nexus-receiver-forced-command \
+    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec env PYTHONPATH=. .venv/bin/python -m app.gateway.nexus_receiver.forced_command "$@"' > /usr/local/bin/nexus-receiver-forced-command \
     && chmod 0555 /usr/local/bin/nexus-receiver-forced-command \
-    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec .venv/bin/python -m app.gateway.nexus_receiver.acceptance_forced_command "$@"' > /usr/local/bin/nexus-receiver-acceptance-forced-command \
+    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec env PYTHONPATH=. .venv/bin/python -m app.gateway.nexus_receiver.acceptance_forced_command "$@"' > /usr/local/bin/nexus-receiver-acceptance-forced-command \
     && chmod 0555 /usr/local/bin/nexus-receiver-acceptance-forced-command
 
 EXPOSE 22

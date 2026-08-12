@@ -14,6 +14,7 @@ services:
       target: nexus-receiver-sshd
       args:
         UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}
+        UV_EXTRAS: ${NEXUS_RECEIVER_UV_EXTRAS:-}
     ports:
       - "${NEXUS_RECEIVER_SSH_BIND_HOST:-127.0.0.1}:${NEXUS_RECEIVER_SSH_PORT:-2222}:22"
     environment:

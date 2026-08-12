@@ -5,6 +5,11 @@ from pathlib import Path
 import yaml
 
 from app.gateway.nexus_receiver.sshd_authorized_keys import render_authorized_keys
+from app.gateway.nexus_receiver.sshd_runtime_environment import (
+    acceptance_database_url,
+    render_sshd_environment,
+    runtime_environment,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -16,6 +21,7 @@ def test_receiver_sshd_is_opt_in_and_loopback_bound() -> None:
     assert service["profiles"] == ["nexus-receiver-ssh"]
     assert service["ports"] == ["${NEXUS_RECEIVER_SSH_BIND_HOST:-127.0.0.1}:${NEXUS_RECEIVER_SSH_PORT:-2222}:22"]
     assert service["build"]["target"] == "nexus-receiver-sshd"
+    assert service["build"]["args"]["UV_EXTRAS"] == "${NEXUS_RECEIVER_UV_EXTRAS:-}"
     assert service["secrets"] == ["nexus_receiver_host_key", "nexus_receiver_principal_map"]
     assert "nexus-receiver-ipc:/run/nexus-receiver-ipc" in service["volumes"]
     assert "nexus-receiver-ipc:/run/nexus-receiver-ipc" in overlay["services"]["gateway"]["volumes"]
@@ -56,3 +62,48 @@ def test_receiver_authorized_keys_generator_uses_exact_restrictions() -> None:
     assert rendered.endswith(" nexus\n")
     assert "nexus_receiver_host_key" in entrypoint
     assert "nexus_receiver_principal_map" in entrypoint
+
+
+def test_receiver_image_includes_only_the_required_sshd_build_context() -> None:
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+
+    assert "docker/*" in dockerignore
+    assert "!docker/nexus-receiver-sshd/**" in dockerignore
+    assert "\ndocker/\n" not in dockerignore
+
+
+def test_acceptance_images_include_postgres_and_share_the_password_secret() -> None:
+    overlay = yaml.safe_load((ROOT / "docker" / "docker-compose.nexus-receiver-acceptance.yaml").read_text(encoding="utf-8"))
+
+    for service_name in ("gateway", "nexus-receiver-sshd"):
+        service = overlay["services"][service_name]
+        assert service["build"]["args"]["UV_EXTRAS"] == "postgres"
+        assert "nexus_receiver_acceptance_postgres_password" in service["secrets"]
+
+
+def test_sshd_runtime_environment_is_allowlisted_and_builds_database_url() -> None:
+    environment = runtime_environment(
+        {
+            "DEER_FLOW_CONFIG_PATH": "/app/backend/config.yaml",
+            "DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED": "true",
+            "UNRELATED_SECRET": "must-not-pass",
+        },
+        postgres_password="p@ss word",
+    )
+
+    assert environment["DATABASE_URL"] == acceptance_database_url("p@ss word")
+    assert environment["DATABASE_URL"] == ("postgresql://deerflow_acceptance:p%40ss%20word@nexus-receiver-postgres:5432/deerflow_acceptance")
+    assert "UNRELATED_SECRET" not in environment
+    rendered = render_sshd_environment(environment)
+    assert "SetEnv DEER_FLOW_CONFIG_PATH=/app/backend/config.yaml" in rendered
+    assert "SetEnv DATABASE_URL=postgresql://" in rendered
+
+
+def test_sshd_entrypoint_creates_runtime_directory_and_readable_authorized_keys() -> None:
+    entrypoint = (ROOT / "docker" / "nexus-receiver-sshd" / "entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "install -d -m 0755 -o root -g root /run/sshd" in entrypoint
+    assert "install -d -m 0711 -o root -g root /run/nexus-receiver" in entrypoint
+    assert "chown root:nexus-receiver /run/nexus-receiver/authorized_keys" in entrypoint
+    assert "chmod 0640 /run/nexus-receiver/authorized_keys" in entrypoint
+    assert "Include /run/nexus-receiver/runtime_environment.conf" in (ROOT / "docker" / "nexus-receiver-sshd" / "sshd_config").read_text(encoding="utf-8")
