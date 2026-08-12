@@ -12,6 +12,7 @@ from app.gateway.browser_capability import ensure_browser_runtime_available
 from app.gateway.config import get_gateway_config
 from app.gateway.csrf_middleware import CORS_EXPOSED_HEADERS, CSRFMiddleware, get_configured_cors_origins
 from app.gateway.deps import langgraph_runtime
+from app.gateway.nexus_receiver import install_nexus_receiver_provider
 from app.gateway.routers import (
     agents,
     artifacts,
@@ -635,6 +636,10 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     set_loaded_extensions(loaded_extensions)
     app.state.extensions = loaded_extensions
     app.state.extension_diagnostics = initialize_runtime_diagnostics(extension_diagnostics)
+
+    # Dedicated service-to-service receiver routes. Production remains closed
+    # until a reviewed authenticator and user-directory provider are injected.
+    install_nexus_receiver_provider(app)
 
     # Include routers
     # Models API is mounted at /api/models

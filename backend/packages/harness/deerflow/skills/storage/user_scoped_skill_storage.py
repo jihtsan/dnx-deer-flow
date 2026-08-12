@@ -34,6 +34,7 @@ import dataclasses
 import json
 import logging
 import os
+import shutil
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -323,6 +324,26 @@ class UserScopedSkillStorage(LocalSkillStorage):
     # ------------------------------------------------------------------
 
     async def ainstall_skill_from_archive(self, archive_path: str | Path) -> dict:
+        return await self._ainstall_skill_from_archive(archive_path, receiver_metadata=None)
+
+    async def ainstall_skill_from_archive_with_metadata(
+        self,
+        archive_path: str | Path,
+        *,
+        receiver_metadata: dict,
+    ) -> dict:
+        """Commit receiver identity in the same atomic Skill tree install."""
+        return await self._ainstall_skill_from_archive(
+            archive_path,
+            receiver_metadata=receiver_metadata,
+        )
+
+    async def _ainstall_skill_from_archive(
+        self,
+        archive_path: str | Path,
+        *,
+        receiver_metadata: dict | None,
+    ) -> dict:
         from deerflow.skills.installer import _scan_skill_archive_contents_or_raise
 
         logger.info("Installing skill from %s for user %s", archive_path, self._user_id)
@@ -340,7 +361,17 @@ class UserScopedSkillStorage(LocalSkillStorage):
 
             await _scan_skill_archive_contents_or_raise(skill_dir, skill_name)
 
-            await asyncio.to_thread(self._commit_skill_install, skill_dir, skill_name, custom_dir, target)
+            if receiver_metadata is not None:
+                await asyncio.to_thread(
+                    self._write_receiver_metadata,
+                    skill_dir,
+                    receiver_metadata,
+                )
+
+            if receiver_metadata is None:
+                await asyncio.to_thread(self._commit_skill_install, skill_dir, skill_name, custom_dir, target)
+            else:
+                await asyncio.to_thread(self._commit_receiver_skill_install, skill_dir, skill_name, custom_dir, target)
             logger.info("Skill %r installed to %s for user %s", skill_name, target, self._user_id)
         finally:
             try:
@@ -356,6 +387,43 @@ class UserScopedSkillStorage(LocalSkillStorage):
             "skill_name": skill_name,
             "message": f"Skill '{skill_name}' installed successfully for user '{self._user_id}'",
         }
+
+    @staticmethod
+    def _write_receiver_metadata(skill_dir: Path, metadata: dict) -> None:
+        (skill_dir / ".nexus-receiver.json").write_text(
+            json.dumps(metadata, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
+    def _commit_receiver_skill_install(self, skill_dir: Path, skill_name: str, custom_dir: Path, target: Path) -> None:
+        """Install receiver metadata atomically while keeping activation disabled."""
+        from deerflow.skills.installer import SkillAlreadyExistsError, _move_staged_skill_into_reserved_target
+
+        with self._skill_projection_mutation(remove_names=(skill_name,)):
+            if target.exists():
+                raise SkillAlreadyExistsError(f"Skill '{skill_name}' already exists")
+            states = self._read_skill_states()
+            previous_state = states.get(skill_name)
+            states[skill_name] = {"enabled": False}
+            self._write_skill_states(states)
+            try:
+                with tempfile.TemporaryDirectory(prefix=f".installing-{skill_name}-", dir=custom_dir) as staging_root:
+                    staging_target = Path(staging_root) / skill_name
+                    shutil.copytree(skill_dir, staging_target)
+                    _move_staged_skill_into_reserved_target(staging_target, target)
+                make_skill_written_path_sandbox_readable(custom_dir, target)
+            except Exception:
+                if target.exists():
+                    # Once the atomic directory commit succeeds, never remove
+                    # the explicit deny state: an absent entry defaults to
+                    # enabled for ordinary user-created Skills.
+                    states[skill_name] = {"enabled": False}
+                elif previous_state is None:
+                    states.pop(skill_name, None)
+                else:
+                    states[skill_name] = previous_state
+                self._write_skill_states(states)
+                raise
 
     # ------------------------------------------------------------------
     # Write — ensure user custom dir exists before writing
