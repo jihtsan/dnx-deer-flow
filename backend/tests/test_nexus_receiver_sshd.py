@@ -95,8 +95,9 @@ def test_sshd_runtime_environment_is_allowlisted_and_builds_database_url() -> No
     assert environment["DATABASE_URL"] == ("postgresql://deerflow_acceptance:p%40ss%20word@nexus-receiver-postgres:5432/deerflow_acceptance")
     assert "UNRELATED_SECRET" not in environment
     rendered = render_sshd_environment(environment)
-    assert "SetEnv DEER_FLOW_CONFIG_PATH=/app/backend/config.yaml" in rendered
-    assert "SetEnv DATABASE_URL=postgresql://" in rendered
+    assert rendered.count("SetEnv ") == 1
+    assert "DEER_FLOW_CONFIG_PATH=/app/backend/config.yaml" in rendered
+    assert "DATABASE_URL=postgresql://" in rendered
 
 
 def test_sshd_entrypoint_creates_runtime_directory_and_readable_authorized_keys() -> None:
