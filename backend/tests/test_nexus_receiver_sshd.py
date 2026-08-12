@@ -106,4 +106,6 @@ def test_sshd_entrypoint_creates_runtime_directory_and_readable_authorized_keys(
     assert "install -d -m 0711 -o root -g root /run/nexus-receiver" in entrypoint
     assert "chown root:nexus-receiver /run/nexus-receiver/authorized_keys" in entrypoint
     assert "chmod 0640 /run/nexus-receiver/authorized_keys" in entrypoint
+    assert entrypoint.index("sshd_runtime_environment $runtime_environment_args") < entrypoint.index("get_app_config")
+    assert "sshd_runtime_environment $runtime_command_args --" in entrypoint
     assert "Include /run/nexus-receiver/runtime_environment.conf" in (ROOT / "docker" / "nexus-receiver-sshd" / "sshd_config").read_text(encoding="utf-8")
