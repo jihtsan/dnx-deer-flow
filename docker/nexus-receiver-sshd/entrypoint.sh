@@ -6,7 +6,8 @@ if [ "${NEXUS_RECEIVER_ENABLED:-false}" != "true" ]; then
   exit 78
 fi
 
-install -d -m 0700 -o root -g root /run/nexus-receiver
+install -d -m 0755 -o root -g root /run/sshd
+install -d -m 0711 -o root -g root /run/nexus-receiver
 install -m 0600 -o root -g root /run/secrets/nexus_receiver_host_key /run/nexus-receiver/ssh_host_ed25519_key
 
 cd /app/backend
@@ -16,6 +17,14 @@ PYTHONPATH=. uv run --no-sync python -m app.gateway.nexus_receiver.sshd_authoriz
   --principal-map /run/secrets/nexus_receiver_principal_map \
   --output /run/nexus-receiver/authorized_keys \
   --forced-command-profile "${NEXUS_RECEIVER_FORCED_COMMAND_PROFILE:-release}"
+chown root:nexus-receiver /run/nexus-receiver/authorized_keys
+chmod 0640 /run/nexus-receiver/authorized_keys
+runtime_environment_args="--sshd-output /run/nexus-receiver/runtime_environment.conf"
+if [ "${NEXUS_RECEIVER_FORCED_COMMAND_PROFILE:-release}" = "acceptance" ]; then
+  runtime_environment_args="$runtime_environment_args --postgres-password-file /run/secrets/nexus_receiver_acceptance_postgres_password"
+fi
+# shellcheck disable=SC2086
+PYTHONPATH=. uv run --no-sync python -m app.gateway.nexus_receiver.sshd_runtime_environment $runtime_environment_args
 grep -q '^restrict,command=' /run/nexus-receiver/authorized_keys
 
 exec /usr/sbin/sshd -D -e -f /etc/ssh/nexus-receiver-sshd_config

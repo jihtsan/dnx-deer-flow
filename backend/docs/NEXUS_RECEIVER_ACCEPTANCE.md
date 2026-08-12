@@ -22,11 +22,20 @@ of these inputs are present and exact:
 
 The acceptance overlay creates only the Deer Flow `postgres:17.5-alpine`
 database. Its password comes from the external file named by
-`DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_POSTGRES_PASSWORD_FILE`; the separately
-materialized `config.yaml` must point Deer Flow at
-`nexus-receiver-postgres/deerflow_acceptance` with role
-`deerflow_acceptance` and schema `deerflow`. The later Nexus harness owns its
-separate database and role; cross-database access is not configured here.
+`DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_POSTGRES_PASSWORD_FILE`. The overlay builds
+both Deer Flow acceptance images with the `postgres` extra and derives the
+process-only `DATABASE_URL` from that mounted Secret; the value is not stored in
+the image, Compose model, or repository. The separately materialized
+`config.yaml` references `$DATABASE_URL`, selects schema `deerflow`, and never
+contains the password. The later Nexus harness owns its separate database and
+role; cross-database access is not configured here.
+
+The restricted sshd starts only after creating `/run/sshd`, generating a
+root-managed authorized-keys file readable by the dedicated account, and
+building an explicit `SetEnv` file. Only the receiver configuration paths,
+acceptance revision/profile paths, one-worker setting, release gate, and derived
+`DATABASE_URL` are passed to forced-command sessions; arbitrary container or SSH
+client environment variables are not forwarded.
 
 The composition uses `SqlReceiverOperationStore`, `LocalReceiverPackageStore`,
 the controlled three-user fixture directory, and `UserScopedReceiverInstaller`.
