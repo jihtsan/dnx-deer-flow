@@ -3,7 +3,6 @@ Dockerfile
 .dockerignore
 .git
 .gitignore
-docker/
 
 # Python
 __pycache__/
@@ -58,7 +57,9 @@ tests/
 # Backend build only needs backend/
 scripts/
 logs/
-docker/
+docker/*
+!docker/nexus-receiver-sshd/
+!docker/nexus-receiver-sshd/**
 skills/
 frontend/.next
 frontend/node_modules

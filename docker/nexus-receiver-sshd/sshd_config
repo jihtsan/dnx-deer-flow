@@ -17,6 +17,7 @@ HostbasedAuthentication no
 PubkeyAuthentication yes
 AuthenticationMethods publickey
 LogLevel VERBOSE
+Include /run/nexus-receiver/runtime_environment.conf
 
 Match User nexus-receiver
     PermitTTY no
