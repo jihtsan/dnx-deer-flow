@@ -100,6 +100,45 @@ Knowledge-base note:
 - `knowledge_base` config points to one operator-managed LightRAG startup workspace. The app adapter owns health, upload, tracking, structured `/query/data`, and delete contract normalization; it never sends `LIGHTRAG-WORKSPACE` or exposes endpoint/key diagnostics.
 - `GET/POST /api/knowledge/documents` lists owner-visible documents and accepts one multipart `file` with `Idempotency-Key`; `POST /api/knowledge/documents/{document_id}/retry` idempotently reactivates eligible dead jobs through a durable per-job retry-key ledger. Original files are atomically persisted below the server-owned runtime directory before one SQL transaction creates the document and ingestion job. The existing ingestion service is a durable SQL-backed leased worker: atomic claims, bounded concurrency and tracking attempts, hot-reloaded LightRAG clients, bounded exponential retry, lease-expiry recovery, and startup discovery cover process restarts. LightRAG upload reconciliation uses the server-generated stable filename and must not be described as remote exactly-once. Only `ready` documents are retrieval candidates. The fixed safety limits are 25 MiB per file and 1 GiB total for the singleton Scope.
 
+Nexus Skill receiver note:
+- `contracts/openapi/nexus-skill-receiver-v1.yaml` is DeerFlow's only canonical,
+  versioned receiver contract. The adjacent `.conformance.json` fixture and
+  `backend/tests/test_nexus_skill_receiver_contract.py` pin capabilities,
+  controlled cursor-based user search, closed `GLOBAL|USER` targets, durable
+  operation phases, exact Observed success, headers, stable errors, default
+  denial, transport/authentication profiles, and major-version rules. Its
+  `http_v1` and `ssh_v1` bindings reuse those same component schemas; there is
+  no second CLI schema.
+- The P0 `ssh_v1` binding is a USER-only forced-command profile with five exact
+  actions, bounded canonical JSON framing, raw package streaming for
+  `install.submit`, and closed stdout/exit behavior. It does not authorize an
+  interactive shell, PTY, forwarding, SCP, SFTP, `GLOBAL`, or direct Skill-path
+  access.
+- The shared receiver handler implements durable, idempotent `USER` first
+  installation and exact Observed closure for both HTTP and the strict
+  forced-command dispatcher. It reuses `UserScopedSkillStorage` for guarded
+  archive installation, persists operation phase/request bindings and expiring
+  execution claims in `nexus_receiver_operations`, and stages package bytes in
+  an atomic owner-only package store for restart recovery. Receiver identity is
+  committed with the disabled Skill tree before a separate idempotent activation
+  and exact loaded observation; every resumed write attempt revalidates the exact
+  controlled USER identity and eligibility, and a post-commit failure preserves
+  the explicit disabled state. `GLOBAL` remains unsupported.
+- The Gateway mounts capability, controlled-directory, operation, operation
+  poll, and Observed routes behind dedicated service-auth/runtime Ports. No
+  production authenticator, install-target resolver, operation/package store,
+  recovery runner, or installer is injected: missing auth is `401`, a missing runtime is
+  `503 RECEIVER_NOT_READY`, browser sessions/internal tokens are rejected, and
+  capabilities stay `read_only`/`unsupported`. The forced-command module entry
+  likewise has no production runtime wiring and exits `10` with a canonical,
+  redacted Problem.
+- Real service-auth and directory policy, trust/compatibility policy, Secret and
+  host-key distribution, native `GLOBAL`, and SSH-account provisioning remain
+  release gates. Their absence must never be replaced by an environment switch
+  that enables production writes.
+  Existing `/api/skills` routes are not a compatibility fallback, and Nexus must
+  not maintain a second canonical receiver OpenAPI.
+
 ## Commands: Root vs. Module
 
 **Root `make` targets drive the whole stack** (run from the repo root):

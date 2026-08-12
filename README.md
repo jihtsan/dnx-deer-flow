@@ -1094,6 +1094,48 @@ DeerFlow is model-agnostic — it works with any LLM that implements the OpenAI-
 - **Multimodal inputs** for image understanding and video comprehension
 - **Strong tool-use** for reliable function calling and structured outputs
 
+## Nexus Skill Receiver Contract
+
+DeerFlow owns the canonical, versioned service contract used by DNX Nexus to
+discover receiver capabilities, search the controlled user directory, submit
+durable first-install operations for native `GLOBAL` or exact `USER` targets,
+and read scope-specific Observed state. The OpenAPI source is
+[`contracts/openapi/nexus-skill-receiver-v1.yaml`](contracts/openapi/nexus-skill-receiver-v1.yaml),
+with provider fixtures in the adjacent `.conformance.json` file.
+
+The same artifact defines the `http_v1` binding and the P0 `ssh_v1` forced-command
+binding. SSH accepts only the five allowlisted actions, reuses the canonical
+component schemas, and supports controlled directory reads plus exact `USER`
+first installation; it does not publish a separate CLI schema or enable `GLOBAL`.
+
+The Gateway mounts the canonical capability, controlled-directory, operation,
+operation-poll, and Observed paths behind dedicated service-auth and runtime
+Ports. HTTP and SSH use one transport-neutral handler for durable, idempotent
+`USER` first installation, exact Observed success, and restart replay. Archive
+digest/size, traversal, symlink, expansion, manifest-name, target eligibility,
+same-name, and idempotency conflicts are checked before success. Durable phases
+and canonical request bindings live in `nexus_receiver_operations`; atomic,
+owner-only package staging plus expiring execution claims allow nonterminal
+operations to resume after restart without another submit. The Skill tree and
+redacted receiver identity commit together in disabled state, then activation
+and exact `enabled=true` / `loadState=loaded` observation close the operation.
+Each resumed write attempt revalidates the exact controlled USER identity and
+eligibility; failures after the atomic tree commit retain an explicit disabled
+state rather than falling back to the normal enabled-by-default behavior.
+
+This implementation is not production enablement. The production Gateway does
+not inject a receiver authenticator, install-target resolver, durable operation
+or package store, recovery runner, or USER installer, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
+`409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
+capabilities remain `read_only`/`unsupported`. The
+forced-command module entry accepts only the five exact `nexus-skill-receiver-v1`
+commands and canonical bounded frames, but it has no runtime wiring and returns
+one redacted Problem with exit `10`. Real service-auth/directory policy,
+trust/compatibility decisions, Secret and SSH host-key distribution, SSH account
+provisioning, and native `GLOBAL` support remain required release gates. Nexus
+must not fall back to `/api/skills`, and browser clients must continue to call
+the Nexus public API instead of this service-to-service boundary.
+
 ## Embedded Python Client
 
 DeerFlow can be used as an embedded Python library without running the full HTTP services. The `DeerFlowClient` provides direct in-process access to all agent and Gateway capabilities, returning the same response schemas as the HTTP Gateway API. The HTTP Gateway also exposes `DELETE /api/threads/{thread_id}` to remove DeerFlow-managed local thread data after the LangGraph thread itself has been deleted:
@@ -1252,6 +1294,7 @@ See [backend/docs/TUI.md](backend/docs/TUI.md) for the full guide.
 - [Configuration Guide](backend/docs/CONFIGURATION.md) - Setup and configuration instructions
 - [Architecture Overview](backend/CLAUDE.md) - Technical architecture details
 - [Backend Architecture](backend/README.md) - Backend architecture and API reference
+- [Nexus Skill Receiver OpenAPI](contracts/openapi/nexus-skill-receiver-v1.yaml) - Canonical receiver contract and version rules
 
 ## ⚠️ Security Notice
 

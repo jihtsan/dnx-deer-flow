@@ -53,6 +53,12 @@ def should_check_csrf(request: Request) -> bool:
     # (e.g. GitHub's X-Hub-Signature-256), not the CSRF double-submit cookie.
     if request.url.path.startswith("/api/webhooks/"):
         return False
+    # The Nexus Skill receiver is a dedicated machine-authenticated boundary.
+    # It never accepts the browser session cookie as authority, so requiring a
+    # browser double-submit token here would block valid OAuth2/mTLS callers
+    # before the receiver's stricter service authenticator can run.
+    if request.url.path.startswith("/api/v1/nexus/skill-receiver/"):
+        return False
     return True
 
 

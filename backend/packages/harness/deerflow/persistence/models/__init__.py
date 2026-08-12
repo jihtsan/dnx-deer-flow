@@ -32,6 +32,7 @@ from deerflow.persistence.knowledge_documents.model import (
 from deerflow.persistence.knowledge_scope.model import KnowledgeScopeRow
 from deerflow.persistence.mcp_tasks.model import McpTaskRow
 from deerflow.persistence.models.run_event import RunEventRow
+from deerflow.persistence.receiver_operations.model import ReceiverOperationRow
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.scheduled_task_runs.model import ScheduledTaskRunRow
 from deerflow.persistence.scheduled_tasks.model import ScheduledTaskRow
@@ -55,6 +56,7 @@ __all__ = [
     "McpTaskRow",
     "RunEventRow",
     "RunRow",
+    "ReceiverOperationRow",
     "ScheduledTaskRow",
     "ScheduledTaskRunRow",
     "ThreadMetaRow",
