@@ -39,12 +39,12 @@ def runtime_environment(source: dict[str, str], *, postgres_password: str | None
 
 
 def render_sshd_environment(environment: dict[str, str]) -> str:
-    lines: list[str] = []
+    assignments: list[str] = []
     for name, value in sorted(environment.items()):
         if not value or any(character.isspace() for character in value):
             raise ValueError(f"receiver runtime environment value is invalid: {name}")
-        lines.append(f"SetEnv {name}={value}")
-    return "\n".join(lines) + "\n"
+        assignments.append(f"{name}={value}")
+    return f"SetEnv {' '.join(assignments)}\n"
 
 
 def _read_password(path: Path) -> str:
