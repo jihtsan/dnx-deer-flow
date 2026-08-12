@@ -1424,6 +1424,19 @@ Run runtime conformance with
 Do not generate or maintain a second receiver OpenAPI in Nexus, and do not adapt
 the existing `/api/skills` current-user routes as a fallback.
 
+The acceptance-only receiver composition lives in
+`app/gateway/nexus_receiver/acceptance*.py` and is selected only by the explicit
+`docker/docker-compose.nexus-receiver-acceptance.yaml` overlay. It pins the
+frozen joint-rehearsal manifest, isolated PostgreSQL identity, synthetic
+three-user directory and principal map, real SQL operation store, native USER
+installer/activation, and one-shot fault files. Its HTTP authenticator remains
+closed. Never import this bootstrap from the production Gateway app or ordinary
+forced-command entry point, and do not extend it to production credentials,
+`GLOBAL`, upgrade, delete, or joint E2E orchestration. Run focused coverage with
+`PYTHONPATH=. uv run pytest tests/test_nexus_receiver_acceptance.py -q` and the
+read-only revision/default-deny check documented in
+`docs/NEXUS_RECEIVER_ACCEPTANCE.md`.
+
 ## Development Workflow
 
 ### Test-Driven Development (TDD) — MANDATORY

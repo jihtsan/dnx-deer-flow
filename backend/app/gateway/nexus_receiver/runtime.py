@@ -410,6 +410,7 @@ class ReceiverRuntimeHandler:
         clock: Callable[[], datetime] | None = None,
         execution_owner: str | None = None,
         pending_recovery_notifier: Callable[[], None] | None = None,
+        user_install_ready: bool = False,
     ) -> None:
         self.store = store
         self.package_store = package_store
@@ -420,6 +421,7 @@ class ReceiverRuntimeHandler:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._execution_owner_prefix = execution_owner or f"receiver-{uuid4().hex}"
         self._pending_recovery_notifier = pending_recovery_notifier
+        self._user_install_ready = user_install_ready
 
     def set_pending_recovery_notifier(self, notifier: Callable[[], None] | None) -> None:
         """Register the supervised recovery wake-up owned by Gateway lifespan."""
@@ -460,15 +462,29 @@ class ReceiverRuntimeHandler:
     ) -> ReceiverCapabilitySnapshot:
         self._require(principal, "receiver:capabilities:read")
         transport_profile = "ssh_v1" if isinstance(principal, ReceiverTransportPrincipal) else "http_v1"
+        can_install = self._user_install_ready and "receiver:install:user" in principal.actions
         return ReceiverCapabilitySnapshot(
             transport_profile=transport_profile,
             runtime_version=self.runtime_version,
+            access_mode="read_write" if can_install else "read_only",
             authorization=ReceiverAuthorizationSnapshot(
                 profile=principal.profile,
                 granted_actions=sorted(principal.actions),
             ),
-            capabilities=ReceiverCapabilities(),
-            blocked_by=_DEFAULT_DENY_BLOCKERS,
+            capabilities=(
+                ReceiverCapabilities(
+                    user_directory="supported",
+                    global_install="unsupported",
+                    user_install="supported",
+                    observation="user_only",
+                    activation="user_only",
+                    durable_operations="supported",
+                    observed_package_digest="supported",
+                )
+                if self._user_install_ready
+                else ReceiverCapabilities()
+            ),
+            blocked_by=[] if can_install else (["FORBIDDEN"] if self._user_install_ready else _DEFAULT_DENY_BLOCKERS),
             observed_at=self._clock(),
         )
 
