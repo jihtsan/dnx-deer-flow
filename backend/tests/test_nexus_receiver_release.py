@@ -387,6 +387,9 @@ class _Bootstrap:
 
 
 class _Coordinator:
+    async def get_catalog_revision(self):
+        return 0
+
     async def try_acquire_recovery_lease(self, **kwargs):
         del kwargs
         return "lease-token"
@@ -480,5 +483,38 @@ async def test_release_wiring_injects_complete_components_and_recovery_together(
     assert state.nexus_receiver_runtime_handler is runtime
     assert state.nexus_receiver_service_authenticator is authenticator
     assert state.nexus_receiver_principal_mapper is mapper
+    assert state.nexus_receiver_catalog_revision_provider is state.nexus_receiver_release_bootstrap.components.recovery_coordinator
     assert notifier == [service.notify_pending]
     await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_release_wiring_rejects_coordinator_without_catalog_revision_provider() -> None:
+    class _IncompleteCoordinator:
+        async def try_acquire_recovery_lease(self, **kwargs):
+            del kwargs
+            return None
+
+        async def renew_recovery_lease(self, **kwargs):
+            del kwargs
+            return False
+
+        async def release_recovery_lease(self, **kwargs):
+            del kwargs
+            return False
+
+    state = SimpleNamespace(
+        nexus_receiver_release_bootstrap=_Bootstrap(
+            ReceiverReleaseComponents(
+                runtime_handler=SimpleNamespace(recover_pending=lambda: []),
+                service_authenticator=object(),
+                principal_mapper=object(),
+                recovery_coordinator=_IncompleteCoordinator(),
+            )
+        )
+    )
+
+    service = await start_receiver_release_wiring(state, NexusReceiverConfig.model_validate(_COMPLETE_CONFIG))
+
+    assert service is None
+    assert not hasattr(state, "nexus_receiver_runtime_handler")

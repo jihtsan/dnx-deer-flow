@@ -39,7 +39,7 @@ _ENABLED_SKILLS_BY_CONFIG_CACHE_MAXSIZE = 256
 _ENABLED_SKILLS_REFRESH_WAIT_TIMEOUT_SECONDS = 5.0
 _enabled_skills_lock = threading.Lock()
 _enabled_skills_cache: list[Skill] | None = None
-_enabled_skills_by_config_cache: "OrderedDict[tuple[int, str], tuple[object, list[Skill]]]" = OrderedDict()  # noqa: UP037
+_enabled_skills_by_config_cache: "OrderedDict[tuple[int, str] | tuple[int, str, str], tuple[object, list[Skill]]]" = OrderedDict()  # noqa: UP037
 _enabled_skills_refresh_active = False
 _enabled_skills_refresh_version = 0
 _enabled_skills_refresh_event = threading.Event()
@@ -169,7 +169,7 @@ def get_cached_enabled_skills() -> list[Skill]:
     return []
 
 
-def get_enabled_skills_for_config(app_config: AppConfig | None = None, user_id: str | None = None) -> list[Skill]:
+def get_enabled_skills_for_config(app_config: AppConfig | None = None, user_id: str | None = None, *, catalog_revision: str = "0") -> list[Skill]:
     """Return enabled skills using the caller's config source and user scope.
 
     When a concrete ``app_config`` is supplied, cache the loaded skills by that
@@ -184,7 +184,8 @@ def get_enabled_skills_for_config(app_config: AppConfig | None = None, user_id: 
     if app_config is None:
         return _get_enabled_skills()
 
-    cache_key = (id(app_config), user_id or "default")
+    legacy_key = (id(app_config), user_id or "default")
+    cache_key = legacy_key if catalog_revision == "0" else (*legacy_key, catalog_revision)
     with _enabled_skills_lock:
         cached = _enabled_skills_by_config_cache.get(cache_key)
         if cached is not None:

@@ -165,7 +165,7 @@ def test_capabilities_are_dimensioned_and_strictly_default_deny() -> None:
     assert response.status_code == 200
     assert response.headers["X-Correlation-ID"] == CORRELATION_ID
     payload = response.json()
-    assert payload["contractVersion"] == "1.0.0"
+    assert payload["contractVersion"] == "1.1.0"
     assert payload["transportProfile"] == "http_v1"
     assert payload["connection"] == "healthy"
     assert payload["accessMode"] == "read_only"

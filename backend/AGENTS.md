@@ -565,7 +565,7 @@ Localhost persistence deliberately reads the direct request `Host` and ignores `
 | **Console** (`/api/console`) | Read-only cross-thread observability for the current user (the data layer for an operations dashboard or external monitoring): `GET /stats` - headline counters (runs/threads/agents/tokens/cost); `GET /runs` - paginated run history joined with thread titles (per-run cost); `GET /usage` - zero-filled daily token series + per-model breakdown with spend. Queries `runs`/`threads_meta` directly as a reporting layer (no new `RunStore` methods); requires a SQL database backend — returns 503 on `database.backend: memory`. Real-cost estimation reads optional `models[*].pricing` (`currency`, `input_per_million`, `output_per_million`, `input_cache_hit_per_million`; `ModelConfig` is `extra="allow"`, so no schema change) and prices each run from its `token_usage_by_model` input/output split. Pricing is **cache-aware**: `RunJournal` accumulates prompt-cache hits from `usage_metadata.input_token_details.cache_read` into a sparse `cache_read_tokens` bucket key (also threaded through `SubagentTokenCollector` → `record_external_llm_usage_records`), and cache-hit input tokens are billed at `input_cache_hit_per_million` (omitted → billed at the miss price, a conservative upper bound). All priced models must use one currency; mixed currencies disable cost reporting and leave cost/currency fields null instead of producing invalid aggregates. Legacy rows fall back to run-level totals at `model_name`; unpriced models yield `cost: null` and cost fields are null when no pricing is configured |
 | **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - replace the full config with whole-payload stdio validation; `PATCH /config` - toggle one server while preserving the raw extensions config and validating only an enabled target; both writes reload config and reset the process-local MCP cache |
 | **Skills** (`/api/skills`) | `GET /` - list skills; `GET /{name}` - details; `PUT /{name}` - update enabled; `POST /install` - install from .skill archive (accepts standard optional frontmatter like `version`, `author`, `compatibility`); `POST /reload` - admin-only process-local prompt-cache invalidation after trusted external filesystem changes |
-| **Nexus Skill Receiver** (`/api/v1/nexus/skill-receiver`) | Hidden service-to-service routes for capabilities, controlled users, durable `USER` first-install operations, operation polling, and exact Observed state. HTTP and the exact `nexus-skill-receiver-v1` forced-command actions delegate to one handler. `nexus_receiver` is startup-only and default-disabled; a complete deployment bootstrap must atomically inject auth/runtime/principal mapping plus the PostgreSQL singleton recovery coordinator before supervised startup, submit-triggered, and periodic recovery starts. The repository injects no production bootstrap, so writes remain `RECEIVER_NOT_READY`; GLOBAL storage/catalog primitives exist for later runtime integration, but `GLOBAL` actions and capability advertisement remain forbidden. Browser authority, generic internal tokens, and `/api/skills` fallback are also forbidden. |
+| **Nexus Skill Receiver** (`/api/v1/nexus/skill-receiver`) | Hidden service-to-service routes for capabilities, controlled users, USER-only `skills.list`, durable first-install operations, operation polling, and exact Observed state. HTTP and the six exact `nexus-skill-receiver-v1` forced-command actions delegate to one handler. `nexus_receiver` is startup-only and default-disabled; a complete deployment bootstrap must atomically inject auth/runtime/principal mapping plus the PostgreSQL singleton recovery/revision coordinator before supervised startup, submit-triggered, and periodic recovery starts. Native GLOBAL install/observe adapters exist, but capability publication requires every explicit readiness gate. The repository injects no production bootstrap, so production and acceptance wiring remain `RECEIVER_NOT_READY`/GLOBAL `unsupported`. Browser authority, generic internal tokens, and `/api/skills` fallback are also forbidden. |
 | **Integrations** (`/api/integrations`) | `GET /lark/status` - inspect managed Lark/Feishu CLI integration state, including `sandbox_runtime_mode` / `sandbox_runtime_ready` (whether `lark-cli` will actually be present in the sandbox at chat time); `POST /lark/install` - admin-only install of the official `lark-*` managed skill pack; `POST /lark/config/start` and `/lark/config/complete` - internal first-time Lark connection setup; `POST /lark/config/credentials` - atomically switch the caller's per-user Lark app after validating the new `app_id`/`app_secret` through the official CLI's live tenant-token probe, revoke/remove the previous OAuth tokens, and restore the prior credential tree if the switch fails; `POST /lark/auth/start` and `/lark/auth/complete` - browser device-flow user authorization without terminal access, with optional `domains` / exact `scope` for incremental permission grants. Config and auth flows carry a server-issued, per-user generation persisted under the credential lock; a rejected direct switch leaves the current generation unchanged, stale completions return 409, and browser re-registration uses the same token-clearing/revocation transaction as direct credential switches. |
 | **Memory** (`/api/memory`) | `GET /` - memory data; `POST /reload` - force reload; `GET /config` - config; `GET /status` - config + data |
 | **Uploads** (`/api/threads/{id}/uploads`) | `POST /` - upload files (auto-converts PDF/PPT/Excel/Word); `GET /list` - list; `DELETE /{filename}` - delete |
@@ -1399,7 +1399,7 @@ mapping must reference the existing canonical component schemas instead of
 creating a parallel CLI schema. Run it with
 `PYTHONPATH=. uv run pytest tests/test_nexus_skill_receiver_contract.py -q`.
 `app/gateway/nexus_receiver/` implements one transport-neutral handler behind
-HTTP operation/Observed routes and the five-action forced-command dispatcher.
+HTTP operation/Observed/inventory routes and the six-action forced-command dispatcher.
 Its durable store uses renewable operation claims fenced by random claim tokens,
 and a separate atomic owner-only package
 store supports restart recovery without another submit. USER install atomically
@@ -1424,7 +1424,7 @@ token CAS renewal/release fences the previous coordinator. Operation claims use
 the same owner + random-token fencing and heartbeat renewal around long-running
 install/activation work.
 
-`GlobalManagedSkillStorage` is the stage-2 write primitive for the native
+`GlobalManagedSkillStorage` is the write primitive for the native
 `integrations/skills/nexus/{runtimeSkillName}` tree. It extracts and scans in an
 invisible same-filesystem staging directory, writes redacted receiver metadata,
 parses the staged tree through the runtime Skill parser, makes it read-only,
@@ -1436,8 +1436,25 @@ steps in recoverable order: after a crash between atomic rename and catalog
 commit, a replay verifies the exact receiver sidecar and runtime-parser probe,
 then idempotently commits the catalog revision without rewriting the tree.
 Migration `0014_nexus_receiver_coordination` adds these tables
-and the operation `execution_token`. These primitives are deliberately not
-wired to install/observe actions or `capabilities.get`; stage 3 owns that work.
+and the operation `execution_token`. `GlobalScopedReceiverInstaller` connects
+the managed store, catalog, and runtime-parser observation to the shared durable
+operation state machine. `ReceiverCapabilityReadiness` still requires scope
+RBAC, durable operations, native storage, load probe, run revision consumption,
+recovery fencing, service auth, directory privacy, trust, compatibility, and a
+shared-volume topology before GLOBAL may be advertised. The repository's
+production and acceptance compositions do not satisfy those gates, so GLOBAL
+remains fail-closed and unsupported there.
+
+`skills.list` is a USER-only 1.1 action over HTTP and SSH. It reads native USER
+storage, emits only the eight canonical fields, sorts by normalized runtime Skill
+name, and uses expiry-bound HMAC cursors bound to principal, target, query, and
+inventory/catalog revision. Action and target entitlement checks precede user
+resolution to preserve non-enumeration. At run start the Gateway reads the
+durable GLOBAL catalog revision before agent construction and freezes it in the
+run context; lead-agent caches and sandbox projection signatures include that
+revision. An active run never hot-changes, while the next run rebuilds against a
+new revision. Release wiring validates the revision provider but still publishes
+nothing without the deployment-owned production bootstrap.
 Run deterministic storage/coordination and optional real-PostgreSQL coverage with:
 
 ```bash
