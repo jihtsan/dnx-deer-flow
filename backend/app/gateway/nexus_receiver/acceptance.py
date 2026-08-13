@@ -19,6 +19,7 @@ from app.gateway.nexus_receiver.auth import (
     ReceiverServiceAuthenticationRequired,
     ReceiverServicePrincipal,
 )
+from app.gateway.nexus_receiver.coordination import SqlReceiverCoordinationStore
 from app.gateway.nexus_receiver.directory import ReceiverDirectoryCursorRejected
 from app.gateway.nexus_receiver.installer import UserScopedReceiverInstaller
 from app.gateway.nexus_receiver.models import ReceiverCursorPage, ReceiverInstallCommand, ReceiverUser, ReceiverUserPage
@@ -701,6 +702,7 @@ class AcceptanceReceiverReleaseBootstrap:
             runtime_handler=handler,
             service_authenticator=_DenyAcceptanceHttpAuthenticator(),
             principal_mapper=_AcceptancePrincipalMapper(principal_mapper, manifest),
+            recovery_coordinator=SqlReceiverCoordinationStore(session_factory),
         )
 
 
