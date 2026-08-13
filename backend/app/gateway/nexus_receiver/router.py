@@ -32,6 +32,7 @@ from app.gateway.nexus_receiver.models import (
     ReceiverObservedSkill,
     ReceiverOperation,
     ReceiverProblem,
+    ReceiverSkillPage,
     ReceiverUserPage,
 )
 from app.gateway.nexus_receiver.runtime import ReceiverRuntimeError, ReceiverRuntimeHandler, get_receiver_runtime_handler
@@ -164,6 +165,28 @@ async def list_receiver_users(
 
     response.headers["X-Correlation-ID"] = _correlation_id(request)
     return ReceiverUserPage.model_validate(page)
+
+
+@router.post(
+    "/skills/query",
+    response_model=ReceiverSkillPage,
+    include_in_schema=False,
+)
+async def list_receiver_skills(
+    request: Request,
+    response: Response,
+    body: dict,
+    principal: Annotated[
+        ReceiverServicePrincipal,
+        Depends(require_receiver_action("receiver:skills:list:user")),
+    ],
+) -> ReceiverSkillPage:
+    result = await get_receiver_runtime_handler(request.app.state).list_skills(
+        principal=principal,
+        request_payload=body,
+    )
+    response.headers["X-Correlation-ID"] = _correlation_id(request)
+    return result
 
 
 @router.post(
