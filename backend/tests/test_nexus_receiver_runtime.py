@@ -196,7 +196,7 @@ def _ssh_principal(*actions: str) -> ReceiverTransportPrincipal:
     )
 
 
-def _handler(*, store=None, package_store=None, directory=None, installer=None, user_directory=None, execution_owner=None, pending_recovery_notifier=None) -> ReceiverRuntimeHandler:
+def _handler(*, store=None, package_store=None, directory=None, installer=None, user_directory=None, execution_owner=None, pending_recovery_notifier=None, package_policy=None) -> ReceiverRuntimeHandler:
     return ReceiverRuntimeHandler(
         store=store or InMemoryReceiverOperationStore(),
         package_store=package_store or InMemoryReceiverPackageStore(),
@@ -207,6 +207,7 @@ def _handler(*, store=None, package_store=None, directory=None, installer=None, 
         clock=lambda: datetime(2026, 8, 11, 6, 0, tzinfo=UTC),
         execution_owner=execution_owner,
         pending_recovery_notifier=pending_recovery_notifier,
+        package_policy=package_policy,
     )
 
 
@@ -240,6 +241,38 @@ async def test_user_install_closes_durable_operation_with_exact_observed_state()
         "freshness": "current",
         "observedAt": "2026-08-11T06:00:00Z",
     }
+
+
+@pytest.mark.asyncio
+async def test_transient_package_policy_failure_remains_recoverable() -> None:
+    class _Policy:
+        def __init__(self) -> None:
+            self.available = True
+
+        async def validate(self, **kwargs) -> None:
+            del kwargs
+            if not self.available:
+                raise RuntimeError("private trust backend detail")
+
+    package = _archive()
+    command = _command(package)
+    policy = _Policy()
+    handler = _handler(package_policy=policy)
+    await handler.submit_install(
+        principal=_principal("receiver:install:user"),
+        idempotency_key="install-policy-recovery-0001",
+        request_sha256=handler.canonical_command_digest(command),
+        command_payload=command,
+        package=package,
+    )
+
+    policy.available = False
+    pending = (await handler.recover_pending())[0]
+    policy.available = True
+    succeeded = (await handler.recover_pending())[0]
+
+    assert pending.phase == "accepted"
+    assert succeeded.phase == "succeeded"
 
 
 @pytest.mark.asyncio

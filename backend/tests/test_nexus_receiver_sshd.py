@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from app.gateway.nexus_receiver.sshd_authorized_keys import render_authorized_keys
 from app.gateway.nexus_receiver.sshd_runtime_environment import (
     acceptance_database_url,
+    production_database_url,
     render_sshd_environment,
     runtime_environment,
 )
@@ -22,9 +24,14 @@ def test_receiver_sshd_is_opt_in_and_loopback_bound() -> None:
     assert service["ports"] == ["${NEXUS_RECEIVER_SSH_BIND_HOST:-127.0.0.1}:${NEXUS_RECEIVER_SSH_PORT:-2222}:22"]
     assert service["build"]["target"] == "nexus-receiver-sshd"
     assert service["build"]["args"]["UV_EXTRAS"] == "${NEXUS_RECEIVER_UV_EXTRAS:-}"
-    assert service["secrets"] == ["nexus_receiver_host_key", "nexus_receiver_principal_map"]
+    assert service["secrets"] == ["nexus_receiver_host_key", "nexus_receiver_principal_map", "nexus_receiver_database_url"]
     assert "nexus-receiver-ipc:/run/nexus-receiver-ipc" in service["volumes"]
     assert "nexus-receiver-ipc:/run/nexus-receiver-ipc" in overlay["services"]["gateway"]["volumes"]
+    assert "nexus-receiver-global:/app/backend/.deer-flow/integrations/skills:ro" in service["volumes"]
+    assert "nexus-receiver-global:/app/backend/.deer-flow/integrations/skills" in overlay["services"]["gateway"]["volumes"]
+    assert "nexus-receiver-packages:/var/lib/deer-flow/nexus-receiver/packages" in service["volumes"]
+    assert "nexus-receiver-packages:/var/lib/deer-flow/nexus-receiver/packages" in overlay["services"]["gateway"]["volumes"]
+    assert service["environment"]["NEXUS_RECEIVER_FORCED_COMMAND_PROFILE"] == "production"
 
 
 def test_receiver_sshd_forbids_interactive_and_forwarding_surfaces() -> None:
@@ -100,13 +107,26 @@ def test_sshd_runtime_environment_is_allowlisted_and_builds_database_url() -> No
     assert "DATABASE_URL=postgresql://" in rendered
 
 
+def test_production_database_url_is_loaded_only_from_a_postgres_secret(tmp_path: Path) -> None:
+    secret = tmp_path / "database-url"
+    secret.write_text("postgresql://receiver:password@postgres:5432/deerflow\n", encoding="utf-8")
+
+    assert production_database_url(secret) == "postgresql://receiver:password@postgres:5432/deerflow"
+
+    secret.write_text("sqlite:///receiver.db", encoding="utf-8")
+    with pytest.raises(ValueError, match="database Secret is invalid"):
+        production_database_url(secret)
+
+
 def test_sshd_entrypoint_creates_runtime_directory_and_readable_authorized_keys() -> None:
     entrypoint = (ROOT / "docker" / "nexus-receiver-sshd" / "entrypoint.sh").read_text(encoding="utf-8")
 
     assert "install -d -m 0755 -o root -g root /run/sshd" in entrypoint
     assert "install -d -m 0711 -o root -g root /run/nexus-receiver" in entrypoint
+    assert "install -d -m 0700 -o nexus-receiver -g nexus-receiver /var/lib/deer-flow/nexus-receiver/packages" in entrypoint
     assert "chown root:nexus-receiver /run/nexus-receiver/authorized_keys" in entrypoint
     assert "chmod 0640 /run/nexus-receiver/authorized_keys" in entrypoint
     assert entrypoint.index("sshd_runtime_environment $runtime_environment_args") < entrypoint.index("get_app_config")
     assert "sshd_runtime_environment $runtime_command_args --" in entrypoint
+    assert "production_forced_command --preflight" in entrypoint
     assert "Include /run/nexus-receiver/runtime_environment.conf" in (ROOT / "docker" / "nexus-receiver-sshd" / "sshd_config").read_text(encoding="utf-8")

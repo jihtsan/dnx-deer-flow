@@ -53,10 +53,16 @@ router = APIRouter(prefix=_PREFIX, tags=["Nexus Skill Receiver"])
 
 
 def _correlation_id(request: Request) -> str:
+    cached = getattr(request.state, "nexus_receiver_correlation_id", None)
+    if isinstance(cached, str):
+        return cached
     supplied = request.headers.get("X-Correlation-ID", "")
     if _CORRELATION_PATTERN.fullmatch(supplied):
-        return supplied
-    return f"receiver-{uuid4().hex}"
+        correlation_id = supplied
+    else:
+        correlation_id = f"receiver-{uuid4().hex}"
+    request.state.nexus_receiver_correlation_id = correlation_id
+    return correlation_id
 
 
 @lru_cache(maxsize=1)
@@ -108,7 +114,7 @@ async def get_receiver_capabilities(
     response.headers["X-Correlation-ID"] = _correlation_id(request)
     runtime_handler = getattr(request.app.state, "nexus_receiver_runtime_handler", None)
     if isinstance(runtime_handler, ReceiverRuntimeHandler):
-        return await runtime_handler.get_capabilities(principal=principal)
+        return await runtime_handler.get_capabilities(principal=principal, correlation_id=_correlation_id(request))
     return ReceiverCapabilitySnapshot(
         runtime_version=_runtime_version(),
         authorization=ReceiverAuthorizationSnapshot(
@@ -145,6 +151,7 @@ async def list_receiver_users(
             query=query,
             cursor=cursor,
             limit=limit,
+            correlation_id=_correlation_id(request),
         )
         response.headers["X-Correlation-ID"] = _correlation_id(request)
         return page
@@ -184,6 +191,7 @@ async def list_receiver_skills(
     result = await get_receiver_runtime_handler(request.app.state).list_skills(
         principal=principal,
         request_payload=body,
+        correlation_id=_correlation_id(request),
     )
     response.headers["X-Correlation-ID"] = _correlation_id(request)
     return result
@@ -233,6 +241,7 @@ async def create_receiver_operation(
         request_sha256=request_sha256,
         command_payload=command_payload,
         package=package_bytes,
+        correlation_id=_correlation_id(request),
     )
     correlation_id = _correlation_id(request)
     response.headers["X-Correlation-ID"] = correlation_id
@@ -254,6 +263,7 @@ async def get_receiver_operation(
     result = await get_receiver_runtime_handler(request.app.state).get_operation(
         principal=principal,
         operation_id=operation_id,
+        correlation_id=_correlation_id(request),
     )
     response.headers["X-Correlation-ID"] = _correlation_id(request)
     return result
@@ -273,6 +283,7 @@ async def query_receiver_observation(
     result = await get_receiver_runtime_handler(request.app.state).query_observation(
         principal=principal,
         query_payload=query,
+        correlation_id=_correlation_id(request),
     )
     response.headers["X-Correlation-ID"] = _correlation_id(request)
     return result

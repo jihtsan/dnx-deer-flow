@@ -1442,8 +1442,12 @@ operation state machine. `ReceiverCapabilityReadiness` still requires scope
 RBAC, durable operations, native storage, load probe, run revision consumption,
 recovery fencing, service auth, directory privacy, trust, compatibility, and a
 shared-volume topology before GLOBAL may be advertised. The repository's
-production and acceptance compositions do not satisfy those gates, so GLOBAL
-remains fail-closed and unsupported there.
+default and acceptance compositions do not satisfy those gates, so GLOBAL
+remains fail-closed and unsupported there. The opt-in production composition
+in `production.py` requires PostgreSQL, an operator-owned Secret/auth/directory/
+RBAC/trust/compatibility/audit/rate-limit bundle, and a shared-volume probe;
+missing any item atomically prevents runtime publication. See
+`docs/NEXUS_RECEIVER_PRODUCTION.md`.
 
 `skills.list` is a USER-only 1.1 action over HTTP and SSH. It reads native USER
 storage, emits only the eight canonical fields, sorts by normalized runtime Skill

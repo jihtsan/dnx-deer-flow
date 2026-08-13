@@ -264,6 +264,19 @@ class ReceiverTargetAuthorizer(Protocol):
     ) -> bool: ...
 
 
+class ReceiverPackagePolicy(Protocol):
+    """Deployment trust and compatibility decision, repeated on recovery."""
+
+    async def validate(
+        self,
+        *,
+        command: ReceiverInstallCommand,
+        manifest_version: str,
+        package: bytes,
+        principal_subject: str | None,
+    ) -> None: ...
+
+
 @dataclass(slots=True)
 class ReceiverOperationEntry:
     idempotency_key: str
@@ -542,6 +555,7 @@ class ReceiverRuntimeHandler:
         skill_cursor_codec: HmacReceiverSkillCursorCodec | None = None,
         global_installer: ReceiverGlobalSkillInstaller | None = None,
         capability_readiness: ReceiverCapabilityReadiness | None = None,
+        package_policy: ReceiverPackagePolicy | None = None,
     ) -> None:
         self.store = store
         self.package_store = package_store
@@ -559,6 +573,7 @@ class ReceiverRuntimeHandler:
         self._skill_cursor_codec = skill_cursor_codec
         self.global_installer = global_installer
         self._capability_readiness = capability_readiness or ReceiverCapabilityReadiness()
+        self._package_policy = package_policy
         self._global_install_ready = self._capability_readiness.global_install_supported
         if self._global_install_ready and (global_installer is None or catalog_revision_provider is None):
             raise ValueError("GLOBAL receiver readiness requires installer, observer, and catalog revision providers")
@@ -574,6 +589,34 @@ class ReceiverRuntimeHandler:
             self._pending_recovery_notifier()
         except Exception:
             logger.exception("Failed to notify Nexus receiver recovery after durable submit")
+
+    async def _validate_package_policy(
+        self,
+        *,
+        command: ReceiverInstallCommand,
+        manifest_version: str,
+        package: bytes,
+        principal_subject: str | None,
+    ) -> None:
+        if self._package_policy is None:
+            return
+        try:
+            await self._package_policy.validate(
+                command=command,
+                manifest_version=manifest_version,
+                package=package,
+                principal_subject=principal_subject,
+            )
+        except ReceiverProviderError:
+            raise
+        except Exception:
+            raise ReceiverRuntimeError(
+                code="TRUST_POLICY_NOT_CONFIGURED",
+                title="Trust policy unavailable",
+                detail="The receiver package trust or compatibility policy is unavailable.",
+                status_code=503,
+                retryable=True,
+            ) from None
 
     @staticmethod
     def canonical_command_digest(command_payload: dict[str, Any]) -> str:
@@ -599,7 +642,9 @@ class ReceiverRuntimeHandler:
         self,
         *,
         principal: ReceiverServicePrincipal | ReceiverTransportPrincipal,
+        correlation_id: str | None = None,
     ) -> ReceiverCapabilitySnapshot:
+        del correlation_id
         self._require(principal, "receiver:capabilities:read")
         transport_profile = "ssh_v1" if isinstance(principal, ReceiverTransportPrincipal) else "http_v1"
         can_install_user = self._user_install_ready and "receiver:install:user" in principal.actions
@@ -643,7 +688,9 @@ class ReceiverRuntimeHandler:
         query: str | None,
         cursor: str | None,
         limit: int,
+        correlation_id: str | None = None,
     ) -> ReceiverUserPage:
+        del correlation_id
         self._require(principal, "receiver:user-directory:read")
         if self.user_directory is None:
             raise ReceiverRuntimeError(
@@ -673,7 +720,9 @@ class ReceiverRuntimeHandler:
         *,
         principal: ReceiverServicePrincipal | ReceiverTransportPrincipal,
         request_payload: dict[str, Any],
+        correlation_id: str | None = None,
     ) -> ReceiverSkillPage:
+        del correlation_id
         self._require(principal, "receiver:skills:list:user")
         try:
             request = ReceiverSkillListRequest.model_validate(request_payload)
@@ -753,7 +802,9 @@ class ReceiverRuntimeHandler:
         request_sha256: str,
         command_payload: dict[str, Any],
         package: bytes,
+        correlation_id: str | None = None,
     ) -> ReceiverOperation:
+        del correlation_id
         command = self.validate_command(command_payload)
         if _IDEMPOTENCY_PATTERN.fullmatch(idempotency_key) is None:
             raise ReceiverRuntimeError(
@@ -792,6 +843,12 @@ class ReceiverRuntimeHandler:
                 detail="The Skill package manifest name does not match runtimeSkillName.",
                 status_code=422,
             )
+        await self._validate_package_policy(
+            command=command,
+            manifest_version=_manifest_version,
+            package=package,
+            principal_subject=principal.subject,
+        )
 
         operation_id = str(command.receiver_operation_id)
         try:
@@ -1011,6 +1068,7 @@ class ReceiverRuntimeHandler:
                     detail="The Skill package manifest name does not match runtimeSkillName.",
                     status_code=422,
                 )
+            await self._validate_package_policy(command=command, manifest_version=manifest_version, package=package, principal_subject=None)
             user = await self._resolve_install_target(command.target.deer_flow_user_id)
             if entry.operation.phase == "accepted":
                 entry = await self.store.transition(operation_id, phase="validating", now=self._clock(), owner=owner, token=token)
@@ -1103,6 +1161,8 @@ class ReceiverRuntimeHandler:
                 )
             return entry.operation
         except ReceiverProviderError as exc:
+            if exc.code == "TRUST_POLICY_NOT_CONFIGURED" and bool(getattr(exc, "retryable", False)):
+                raise
             current = await self.store.get(operation_id)
             if current is not None and current.operation.phase not in _TERMINAL:
                 terminal: ReceiverOperationPhase = "rejected" if current.operation.phase in {"accepted", "validating"} else "failed"
@@ -1151,6 +1211,7 @@ class ReceiverRuntimeHandler:
             manifest_name, manifest_version = await asyncio.to_thread(_inspect_package, package)
             if manifest_name != command.runtime_skill_name:
                 raise ReceiverRuntimeError(code="PACKAGE_MANIFEST_MISMATCH", detail="The Skill package manifest name does not match runtimeSkillName.", status_code=422)
+            await self._validate_package_policy(command=command, manifest_version=manifest_version, package=package, principal_subject=None)
             if entry.operation.phase == "accepted":
                 entry = await self.store.transition(operation_id, phase="validating", now=self._clock(), owner=owner, token=token)
             if entry.operation.phase == "validating":
@@ -1218,6 +1279,8 @@ class ReceiverRuntimeHandler:
                 )
             return entry.operation
         except ReceiverProviderError as exc:
+            if exc.code == "TRUST_POLICY_NOT_CONFIGURED" and bool(getattr(exc, "retryable", False)):
+                raise
             current = await self.store.get(operation_id)
             if current is not None and current.operation.phase not in _TERMINAL:
                 terminal: ReceiverOperationPhase = "rejected" if current.operation.phase in {"accepted", "validating"} else "failed"
@@ -1236,7 +1299,9 @@ class ReceiverRuntimeHandler:
         *,
         principal: ReceiverServicePrincipal | ReceiverTransportPrincipal,
         operation_id: str,
+        correlation_id: str | None = None,
     ) -> ReceiverOperation:
+        del correlation_id
         self._require(principal, "receiver:operations:read")
         entry = await self.store.get(operation_id)
         if entry is None:
@@ -1259,7 +1324,9 @@ class ReceiverRuntimeHandler:
         *,
         principal: ReceiverServicePrincipal | ReceiverTransportPrincipal,
         query_payload: dict[str, Any],
+        correlation_id: str | None = None,
     ) -> ReceiverObservedSkill:
+        del correlation_id
         try:
             query = ReceiverObservationQuery.model_validate(query_payload)
         except ValidationError:
