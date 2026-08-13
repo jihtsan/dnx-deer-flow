@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.0.0",
+  "contractVersion": "1.1.0",
   "source": "contracts/openapi/nexus-skill-receiver-v1.yaml",
   "schemaCases": [
     {
@@ -7,7 +7,7 @@
       "schema": "ReceiverCapabilitySnapshot",
       "valid": true,
       "value": {
-        "contractVersion": "1.0.0",
+        "contractVersion": "1.1.0",
         "transportProfile": "ssh_v1",
         "runtimeVersion": "0.9.0",
         "connection": "healthy",
@@ -233,7 +233,9 @@
         "freshness": "current",
         "authorization": {
           "profile": "unapproved",
-          "grantedActions": ["receiver:install:user"]
+          "grantedActions": [
+            "receiver:install:user"
+          ]
         },
         "capabilities": {
           "userDirectory": "supported",
@@ -272,7 +274,9 @@
           "durableOperations": "unsupported",
           "observedPackageDigest": "unsupported"
         },
-        "blockedBy": ["CAPABILITY_READ_ONLY"],
+        "blockedBy": [
+          "CAPABILITY_READ_ONLY"
+        ],
         "observedAt": "2026-08-11T04:00:00Z"
       }
     },
@@ -312,6 +316,22 @@
         "correlationId": "receiver-users-01",
         "query": "chen",
         "cursor": "opaque-page-02",
+        "limit": 25
+      }
+    },
+    {
+      "name": "list-user-skills-over-forced-command",
+      "action": "skills.list",
+      "argv": "nexus-skill-receiver-v1 skills.list",
+      "frame": {
+        "contractVersion": "1.1.0",
+        "correlationId": "receiver-skills-01",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "query": "research",
+        "cursor": "opaque-skill-page-02",
         "limit": 25
       }
     },
@@ -405,6 +425,336 @@
         "instance": "/api/v1/nexus/skill-receiver/problems/01J5GLOBALSSH",
         "correlationId": "skill-install-global-01",
         "timestamp": "2026-08-11T04:05:00Z",
+        "retryable": false
+      }
+    }
+  ],
+  "skillListCases": [
+    {
+      "name": "first-user-first-page",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-u42-p1",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "limit": 1
+      },
+      "response": {
+        "items": [
+          {
+            "runtimeSkillName": "alpha",
+            "skillVersionId": "sv.alpha.1.0.0",
+            "version": "1.0.0",
+            "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "enabled": true,
+            "loadState": "loaded",
+            "freshness": "current",
+            "observedAt": "2026-08-13T04:01:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": true,
+          "nextCursor": "cursor-u42-r17-alpha"
+        },
+        "observedAt": "2026-08-13T04:01:00Z"
+      }
+    },
+    {
+      "name": "first-user-second-page-same-revision",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-u42-p2",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "limit": 1,
+        "cursor": "cursor-u42-r17-alpha"
+      },
+      "response": {
+        "items": [
+          {
+            "runtimeSkillName": "beta",
+            "skillVersionId": "sv.beta.1.0.0",
+            "version": "1.0.0",
+            "packageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "enabled": false,
+            "loadState": "disabled",
+            "freshness": "current",
+            "observedAt": "2026-08-13T04:01:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-13T04:01:00Z"
+      }
+    },
+    {
+      "name": "second-user-isolated",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-u43-p1",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-43"
+        },
+        "limit": 25
+      },
+      "response": {
+        "items": [
+          {
+            "runtimeSkillName": "gamma",
+            "skillVersionId": "sv.gamma.2.0.0",
+            "version": "2.0.0",
+            "packageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "enabled": true,
+            "loadState": "loaded",
+            "freshness": "current",
+            "observedAt": "2026-08-13T04:01:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-13T04:01:00Z"
+      }
+    },
+    {
+      "name": "refresh-without-cursor-new-revision",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-u42-refresh",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "limit": 25
+      },
+      "response": {
+        "items": [
+          {
+            "runtimeSkillName": "delta",
+            "skillVersionId": "sv.delta.1.0.0",
+            "version": "1.0.0",
+            "packageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "enabled": true,
+            "loadState": "loaded",
+            "freshness": "current",
+            "observedAt": "2026-08-13T04:02:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-13T04:02:00Z"
+      }
+    },
+    {
+      "name": "same-version-installed",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-same",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "query": "research-assistant",
+        "limit": 25
+      },
+      "response": {
+        "items": [
+          {
+            "runtimeSkillName": "research-assistant",
+            "skillVersionId": "sv.research-assistant.1.0.0",
+            "version": "1.0.0",
+            "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "enabled": true,
+            "loadState": "loaded",
+            "freshness": "current",
+            "observedAt": "2026-08-13T04:03:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-13T04:03:00Z"
+      }
+    },
+    {
+      "name": "other-version-conflict",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-conflict",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "query": "research-assistant",
+        "limit": 25
+      },
+      "response": {
+        "items": [
+          {
+            "runtimeSkillName": "research-assistant",
+            "skillVersionId": "sv.research-assistant.0.9.0",
+            "version": "0.9.0",
+            "packageDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "enabled": true,
+            "loadState": "loaded",
+            "freshness": "current",
+            "observedAt": "2026-08-13T04:03:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-13T04:03:00Z"
+      }
+    },
+    {
+      "name": "not-installed",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-absent",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "query": "missing-skill",
+        "limit": 25
+      },
+      "response": {
+        "items": [],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-13T04:03:00Z"
+      }
+    },
+    {
+      "name": "observation-unavailable",
+      "request": {
+        "contractVersion": "1.1.0",
+        "correlationId": "skills-unavailable",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "query": "research-assistant",
+        "limit": 25
+      },
+      "response": {
+        "items": [
+          {
+            "runtimeSkillName": "research-assistant",
+            "skillVersionId": "sv.research-assistant.1.0.0",
+            "version": "1.0.0",
+            "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "enabled": true,
+            "loadState": "unknown",
+            "freshness": "unavailable",
+            "observedAt": "2026-08-13T04:03:00Z"
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-13T04:03:00Z"
+      }
+    }
+  ],
+  "skillListProblemCases": [
+    {
+      "name": "unauthorized-existing-user",
+      "problem": {
+        "type": "/problems/forbidden",
+        "title": "Receiver action forbidden",
+        "status": 403,
+        "code": "FORBIDDEN",
+        "detail": "The receiver service principal lacks the required action or target entitlement.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/skills-authz-1",
+        "correlationId": "skills-authz-1",
+        "timestamp": "2026-08-13T04:05:00Z",
+        "retryable": false
+      }
+    },
+    {
+      "name": "unauthorized-missing-user",
+      "problem": {
+        "type": "/problems/forbidden",
+        "title": "Receiver action forbidden",
+        "status": 403,
+        "code": "FORBIDDEN",
+        "detail": "The receiver service principal lacks the required action or target entitlement.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/skills-authz-2",
+        "correlationId": "skills-authz-2",
+        "timestamp": "2026-08-13T04:05:00Z",
+        "retryable": false
+      }
+    },
+    {
+      "name": "tampered-cursor",
+      "problem": {
+        "type": "/problems/cursor-invalid",
+        "title": "Cursor invalid",
+        "status": 422,
+        "code": "CURSOR_INVALID",
+        "detail": "The supplied cursor is invalid for this request.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/cursor-1",
+        "correlationId": "cursor-1",
+        "timestamp": "2026-08-13T04:05:00Z",
+        "retryable": false
+      }
+    },
+    {
+      "name": "cross-user-cursor-replay",
+      "problem": {
+        "type": "/problems/cursor-invalid",
+        "title": "Cursor invalid",
+        "status": 422,
+        "code": "CURSOR_INVALID",
+        "detail": "The supplied cursor is invalid for this request.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/cursor-2",
+        "correlationId": "cursor-2",
+        "timestamp": "2026-08-13T04:05:00Z",
+        "retryable": false
+      }
+    },
+    {
+      "name": "cross-query-cursor-replay",
+      "problem": {
+        "type": "/problems/cursor-invalid",
+        "title": "Cursor invalid",
+        "status": 422,
+        "code": "CURSOR_INVALID",
+        "detail": "The supplied cursor is invalid for this request.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/cursor-3",
+        "correlationId": "cursor-3",
+        "timestamp": "2026-08-13T04:05:00Z",
+        "retryable": false
+      }
+    },
+    {
+      "name": "catalog-revision-unavailable",
+      "problem": {
+        "type": "/problems/cursor-expired",
+        "title": "Cursor expired",
+        "status": 409,
+        "code": "CURSOR_EXPIRED",
+        "detail": "The cursor catalog revision is no longer available; restart without a cursor.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/cursor-4",
+        "correlationId": "cursor-4",
+        "timestamp": "2026-08-13T04:05:00Z",
         "retryable": false
       }
     }
@@ -517,16 +867,60 @@
     }
   ],
   "phaseTransitions": [
-    {"from": "accepted", "to": "validating", "valid": true},
-    {"from": "accepted", "to": "rejected", "valid": true},
-    {"from": "validating", "to": "installing", "valid": true},
-    {"from": "validating", "to": "rejected", "valid": true},
-    {"from": "installing", "to": "activating", "valid": true},
-    {"from": "installing", "to": "failed", "valid": true},
-    {"from": "activating", "to": "succeeded", "valid": true},
-    {"from": "activating", "to": "failed", "valid": true},
-    {"from": "succeeded", "to": "failed", "valid": false},
-    {"from": "rejected", "to": "accepted", "valid": false},
-    {"from": "failed", "to": "accepted", "valid": false}
+    {
+      "from": "accepted",
+      "to": "validating",
+      "valid": true
+    },
+    {
+      "from": "accepted",
+      "to": "rejected",
+      "valid": true
+    },
+    {
+      "from": "validating",
+      "to": "installing",
+      "valid": true
+    },
+    {
+      "from": "validating",
+      "to": "rejected",
+      "valid": true
+    },
+    {
+      "from": "installing",
+      "to": "activating",
+      "valid": true
+    },
+    {
+      "from": "installing",
+      "to": "failed",
+      "valid": true
+    },
+    {
+      "from": "activating",
+      "to": "succeeded",
+      "valid": true
+    },
+    {
+      "from": "activating",
+      "to": "failed",
+      "valid": true
+    },
+    {
+      "from": "succeeded",
+      "to": "failed",
+      "valid": false
+    },
+    {
+      "from": "rejected",
+      "to": "accepted",
+      "valid": false
+    },
+    {
+      "from": "failed",
+      "to": "accepted",
+      "valid": false
+    }
   ]
 }
