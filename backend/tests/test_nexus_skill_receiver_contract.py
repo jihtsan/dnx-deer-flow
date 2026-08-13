@@ -73,7 +73,10 @@ EXPECTED_SSH_ACTIONS = {
     },
     "install.submit": {
         "httpOperationId": "createNexusSkillReceiverOperation",
-        "serviceActions": {"receiver:install:user"},
+        "serviceActionsByTarget": {
+            "USER": {"receiver:install:user"},
+            "GLOBAL": {"receiver:install:global"},
+        },
         "requiredFrameFields": {
             "contractVersion",
             "correlationId",
@@ -93,7 +96,10 @@ EXPECTED_SSH_ACTIONS = {
     },
     "observations.query": {
         "httpOperationId": "queryNexusSkillReceiverObservation",
-        "serviceActions": {"receiver:observe:user"},
+        "serviceActionsByTarget": {
+            "USER": {"receiver:observe:user"},
+            "GLOBAL": {"receiver:observe:global"},
+        },
         "requiredFrameFields": {"contractVersion", "correlationId", "query"},
         "optionalFrameFields": set(),
         "successSchema": "ObservedSkillInstallation",
@@ -426,7 +432,7 @@ def test_ssh_binding_reuses_canonical_components_and_has_closed_wire_rules() -> 
     ssh = bindings["ssh_v1"]
     assert ssh["kind"] == "ssh"
     assert ssh["authenticationProfile"] == "ssh_forced_command"
-    assert ssh["targetScopes"] == ["USER"]
+    assert ssh["targetScopes"] == ["GLOBAL", "USER"]
     assert ssh["forcedCommand"] == "nexus-skill-receiver-v1"
     assert ssh["argvGrammar"] == "^nexus-skill-receiver-v1 (capabilities\\.get|users\\.list|skills\\.list|install\\.submit|operations\\.get|observations\\.query)$"
     assert set(ssh["forbiddenFeatures"]) == {
@@ -464,7 +470,10 @@ def test_ssh_binding_reuses_canonical_components_and_has_closed_wire_rules() -> 
     for action, expected in EXPECTED_SSH_ACTIONS.items():
         mapping = ssh["actions"][action]
         assert mapping["httpOperationId"] == expected["httpOperationId"]
-        assert set(mapping["serviceActions"]) == expected["serviceActions"]
+        if "serviceActions" in expected:
+            assert set(mapping["serviceActions"]) == expected["serviceActions"]
+        else:
+            assert {scope: set(actions) for scope, actions in mapping["serviceActionsByTarget"].items()} == expected["serviceActionsByTarget"]
         assert set(mapping["requiredFrameFields"]) == expected["requiredFrameFields"]
         assert set(mapping["optionalFrameFields"]) == expected["optionalFrameFields"]
         assert mapping["successSchema"] == {"$ref": f"#/components/schemas/{expected['successSchema']}"}
@@ -474,13 +483,12 @@ def test_ssh_binding_reuses_canonical_components_and_has_closed_wire_rules() -> 
         assert "schemas" not in mapping
 
         http_operation = http_operations[expected["httpOperationId"]]
-        if "x-required-service-actions" in http_operation:
+        if "serviceActions" in expected:
             assert set(http_operation["x-required-service-actions"]) == expected["serviceActions"]
         else:
-            assert set(http_operation["x-required-service-actions-by-target"]["USER"]) == expected["serviceActions"]
+            assert {scope: set(actions) for scope, actions in http_operation["x-required-service-actions-by-target"].items()} == expected["serviceActionsByTarget"]
 
     assert ssh["actions"]["install.submit"]["commandSchema"] == {"$ref": "#/components/schemas/ReceiverInstallCommand"}
-    assert ssh["actions"]["install.submit"]["unsupportedTargetProblemCode"] == "GLOBAL_INSTALL_UNSUPPORTED"
     assert ssh["actions"]["observations.query"]["querySchema"] == {"$ref": "#/components/schemas/ObservationQuery"}
 
 
@@ -536,7 +544,7 @@ def test_ssh_action_conformance_frames_reuse_http_parameter_and_component_rules(
             assert case["frame"]["contractVersion"] == "1.0.0"
 
 
-def test_ssh_binding_rejects_global_without_changing_the_shared_command_schema() -> None:
+def test_ssh_binding_keeps_global_default_deny_when_readiness_is_unavailable() -> None:
     contract = _load_contract()
     fixtures = _load_fixtures()
     case = fixtures["sshBindingProblemCases"][0]
@@ -547,6 +555,7 @@ def test_ssh_binding_rejects_global_without_changing_the_shared_command_schema()
     assert not _validation_errors(contract, "ReceiverProblem", case["problem"])
     assert case["command"]["target"] == {"scope": "GLOBAL"}
     assert case["problem"]["code"] == "GLOBAL_INSTALL_UNSUPPORTED"
+    assert contract["x-receiver-contract"]["bindings"]["ssh_v1"]["actions"]["install.submit"]["serviceActionsByTarget"]["GLOBAL"] == ["receiver:install:global"]
 
 
 def test_skill_list_conformance_fixtures_pin_isolation_pagination_and_four_states() -> None:

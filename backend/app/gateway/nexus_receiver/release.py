@@ -31,7 +31,9 @@ _SSH_ACTIONS = frozenset(
         "receiver:capabilities:read",
         "receiver:user-directory:read",
         "receiver:skills:list:user",
+        "receiver:install:global",
         "receiver:install:user",
+        "receiver:observe:global",
         "receiver:observe:user",
         "receiver:operations:read",
     }

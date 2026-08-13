@@ -1106,8 +1106,11 @@ with provider fixtures in the adjacent `.conformance.json` file.
 The same artifact defines the `http_v1` binding and the P0 `ssh_v1` forced-command
 binding. SSH accepts only six allowlisted actions, reuses the canonical
 component schemas, and supports controlled directory reads, USER-only
-`skills.list`, plus exact `USER` first installation; it does not publish a
-separate CLI schema or enable production `GLOBAL` support.
+`skills.list`, plus exact `USER` or `GLOBAL` first installation and observation.
+The principal map grants USER and GLOBAL actions independently; listing a
+GLOBAL action does not bypass runtime readiness or publish GLOBAL capability.
+SSH does not publish a separate CLI schema or enable production `GLOBAL`
+support by itself.
 
 The Gateway mounts the canonical capability, controlled-directory, operation,
 operation-poll, and Observed paths behind dedicated service-auth and runtime
@@ -1148,7 +1151,7 @@ contains only opaque Secret references, a provider factory path, storage paths, 
 policy revision IDs, never Secret values. A deployment-owned bootstrap must
 atomically inject the authenticator, install-target resolver, durable operation
 and package stores, USER installer, and closed transport-principal mapper; the
-the repository production bootstrap accepts only a complete operator-owned
+repository production bootstrap accepts only a complete operator-owned
 provider bundle, so missing inputs remain default-deny (`401 AUTHENTICATION_REQUIRED`,
 `409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
 capabilities remain `read_only`/`unsupported`. The

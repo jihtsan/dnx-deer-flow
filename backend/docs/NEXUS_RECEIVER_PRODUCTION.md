@@ -93,7 +93,12 @@ Before opening port 22, sshd also requires the mounted host key and principal ma
 to byte-match the values returned by the configured Secret resolver. This keeps
 the transport and application identity bindings on one Secret revision.
 The principal map grants actions explicitly; omit GLOBAL actions until the
-external provider bundle and shared-volume probe have passed review.
+external provider bundle and shared-volume probe have passed review. USER and
+GLOBAL actions are independent: `receiver:install:user` never implies
+`receiver:install:global`, and `receiver:observe:user` never implies
+`receiver:observe:global`. Listing a GLOBAL action only expresses principal
+authority; runtime readiness still independently gates capability publication
+and execution.
 
 ## Real Conformance
 
