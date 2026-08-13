@@ -28,7 +28,7 @@ from deerflow.persistence.bootstrap import bootstrap_schema
 pytestmark = pytest.mark.asyncio
 
 
-HEAD = "0009_repair_knowledge_retry_requests"
+HEAD = "0013_nexus_receiver_operations"
 
 
 def _url(tmp_path: Path) -> str:

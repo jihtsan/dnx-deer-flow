@@ -144,7 +144,11 @@ def test_build_subagent_runtime_middlewares_threads_app_config_to_llm_middleware
     monkeypatch.setitem(
         sys.modules,
         "deerflow.agents.middlewares.input_sanitization_middleware",
-        _module("deerflow.agents.middlewares.input_sanitization_middleware", InputSanitizationMiddleware=FakeMiddleware),
+        _module(
+            "deerflow.agents.middlewares.input_sanitization_middleware",
+            InputSanitizationMiddleware=FakeMiddleware,
+            neutralize_untrusted_tags=lambda value: value,
+        ),
     )
 
     middlewares = build_subagent_runtime_middlewares(app_config=app_config, lazy_init=False)
@@ -155,21 +159,28 @@ def test_build_subagent_runtime_middlewares_threads_app_config_to_llm_middleware
     # ToolErrorHandling)
     # + 1 ReadBeforeWriteMiddleware + 1 LoopDetectionMiddleware
     # + 1 TokenBudgetMiddleware (subagents.token_budget enabled by default, #3875 Phase 2)
+    # + 1 SkillActivationMiddleware + 1 SkillToolPolicyMiddleware
     # + 1 SafetyFinishReasonMiddleware + 1 DurableContextMiddleware
     # + 1 SystemMessageCoalescingMiddleware (all enabled by default).
     from deerflow.agents.middlewares.durable_context_middleware import DurableContextMiddleware
     from deerflow.agents.middlewares.safety_finish_reason_middleware import SafetyFinishReasonMiddleware
+    from deerflow.agents.middlewares.skill_activation_middleware import SkillActivationMiddleware
+    from deerflow.agents.middlewares.skill_tool_policy_middleware import SkillToolPolicyMiddleware
     from deerflow.agents.middlewares.system_message_coalescing_middleware import SystemMessageCoalescingMiddleware
     from deerflow.agents.middlewares.token_budget_middleware import TokenBudgetMiddleware
     from deerflow.agents.middlewares.tool_output_budget_middleware import ToolOutputBudgetMiddleware
 
-    assert len(middlewares) == 15
+    assert len(middlewares) == 17
     assert isinstance(middlewares[0], FakeMiddleware)  # InputSanitizationMiddleware stub
     assert isinstance(middlewares[1], ToolOutputBudgetMiddleware)
     assert any(isinstance(m, ToolErrorHandlingMiddleware) for m in middlewares)
     # The token-budget backstop is attached by default so the cap engages (#3875).
     assert any(isinstance(m, TokenBudgetMiddleware) for m in middlewares)
     assert any(isinstance(m, SafetyFinishReasonMiddleware) for m in middlewares)
+    activation_idx = next(i for i, m in enumerate(middlewares) if isinstance(m, SkillActivationMiddleware))
+    policy_idx = next(i for i, m in enumerate(middlewares) if isinstance(m, SkillToolPolicyMiddleware))
+    assert policy_idx == activation_idx + 1
+    assert middlewares[activation_idx]._slash_source_owner_token == middlewares[policy_idx]._slash_source_owner_token
     # DurableContextMiddleware is present but not last: the coalescer (#4040) is
     # appended innermost so it can merge the SystemMessage DurableContext injects.
     # The coalescer is appended unconditionally (after the optional summarization
@@ -177,7 +188,7 @@ def test_build_subagent_runtime_middlewares_threads_app_config_to_llm_middleware
     # unlike DurableContextMiddleware, which is only last when summarization is off.
     durable_idx = next(i for i, m in enumerate(middlewares) if isinstance(m, DurableContextMiddleware))
     assert isinstance(middlewares[-1], SystemMessageCoalescingMiddleware)
-    assert durable_idx < len(middlewares) - 1
+    assert policy_idx < durable_idx < len(middlewares) - 1
 
 
 def test_tool_progress_middleware_is_outer_relative_to_error_handling(monkeypatch: pytest.MonkeyPatch):
@@ -212,13 +223,17 @@ def test_tool_progress_middleware_is_outer_relative_to_error_handling(monkeypatc
     assert progress_idx < error_idx, f"ToolProgressMiddleware (index {progress_idx}) must be outer (lower index) than ToolErrorHandlingMiddleware (index {error_idx}); order: {[type(m).__name__ for m in middlewares]}"
 
 
-def test_middleware_ordering_guard_raises_when_progress_is_inner(monkeypatch: pytest.MonkeyPatch):
-    """_build_runtime_middlewares must raise RuntimeError when ToolProgressMiddleware ends up
-    at a higher index than ToolErrorHandlingMiddleware.
+def test_middleware_ordering_guard_moved_to_declarative_constraints(monkeypatch: pytest.MonkeyPatch):
+    """_build_runtime_middlewares no longer hand-validates ordering; the invariant is now
+    declared in deerflow.extensions.ordering (core_ordering_constraints / assert_ordering) and
+    is checked once the composing builder merges extension contributions in (Task 9).
 
-    We trigger the wrong-order condition by patching SandboxAuditMiddleware to be an actual
-    ToolErrorHandlingMiddleware instance, which appears BEFORE ToolProgressMiddleware in the
-    list. The guard's isinstance() check finds it first, making error_idx < progress_idx.
+    This test previously monkeypatched SandboxAuditMiddleware to a ToolErrorHandlingMiddleware
+    instance to force the wrong-order condition and asserted that the builder itself raised.
+    That in-builder guard was deleted on purpose: validating here would check a stack that
+    hasn't received extension contributions yet. Building under the same wrong-order condition
+    must no longer raise inside this builder; deerflow.extensions.ordering has the equivalent
+    coverage (see test_extension_ordering.py and test_core_constraints_are_declared).
     """
     from deerflow.agents.middlewares.tool_error_handling_middleware import (
         ToolErrorHandlingMiddleware,
@@ -229,7 +244,7 @@ def test_middleware_ordering_guard_raises_when_progress_is_inner(monkeypatch: py
     _stub_runtime_middleware_imports(monkeypatch)
     # Override the SandboxAuditMiddleware stub with a real ToolErrorHandlingMiddleware so it
     # becomes the FIRST ToolErrorHandlingMiddleware in the list, appearing before
-    # ToolProgressMiddleware and triggering the ordering guard.
+    # ToolProgressMiddleware — the same wrong-order condition the deleted guard used to catch.
     monkeypatch.setitem(
         sys.modules,
         "deerflow.agents.middlewares.sandbox_audit_middleware",
@@ -242,8 +257,9 @@ def test_middleware_ordering_guard_raises_when_progress_is_inner(monkeypatch: py
     app_config = _make_app_config()
     app_config = app_config.model_copy(update={"tool_progress": ToolProgressConfig(enabled=True)})
 
-    with pytest.raises(RuntimeError, match="ToolProgressMiddleware must be outer"):
-        build_lead_runtime_middlewares(app_config=app_config, lazy_init=False)
+    # No raise here: the invariant is enforced by assert_ordering at the composing builder,
+    # not inside _build_runtime_middlewares.
+    build_lead_runtime_middlewares(app_config=app_config, lazy_init=False)
 
 
 def test_lead_runtime_middlewares_thread_app_config_to_tool_error_handling(monkeypatch: pytest.MonkeyPatch):
@@ -681,10 +697,11 @@ def test_subagent_runtime_middlewares_attach_durable_context_before_summarizatio
     sentinel = object()
     captured: dict[str, object] = {}
 
-    def fake_create_summarization_middleware(*, app_config=None, keep=None, skip_memory_flush=False):
+    def fake_create_summarization_middleware(*, app_config=None, keep=None, skip_memory_flush=False, run_model_name=None):
         captured["app_config"] = app_config
         captured["keep"] = keep
         captured["skip_memory_flush"] = skip_memory_flush
+        captured["run_model_name"] = run_model_name
         return sentinel
 
     # summarization is enabled by default False; flip it on so the factory path
@@ -703,6 +720,10 @@ def test_subagent_runtime_middlewares_attach_durable_context_before_summarizatio
     # skip_memory_flush=True so subagent-internal turns are not flushed into the
     # PARENT thread's durable memory (#3875 Phase 3 review).
     assert captured["skip_memory_flush"] is True
+    # Model ownership: the subagent's own resolved model is threaded into the factory
+    # so a distinct-model subagent summarizes with its model, not the parent's — the
+    # subagent context/configurable never carries the child model.
+    assert captured["run_model_name"] == "test-model"
     durable = [middleware for middleware in middlewares if isinstance(middleware, DurableContextMiddleware)]
     assert len(durable) == 1
     # ``_skills_root`` is ``posixpath.normpath(container_path)``, so compare against

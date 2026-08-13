@@ -61,6 +61,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     env:
       TEST_POSTGRES_URI: postgresql://deerflow:deerflow@localhost:5432/deerflow_test?sslmode=disable
@@ -83,4 +92,10 @@ jobs:
 
       - name: Run unit tests of backend
         working-directory: backend
+        env:
+          # Expose the job's Postgres service to the cross-pod dedupe integration
+          # tests (issue #4120), which read DEDUPE_TEST_POSTGRES_URL. Without this
+          # mapping those tests silently skip and the headline capability is never
+          # exercised in CI.
+          DEDUPE_TEST_POSTGRES_URL: ${{ env.TEST_POSTGRES_URI }}
         run: make test

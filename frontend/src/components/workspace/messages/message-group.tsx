@@ -36,7 +36,7 @@ import type { TokenDebugStep } from "@/core/messages/usage-model";
 import {
   extractContentFromMessage,
   extractReasoningContentFromMessage,
-  findToolCallResult,
+  extractTextFromMessage,
 } from "@/core/messages/utils";
 import { extractTitleFromMarkdown } from "@/core/utils/markdown";
 import { env } from "@/env";
@@ -76,6 +76,10 @@ function MessageGroupComponent({
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true",
   );
   const steps = useMemo(() => convertToSteps(messages), [messages]);
+  const stepIndexByStep = useMemo(
+    () => new Map(steps.map((step, index) => [step, index] as const)),
+    [steps],
+  );
   const debugStepByMessageId = useMemo(
     () =>
       new Map(
@@ -104,11 +108,20 @@ function MessageGroupComponent({
   }, [steps]);
   const aboveLastToolCallSteps = useMemo(() => {
     if (lastToolCallStep) {
-      const index = steps.indexOf(lastToolCallStep);
+      const index = stepIndexByStep.get(lastToolCallStep) ?? -1;
       return steps.slice(0, index);
     }
     return [];
-  }, [lastToolCallStep, steps]);
+  }, [lastToolCallStep, stepIndexByStep, steps]);
+  const afterLastToolCallAssistantTextSteps = useMemo(() => {
+    if (!lastToolCallStep) {
+      return [];
+    }
+    const index = stepIndexByStep.get(lastToolCallStep) ?? -1;
+    return steps
+      .slice(index + 1)
+      .filter((step) => step.type === "assistantText");
+  }, [lastToolCallStep, stepIndexByStep, steps]);
   const collapsibleAboveLastToolCallSteps = useMemo(
     () =>
       aboveLastToolCallSteps.filter((step) => step.type !== "assistantText"),
@@ -116,13 +129,32 @@ function MessageGroupComponent({
   );
   const lastReasoningStep = useMemo(() => {
     if (lastToolCallStep) {
-      const index = steps.indexOf(lastToolCallStep);
+      const index = stepIndexByStep.get(lastToolCallStep) ?? -1;
       return steps.slice(index + 1).find((step) => step.type === "reasoning");
     } else {
       const filteredSteps = steps.filter((step) => step.type === "reasoning");
       return filteredSteps[filteredSteps.length - 1];
     }
-  }, [lastToolCallStep, steps]);
+  }, [lastToolCallStep, stepIndexByStep, steps]);
+  // Assistant text emitted after the trailing reasoning is the answer that
+  // reasoning produced, so it renders below the reasoning disclosure. The
+  // settled assistant bubble always paints reasoning above content, and the
+  // streaming processing group has to agree or the two swap places the moment
+  // the turn ends (#4576). Text emitted before that reasoning keeps its
+  // earlier position.
+  const belowLastReasoningAssistantTextSteps = useMemo(() => {
+    if (!lastReasoningStep) {
+      return [];
+    }
+    const index = stepIndexByStep.get(lastReasoningStep) ?? -1;
+    return steps
+      .slice(index + 1)
+      .filter((step) => step.type === "assistantText");
+  }, [lastReasoningStep, stepIndexByStep, steps]);
+  const belowLastReasoningSteps = useMemo(
+    () => new Set<CoTStep>(belowLastReasoningAssistantTextSteps),
+    [belowLastReasoningAssistantTextSteps],
+  );
   const firstEligibleDebugSummaryStepIndexByMessageId = useMemo(() => {
     const firstIndices = new Map<string, number>();
 
@@ -248,7 +280,7 @@ function MessageGroupComponent({
   );
 
   const renderStep = (step: CoTStep) => {
-    const stepIndex = steps.indexOf(step);
+    const stepIndex = stepIndexByStep.get(step) ?? -1;
     if (step.type === "assistantText") {
       return [
         renderDebugSummary(step.messageId, stepIndex),
@@ -314,22 +346,37 @@ function MessageGroupComponent({
           ></ChainOfThoughtStep>
         </Button>
       )}
-      {lastToolCallStep && (
+      {(lastToolCallStep ??
+        steps.some(
+          (step) =>
+            step.type === "assistantText" && !belowLastReasoningSteps.has(step),
+        )) && (
         <ChainOfThoughtContent className="px-4 pb-2">
-          {(showAbove
-            ? aboveLastToolCallSteps
-            : aboveLastToolCallSteps.filter(
-                (step) => step.type === "assistantText",
+          {(lastToolCallStep
+            ? showAbove
+              ? aboveLastToolCallSteps
+              : aboveLastToolCallSteps.filter(
+                  (step) => step.type === "assistantText",
+                )
+            : steps.filter(
+                (step) =>
+                  step.type === "assistantText" &&
+                  !belowLastReasoningSteps.has(step),
               )
           ).flatMap(renderStep)}
-          {renderDebugSummary(
-            lastToolCallStep.messageId,
-            steps.indexOf(lastToolCallStep),
-          )}
           {lastToolCallStep && (
-            <FlipDisplay uniqueKey={lastToolCallStep.id ?? ""}>
-              {renderToolCall(lastToolCallStep, { isLast: true })}
-            </FlipDisplay>
+            <>
+              {renderDebugSummary(
+                lastToolCallStep.messageId,
+                stepIndexByStep.get(lastToolCallStep) ?? -1,
+              )}
+              <FlipDisplay uniqueKey={lastToolCallStep.id ?? ""}>
+                {renderToolCall(lastToolCallStep, { isLast: true })}
+              </FlipDisplay>
+              {afterLastToolCallAssistantTextSteps
+                .filter((step) => !belowLastReasoningSteps.has(step))
+                .flatMap(renderStep)}
+            </>
           )}
         </ChainOfThoughtContent>
       )}
@@ -337,7 +384,7 @@ function MessageGroupComponent({
         <>
           {renderDebugSummary(
             lastReasoningStep.messageId,
-            steps.indexOf(lastReasoningStep),
+            stepIndexByStep.get(lastReasoningStep) ?? -1,
           )}
           <Button
             key={lastReasoningStep.id}
@@ -387,6 +434,11 @@ function MessageGroupComponent({
                   />
                 }
               ></ChainOfThoughtStep>
+            </ChainOfThoughtContent>
+          )}
+          {belowLastReasoningAssistantTextSteps.length > 0 && (
+            <ChainOfThoughtContent className="px-4 pb-2">
+              {belowLastReasoningAssistantTextSteps.flatMap(renderStep)}
             </ChainOfThoughtContent>
           )}
         </>
@@ -895,38 +947,46 @@ interface BrowserViewMeta {
   title?: string;
 }
 
-function findBrowserViewMeta(
-  toolCallId: string,
-  messages: Message[],
-): BrowserViewMeta | undefined {
+function indexToolCallData(messages: Message[]) {
+  const toolCallResults = new Map<string, string>();
+  const browserViews = new Map<string, BrowserViewMeta>();
+
   for (const message of messages) {
-    if (message.type === "tool" && message.tool_call_id === toolCallId) {
-      const meta = (
+    if (message.type !== "tool" || !message.tool_call_id) {
+      continue;
+    }
+
+    const toolCallId = message.tool_call_id;
+    if (!toolCallResults.has(toolCallId)) {
+      const result = extractTextFromMessage(message);
+      if (result) {
+        toolCallResults.set(toolCallId, result);
+      }
+    }
+
+    if (!browserViews.has(toolCallId)) {
+      const browserView = (
         message.additional_kwargs as
           | { browser_view?: BrowserViewMeta }
           | undefined
       )?.browser_view;
-      if (meta && typeof meta.screenshot === "string") {
-        return meta;
+      if (browserView && typeof browserView.screenshot === "string") {
+        browserViews.set(toolCallId, browserView);
       }
     }
   }
-  return undefined;
+
+  return { browserViews, toolCallResults };
 }
 
 function convertToSteps(messages: Message[]): CoTStep[] {
   const steps: CoTStep[] = [];
+  const { browserViews, toolCallResults } = indexToolCallData(messages);
   for (const [messageIndex, message] of messages.entries()) {
     if (message.type === "ai") {
-      const content = extractContentFromMessage(message);
-      if (content && message.tool_calls?.length) {
-        steps.push({
-          id: `${message.id ?? `ai-${messageIndex}`}-content`,
-          messageId: message.id,
-          type: "assistantText",
-          content,
-        });
-      }
+      // Reasoning precedes the answer text it produced, so it is pushed first:
+      // step order is what the group renders in, and a message carrying both
+      // would otherwise paint its answer above its own thinking (#4576).
       const reasoning = extractReasoningContentFromMessage(message);
       if (reasoning) {
         const step: CoTReasoningStep = {
@@ -936,6 +996,15 @@ function convertToSteps(messages: Message[]): CoTStep[] {
           reasoning,
         };
         steps.push(step);
+      }
+      const content = extractContentFromMessage(message);
+      if (content) {
+        steps.push({
+          id: `${message.id ?? `ai-${messageIndex}`}-content`,
+          messageId: message.id,
+          type: "assistantText",
+          content,
+        });
       }
       for (const tool_call of message.tool_calls ?? []) {
         if (tool_call.name === "task") {
@@ -950,7 +1019,7 @@ function convertToSteps(messages: Message[]): CoTStep[] {
         };
         const toolCallId = tool_call.id;
         if (toolCallId) {
-          const toolCallResult = findToolCallResult(toolCallId, messages);
+          const toolCallResult = toolCallResults.get(toolCallId);
           if (toolCallResult) {
             try {
               const json = JSON.parse(toolCallResult);
@@ -959,7 +1028,7 @@ function convertToSteps(messages: Message[]): CoTStep[] {
               step.result = toolCallResult;
             }
           }
-          step.browserView = findBrowserViewMeta(toolCallId, messages);
+          step.browserView = browserViews.get(toolCallId);
         }
         steps.push(step);
       }

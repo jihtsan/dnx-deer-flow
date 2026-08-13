@@ -1,0 +1,1513 @@
+openapi: 3.1.0
+info:
+  title: DeerFlow Nexus Skill Receiver API
+  version: 1.0.0
+  summary: Canonical service-to-service contract for Nexus-managed Skill installation in DeerFlow.
+  description: >-
+    This is the only canonical Nexus Skill receiver contract owned by DeerFlow. It is a
+    service-to-service API for one Nexus binding; browsers must use the Nexus public API.
+    Version 1 defines capability discovery, a controlled user directory, first-install
+    commands for native GLOBAL and exact USER targets, durable operations, and scope-specific
+    Observed state. It does not claim that the provider implementation or release-gated
+    authentication, privacy, global activation, trust, compatibility, or recovery policies
+    are available. Until those gates are approved, providers advertise read_only or unsupported.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: /
+    description: The configured DeerFlow Gateway origin; deployment endpoints are never package authority.
+x-receiver-contract:
+  canonical: true
+  compatibleMajor: 1
+  legacyFallback: forbidden
+  legacyPath: /api/skills
+  versionPolicy:
+    closedEnumsRequireMajor: true
+    optionalResponseFieldsAreAdditive: true
+    additiveErrorCodesRequireMinor: true
+    authorityOrHashChangesRequireMajor: true
+  canonicalCommandHash:
+    algorithm: sha256
+    serialization: RFC 8785 JSON Canonicalization Scheme encoded as UTF-8
+    fields:
+      - actorAudit
+      - expectedObservedState
+      - packageDigest
+      - packageMediaType
+      - packageSizeBytes
+      - policyRevision
+      - receiverBindingId
+      - runtimeSkillName
+      - skillVersionId
+      - target
+    excluded:
+      - credentials
+      - correlationId
+      - receiverOperationId
+      - timestamps
+      - retries
+      - mutableDisplayFields
+  forbiddenAuthorityHeaders:
+    - X-User-ID
+    - X-Actor
+    - X-Environment
+    - X-Middleware-Instance
+    - X-Internal-Token
+  releaseGates:
+    - receiverAuthenticationProfile
+    - userDirectoryPrivacyPolicy
+    - nativeGlobalActivationSemantics
+    - packageTrustPolicy
+    - runtimeCompatibilityGrammar
+    - activationFailureRecovery
+  bindings:
+    http_v1:
+      kind: http
+      authenticationProfiles: [oauth2_client_credentials, mtls, combined]
+      operationIds:
+        capabilities.get: getNexusSkillReceiverCapabilities
+        users.list: listNexusSkillReceiverUsers
+        install.submit: createNexusSkillReceiverOperation
+        operations.get: getNexusSkillReceiverOperation
+        observations.query: queryNexusSkillReceiverObservation
+    ssh_v1:
+      kind: ssh
+      authenticationProfile: ssh_forced_command
+      targetScopes: [USER]
+      forcedCommand: nexus-skill-receiver-v1
+      argvGrammar: '^nexus-skill-receiver-v1 (capabilities\.get|users\.list|install\.submit|operations\.get|observations\.query)$'
+      forbiddenFeatures:
+        - interactive_shell
+        - pty
+        - agent_forwarding
+        - port_forwarding
+        - x11_forwarding
+        - scp
+        - sftp
+      request:
+        jsonSerialization: RFC 8785 JSON Canonicalization Scheme encoded as UTF-8
+        maximumJsonFrameBytes: 65536
+        frameDelimiter: LF
+        packageAction: install.submit
+        packageEncoding: raw_octets
+        packageLengthField: command.packageSizeBytes
+        packageDigestField: command.packageDigest
+        endOfRequest: EOF
+      response:
+        jsonSerialization: RFC 8785 JSON Canonicalization Scheme encoded as UTF-8
+        documentCount: 1
+        terminator: LF_then_EOF
+        stdoutOtherBytes: forbidden
+        successExitCode: 0
+        problemExitCode: 10
+        problemSchema:
+          $ref: '#/components/schemas/ReceiverProblem'
+      actions:
+        capabilities.get:
+          httpOperationId: getNexusSkillReceiverCapabilities
+          serviceActions: [receiver:capabilities:read]
+          requiredFrameFields: [contractVersion, correlationId]
+          optionalFrameFields: []
+          successSchema:
+            $ref: '#/components/schemas/ReceiverCapabilitySnapshot'
+        users.list:
+          httpOperationId: listNexusSkillReceiverUsers
+          serviceActions: [receiver:user-directory:read]
+          requiredFrameFields: [contractVersion, correlationId, limit]
+          optionalFrameFields: [query, cursor]
+          successSchema:
+            $ref: '#/components/schemas/ReceiverUserPage'
+        install.submit:
+          httpOperationId: createNexusSkillReceiverOperation
+          serviceActions: [receiver:install:user]
+          requiredFrameFields: [contractVersion, correlationId, idempotencyKey, requestSha256, command]
+          optionalFrameFields: []
+          commandSchema:
+            $ref: '#/components/schemas/ReceiverInstallCommand'
+          successSchema:
+            $ref: '#/components/schemas/ReceiverOperation'
+          unsupportedTargetProblemCode: GLOBAL_INSTALL_UNSUPPORTED
+        operations.get:
+          httpOperationId: getNexusSkillReceiverOperation
+          serviceActions: [receiver:operations:read]
+          requiredFrameFields: [contractVersion, correlationId, operationId]
+          optionalFrameFields: []
+          successSchema:
+            $ref: '#/components/schemas/ReceiverOperation'
+        observations.query:
+          httpOperationId: queryNexusSkillReceiverObservation
+          serviceActions: [receiver:observe:user]
+          requiredFrameFields: [contractVersion, correlationId, query]
+          optionalFrameFields: []
+          querySchema:
+            $ref: '#/components/schemas/ObservationQuery'
+          successSchema:
+            $ref: '#/components/schemas/ObservedSkillInstallation'
+tags:
+  - name: Nexus Skill Receiver
+    description: Dedicated machine-to-machine receiver operations. This tag is never a browser API.
+paths:
+  /api/v1/nexus/skill-receiver/capabilities:
+    get:
+      operationId: getNexusSkillReceiverCapabilities
+      summary: Read independent receiver capability and authorization dimensions
+      description: >-
+        Returns a snapshot relative to the authenticated machine principal. A healthy connection
+        never implies write support. Every write additionally requires read_write, current freshness,
+        the matching intrinsic capability, the matching granted service action, durable operations,
+        exact package-digest observation, and all release gates. Unapproved service authentication
+        forces read_only or unsupported.
+      tags: [Nexus Skill Receiver]
+      security:
+        - receiverServiceBearer: []
+        - receiverMutualTls: []
+      x-required-service-actions:
+        - receiver:capabilities:read
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Current capability snapshot for the authenticated receiver service principal.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiverCapabilitySnapshot'
+              examples:
+                defaultDeny:
+                  summary: Reachable receiver with unresolved release gates
+                  value:
+                    contractVersion: 1.0.0
+                    transportProfile: ssh_v1
+                    runtimeVersion: 0.9.0
+                    connection: healthy
+                    accessMode: read_only
+                    freshness: current
+                    authorization:
+                      profile: unapproved
+                      grantedActions: []
+                    capabilities:
+                      userDirectory: unsupported
+                      globalInstall: unsupported
+                      userInstall: unsupported
+                      observation: unsupported
+                      activation: unsupported
+                      durableOperations: unsupported
+                      observedPackageDigest: unsupported
+                    blockedBy:
+                      - CAPABILITY_READ_ONLY
+                      - USER_DIRECTORY_UNSUPPORTED
+                      - GLOBAL_INSTALL_UNSUPPORTED
+                      - USER_INSTALL_UNSUPPORTED
+                    observedAt: '2026-08-11T04:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/nexus/skill-receiver/users:
+    get:
+      operationId: listNexusSkillReceiverUsers
+      summary: Search the controlled DeerFlow user directory
+      description: >-
+        Returns a bounded, cursor-paginated, minimal projection. The opaque cursor is bound to
+        the normalized search and authorization context; the provider must not log raw search
+        text or expose a complete email address. This operation is not an exact-user lookup and
+        does not accept a manually supplied user ID. A USER install must revalidate the selected
+        opaque ID when the command is submitted. Unauthorized callers cannot enumerate users.
+      tags: [Nexus Skill Receiver]
+      security:
+        - receiverServiceBearer: []
+        - receiverMutualTls: []
+      x-required-service-actions:
+        - receiver:user-directory:read
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/DirectoryQuery'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Stable page of minimal user projections for the current search snapshot.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiverUserPage'
+              examples:
+                eligibleUsers:
+                  value:
+                    items:
+                      - userId: df-user-42
+                        displayName: Chen Wei
+                        accountLabel: c***@example.com
+                        active: true
+                        installEligible: true
+                    page:
+                      hasMore: false
+                      nextCursor: null
+                    observedAt: '2026-08-11T04:01:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/nexus/skill-receiver/operations:
+    post:
+      operationId: createNexusSkillReceiverOperation
+      summary: Submit a durable first-install operation for GLOBAL or an exact USER
+      description: >-
+        Nexus pre-generates receiverOperationId and sends the immutable package bytes. For USER,
+        DeerFlow revalidates that the opaque directory user exists, is active, and remains eligible
+        immediately before mutation. For GLOBAL, DeerFlow must use a native global Skill space and
+        must not enumerate users. The Idempotency-Key, X-Request-SHA256, receiverOperationId, and
+        canonical command are one durable binding. A same-key replay returns the original outcome;
+        changing the hash, operation ID, or canonical command returns IDEMPOTENCY_KEY_REUSED.
+        HTTP 202 only proves durable acceptance, never installation success.
+      tags: [Nexus Skill Receiver]
+      security:
+        - receiverServiceBearer: []
+        - receiverMutualTls: []
+      x-required-service-actions-by-target:
+        GLOBAL:
+          - receiver:install:global
+        USER:
+          - receiver:install:user
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestSha256'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ReceiverInstallMultipartRequest'
+            encoding:
+              command:
+                contentType: application/json
+              package:
+                contentType: application/zip
+            examples:
+              globalFirstInstall:
+                summary: Native GLOBAL first install
+                value:
+                  command:
+                    receiverOperationId: 39d78cd3-c529-4503-90f4-5077e3aebf91
+                    receiverBindingId: df-primary-prod
+                    skillVersionId: sv.research-assistant.1.0.0
+                    runtimeSkillName: research-assistant
+                    packageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                    packageSizeBytes: 12345
+                    packageMediaType: application/zip
+                    policyRevision: trust-policy-2026-08-11
+                    expectedObservedState: ABSENT
+                    actorAudit:
+                      principalId: 11111111-1111-4111-8111-111111111111
+                      action: 'skill:install_global'
+                    target:
+                      scope: GLOBAL
+                  package: '<binary Skill archive>'
+              selectedUserFirstInstall:
+                summary: USER first install after directory selection
+                value:
+                  command:
+                    receiverOperationId: 49d78cd3-c529-4503-90f4-5077e3aebf92
+                    receiverBindingId: df-primary-prod
+                    skillVersionId: sv.research-assistant.1.0.0
+                    runtimeSkillName: research-assistant
+                    packageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                    packageSizeBytes: 12345
+                    packageMediaType: application/zip
+                    policyRevision: trust-policy-2026-08-11
+                    expectedObservedState: ABSENT
+                    actorAudit:
+                      principalId: 11111111-1111-4111-8111-111111111111
+                      action: 'skill:install_for_user'
+                    target:
+                      scope: USER
+                      deerFlowUserId: df-user-42
+                  package: '<binary Skill archive>'
+      responses:
+        '202':
+          description: The receiver durably bound and accepted the operation; the phase is not success.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Location:
+              $ref: '#/components/headers/OperationLocation'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiverOperation'
+              examples:
+                acceptedUserInstall:
+                  value:
+                    operationId: 49d78cd3-c529-4503-90f4-5077e3aebf92
+                    phase: accepted
+                    freshness: current
+                    target:
+                      scope: USER
+                      deerFlowUserId: df-user-42
+                    skillVersionId: sv.research-assistant.1.0.0
+                    runtimeSkillName: research-assistant
+                    packageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                    observed: null
+                    acceptedAt: '2026-08-11T04:02:00Z'
+                    updatedAt: '2026-08-11T04:02:00Z'
+                    completedAt: null
+                    error: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PackageTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/Timeout'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/nexus/skill-receiver/operations/{operationId}:
+    get:
+      operationId: getNexusSkillReceiverOperation
+      summary: Poll or recover a durable receiver operation
+      description: >-
+        This is the first recovery action after an unknown POST result. Polling never changes
+        a phase because of timeout or transport failure. rejected, failed, and succeeded are
+        terminal. A succeeded operation retains the exact target, version identity, digest,
+        enabled state, and loaded activation evidence that proved success.
+      tags: [Nexus Skill Receiver]
+      security:
+        - receiverServiceBearer: []
+        - receiverMutualTls: []
+      x-required-service-actions:
+        - receiver:operations:read
+      parameters:
+        - $ref: '#/components/parameters/OperationId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Current durable phase and the latest scope-specific Observed snapshot.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiverOperation'
+              examples:
+                succeededForSelectedUser:
+                  value:
+                    operationId: 49d78cd3-c529-4503-90f4-5077e3aebf92
+                    phase: succeeded
+                    freshness: current
+                    target:
+                      scope: USER
+                      deerFlowUserId: df-user-42
+                    skillVersionId: sv.research-assistant.1.0.0
+                    runtimeSkillName: research-assistant
+                    packageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                    observed:
+                      target:
+                        scope: USER
+                        deerFlowUserId: df-user-42
+                      presence: installed
+                      skillVersionId: sv.research-assistant.1.0.0
+                      version: 1.0.0
+                      packageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                      runtimeSkillName: research-assistant
+                      enabled: true
+                      loadState: loaded
+                      freshness: current
+                      observedAt: '2026-08-11T04:04:00Z'
+                    acceptedAt: '2026-08-11T04:02:00Z'
+                    updatedAt: '2026-08-11T04:04:00Z'
+                    completedAt: '2026-08-11T04:04:00Z'
+                    error: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/nexus/skill-receiver/observations/query:
+    post:
+      operationId: queryNexusSkillReceiverObservation
+      summary: Read exact Observed state for one scope, target, and runtime Skill name
+      description: >-
+        This read-only POST carries a closed target union in JSON so GLOBAL can never contain a
+        user ID and USER can never omit one. Global state is never expanded into per-user state,
+        and one user's observation cannot prove another user or GLOBAL. Presence alone is not
+        activation success: the exact installed identity and digest must also be enabled and loaded.
+      tags: [Nexus Skill Receiver]
+      security:
+        - receiverServiceBearer: []
+        - receiverMutualTls: []
+      x-required-service-actions-by-target:
+        GLOBAL:
+          - receiver:observe:global
+        USER:
+          - receiver:observe:user
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationQuery'
+            examples:
+              globalSkill:
+                value:
+                  target:
+                    scope: GLOBAL
+                  runtimeSkillName: research-assistant
+              selectedUserSkill:
+                value:
+                  target:
+                    scope: USER
+                    deerFlowUserId: df-user-42
+                  runtimeSkillName: research-assistant
+      responses:
+        '200':
+          description: Exact scope-specific Observed state, including absence.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedSkillInstallation'
+              examples:
+                installedForSelectedUser:
+                  value:
+                    target:
+                      scope: USER
+                      deerFlowUserId: df-user-42
+                    presence: installed
+                    skillVersionId: sv.research-assistant.1.0.0
+                    version: 1.0.0
+                    packageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                    runtimeSkillName: research-assistant
+                    enabled: true
+                    loadState: loaded
+                    freshness: current
+                    observedAt: '2026-08-11T04:04:00Z'
+                absentFromGlobal:
+                  value:
+                    target:
+                      scope: GLOBAL
+                    presence: absent
+                    skillVersionId: null
+                    version: null
+                    packageDigest: null
+                    runtimeSkillName: research-assistant
+                    enabled: null
+                    loadState: absent
+                    freshness: current
+                    observedAt: '2026-08-11T04:04:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    receiverServiceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: OAuth2 access token
+      description: >-
+        Dedicated machine-principal credential from an approved profile. Browser cookies, DeerFlow
+        user passwords, and generic internal tokens are forbidden. Publishing this scheme does not
+        approve the OAuth2 client-credentials release gate.
+    receiverMutualTls:
+      type: mutualTLS
+      description: >-
+        Dedicated machine identity from an approved mTLS or combined profile. Publishing this
+        scheme does not approve certificate issuance, rotation, revocation, or service scopes.
+  parameters:
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: true
+      description: Effective Nexus correlation ID, unchanged for the durable operation.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:/-]+$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Durable operation key. It is never authorization material and must not be logged in full.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 160
+        pattern: '^[A-Za-z0-9._:-]+$'
+    RequestSha256:
+      name: X-Request-SHA256
+      in: header
+      required: true
+      description: SHA-256 of the RFC 8785 canonical command defined by x-receiver-contract.
+      schema:
+        type: string
+        pattern: '^sha256:[a-f0-9]{64}$'
+    OperationId:
+      name: operationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DirectoryQuery:
+      name: query
+      in: query
+      required: false
+      description: Bounded name or contract-approved masked-account search; never logged or echoed raw.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor bound to the normalized query and authorization context.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 500
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+  headers:
+    CorrelationId:
+      description: Effective correlation ID returned unchanged or generated by the trusted caller boundary.
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:/-]+$'
+    OperationLocation:
+      description: Canonical URI for the pre-generated durable receiver operation.
+      required: true
+      schema:
+        type: string
+        format: uri-reference
+    RetryAfter:
+      description: Polling hint in seconds. It never changes retryability or the operation phase.
+      schema:
+        type: integer
+        minimum: 0
+  schemas:
+    SemVer:
+      type: string
+      pattern: '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'
+    Sha256Digest:
+      type: string
+      pattern: '^sha256:[a-f0-9]{64}$'
+    ReceiverBindingId:
+      type: string
+      minLength: 1
+      maxLength: 200
+      pattern: '^[A-Za-z0-9._:-]+$'
+    SkillVersionId:
+      type: string
+      minLength: 1
+      maxLength: 200
+      pattern: '^[A-Za-z0-9._:-]+$'
+    RuntimeSkillName:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$'
+    DeerFlowUserId:
+      type: string
+      minLength: 1
+      maxLength: 200
+      pattern: '^[A-Za-z0-9._:-]+$'
+      description: Opaque, instance-local ID obtained from the current controlled directory.
+    ReceiverConnectionStatus:
+      type: string
+      enum: [healthy, unreachable, unauthorized, incompatible, not_ready]
+    ReceiverTransportProfile:
+      type: string
+      enum: [http_v1, ssh_v1]
+    ReceiverAccessMode:
+      type: string
+      enum: [read_write, read_only, unsupported]
+    ReceiverFreshness:
+      type: string
+      enum: [current, stale, unavailable]
+    CapabilitySupport:
+      type: string
+      enum: [supported, unsupported]
+    ReceiverObservationMode:
+      type: string
+      enum: [global_and_user, global_only, user_only, unsupported]
+    ReceiverActivationMode:
+      type: string
+      enum: [global_and_user, global_only, user_only, unsupported]
+    ReceiverAuthenticationProfile:
+      type: string
+      enum: [unapproved, oauth2_client_credentials, mtls, combined, ssh_forced_command]
+    ReceiverServiceAction:
+      type: string
+      enum:
+        - receiver:capabilities:read
+        - receiver:user-directory:read
+        - receiver:install:global
+        - receiver:install:user
+        - receiver:observe:global
+        - receiver:observe:user
+        - receiver:operations:read
+    ReceiverAuthorizationSnapshot:
+      type: object
+      additionalProperties: false
+      required: [profile, grantedActions]
+      properties:
+        profile:
+          $ref: '#/components/schemas/ReceiverAuthenticationProfile'
+        grantedActions:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ReceiverServiceAction'
+      not:
+        properties:
+          profile:
+            const: unapproved
+          grantedActions:
+            minItems: 1
+        required: [profile, grantedActions]
+    ReceiverCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - userDirectory
+        - globalInstall
+        - userInstall
+        - observation
+        - activation
+        - durableOperations
+        - observedPackageDigest
+      properties:
+        userDirectory:
+          $ref: '#/components/schemas/CapabilitySupport'
+        globalInstall:
+          $ref: '#/components/schemas/CapabilitySupport'
+        userInstall:
+          $ref: '#/components/schemas/CapabilitySupport'
+        observation:
+          $ref: '#/components/schemas/ReceiverObservationMode'
+        activation:
+          $ref: '#/components/schemas/ReceiverActivationMode'
+        durableOperations:
+          $ref: '#/components/schemas/CapabilitySupport'
+        observedPackageDigest:
+          $ref: '#/components/schemas/CapabilitySupport'
+    ReceiverCapabilitySnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - contractVersion
+        - transportProfile
+        - runtimeVersion
+        - connection
+        - accessMode
+        - freshness
+        - authorization
+        - capabilities
+        - blockedBy
+        - observedAt
+      properties:
+        contractVersion:
+          $ref: '#/components/schemas/SemVer'
+        transportProfile:
+          $ref: '#/components/schemas/ReceiverTransportProfile'
+        runtimeVersion:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 100
+            - type: 'null'
+        connection:
+          $ref: '#/components/schemas/ReceiverConnectionStatus'
+        accessMode:
+          $ref: '#/components/schemas/ReceiverAccessMode'
+        freshness:
+          $ref: '#/components/schemas/ReceiverFreshness'
+        authorization:
+          $ref: '#/components/schemas/ReceiverAuthorizationSnapshot'
+        capabilities:
+          $ref: '#/components/schemas/ReceiverCapabilities'
+        blockedBy:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ReceiverErrorCode'
+        observedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+      not:
+        anyOf:
+          - properties:
+              accessMode:
+                const: read_write
+              authorization:
+                properties:
+                  profile:
+                    const: unapproved
+                required: [profile]
+            required: [accessMode, authorization]
+          - properties:
+              transportProfile:
+                const: ssh_v1
+              authorization:
+                properties:
+                  profile:
+                    enum: [oauth2_client_credentials, mtls, combined]
+                required: [profile]
+            required: [transportProfile, authorization]
+          - properties:
+              transportProfile:
+                const: http_v1
+              authorization:
+                properties:
+                  profile:
+                    const: ssh_forced_command
+                required: [profile]
+            required: [transportProfile, authorization]
+    ReceiverUser:
+      type: object
+      additionalProperties: false
+      required: [userId, displayName, accountLabel, active, installEligible]
+      properties:
+        userId:
+          $ref: '#/components/schemas/DeerFlowUserId'
+        displayName:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 200
+            - type: 'null'
+        accountLabel:
+          description: Masked account label. A value containing @ must also contain an asterisk before @.
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 200
+              pattern: '^(?:[^@\s]+|[^@\s]*\*[^@\s]*@[^@\s]+)$'
+            - type: 'null'
+        active:
+          type: boolean
+        installEligible:
+          type: boolean
+    CursorPageWithMore:
+      type: object
+      additionalProperties: false
+      required: [hasMore, nextCursor]
+      properties:
+        hasMore:
+          const: true
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 500
+    CursorPageEnd:
+      type: object
+      additionalProperties: false
+      required: [hasMore, nextCursor]
+      properties:
+        hasMore:
+          const: false
+        nextCursor:
+          type: 'null'
+    CursorPage:
+      oneOf:
+        - $ref: '#/components/schemas/CursorPageWithMore'
+        - $ref: '#/components/schemas/CursorPageEnd'
+    ReceiverUserPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, observedAt]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ReceiverUser'
+        page:
+          $ref: '#/components/schemas/CursorPage'
+        observedAt:
+          type: string
+          format: date-time
+    InstallationScope:
+      type: string
+      enum: [GLOBAL, USER]
+    GlobalInstallationTarget:
+      type: object
+      additionalProperties: false
+      required: [scope]
+      properties:
+        scope:
+          allOf:
+            - $ref: '#/components/schemas/InstallationScope'
+            - const: GLOBAL
+    UserInstallationTarget:
+      type: object
+      additionalProperties: false
+      required: [scope, deerFlowUserId]
+      properties:
+        scope:
+          allOf:
+            - $ref: '#/components/schemas/InstallationScope'
+            - const: USER
+        deerFlowUserId:
+          $ref: '#/components/schemas/DeerFlowUserId'
+    InstallationTarget:
+      oneOf:
+        - $ref: '#/components/schemas/GlobalInstallationTarget'
+        - $ref: '#/components/schemas/UserInstallationTarget'
+      discriminator:
+        propertyName: scope
+        mapping:
+          GLOBAL: '#/components/schemas/GlobalInstallationTarget'
+          USER: '#/components/schemas/UserInstallationTarget'
+    GlobalActorAudit:
+      type: object
+      additionalProperties: false
+      required: [principalId, action]
+      description: Audit attribution only. It never grants receiver authority or selects a target.
+      properties:
+        principalId:
+          type: string
+          format: uuid
+        action:
+          const: 'skill:install_global'
+    UserActorAudit:
+      type: object
+      additionalProperties: false
+      required: [principalId, action]
+      description: Audit attribution only. It never grants receiver authority or selects a target.
+      properties:
+        principalId:
+          type: string
+          format: uuid
+        action:
+          const: 'skill:install_for_user'
+    GlobalReceiverInstallCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - receiverOperationId
+        - receiverBindingId
+        - skillVersionId
+        - runtimeSkillName
+        - packageDigest
+        - packageSizeBytes
+        - packageMediaType
+        - policyRevision
+        - expectedObservedState
+        - actorAudit
+        - target
+      properties:
+        receiverOperationId:
+          type: string
+          format: uuid
+        receiverBindingId:
+          $ref: '#/components/schemas/ReceiverBindingId'
+        skillVersionId:
+          $ref: '#/components/schemas/SkillVersionId'
+        runtimeSkillName:
+          $ref: '#/components/schemas/RuntimeSkillName'
+        packageDigest:
+          $ref: '#/components/schemas/Sha256Digest'
+        packageSizeBytes:
+          type: integer
+          minimum: 1
+        packageMediaType:
+          const: application/zip
+        policyRevision:
+          type: string
+          minLength: 1
+          maxLength: 200
+        expectedObservedState:
+          const: ABSENT
+        actorAudit:
+          $ref: '#/components/schemas/GlobalActorAudit'
+        target:
+          $ref: '#/components/schemas/GlobalInstallationTarget'
+    UserReceiverInstallCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - receiverOperationId
+        - receiverBindingId
+        - skillVersionId
+        - runtimeSkillName
+        - packageDigest
+        - packageSizeBytes
+        - packageMediaType
+        - policyRevision
+        - expectedObservedState
+        - actorAudit
+        - target
+      properties:
+        receiverOperationId:
+          type: string
+          format: uuid
+        receiverBindingId:
+          $ref: '#/components/schemas/ReceiverBindingId'
+        skillVersionId:
+          $ref: '#/components/schemas/SkillVersionId'
+        runtimeSkillName:
+          $ref: '#/components/schemas/RuntimeSkillName'
+        packageDigest:
+          $ref: '#/components/schemas/Sha256Digest'
+        packageSizeBytes:
+          type: integer
+          minimum: 1
+        packageMediaType:
+          const: application/zip
+        policyRevision:
+          type: string
+          minLength: 1
+          maxLength: 200
+        expectedObservedState:
+          const: ABSENT
+        actorAudit:
+          $ref: '#/components/schemas/UserActorAudit'
+        target:
+          $ref: '#/components/schemas/UserInstallationTarget'
+    ReceiverInstallCommand:
+      description: >-
+        Closed command union. The actorAudit action and target scope are structurally bound.
+        Credentials, endpoint, environment, package URL, and mutable display fields are forbidden.
+      oneOf:
+        - $ref: '#/components/schemas/GlobalReceiverInstallCommand'
+        - $ref: '#/components/schemas/UserReceiverInstallCommand'
+    ReceiverInstallMultipartRequest:
+      type: object
+      additionalProperties: false
+      required: [command, package]
+      properties:
+        command:
+          $ref: '#/components/schemas/ReceiverInstallCommand'
+        package:
+          type: string
+          format: binary
+          description: Raw immutable Skill archive. DeerFlow recomputes packageDigest over these bytes.
+    ObservationQuery:
+      type: object
+      additionalProperties: false
+      required: [target, runtimeSkillName]
+      properties:
+        target:
+          $ref: '#/components/schemas/InstallationTarget'
+        runtimeSkillName:
+          $ref: '#/components/schemas/RuntimeSkillName'
+    ObservedPresence:
+      type: string
+      enum: [installed, absent]
+    SkillLoadState:
+      type: string
+      enum: [loaded, load_failed, disabled, unknown, absent]
+    ObservedInstalledSkill:
+      type: object
+      additionalProperties: false
+      required:
+        - target
+        - presence
+        - skillVersionId
+        - version
+        - packageDigest
+        - runtimeSkillName
+        - enabled
+        - loadState
+        - freshness
+        - observedAt
+      properties:
+        target:
+          $ref: '#/components/schemas/InstallationTarget'
+        presence:
+          allOf:
+            - $ref: '#/components/schemas/ObservedPresence'
+            - const: installed
+        skillVersionId:
+          $ref: '#/components/schemas/SkillVersionId'
+        version:
+          type: string
+          minLength: 1
+          maxLength: 100
+        packageDigest:
+          $ref: '#/components/schemas/Sha256Digest'
+        runtimeSkillName:
+          $ref: '#/components/schemas/RuntimeSkillName'
+        enabled:
+          type: boolean
+        loadState:
+          allOf:
+            - $ref: '#/components/schemas/SkillLoadState'
+            - enum: [loaded, load_failed, disabled, unknown]
+        freshness:
+          $ref: '#/components/schemas/ReceiverFreshness'
+        observedAt:
+          type: string
+          format: date-time
+    ObservedAbsentSkill:
+      type: object
+      additionalProperties: false
+      required:
+        - target
+        - presence
+        - skillVersionId
+        - version
+        - packageDigest
+        - runtimeSkillName
+        - enabled
+        - loadState
+        - freshness
+        - observedAt
+      properties:
+        target:
+          $ref: '#/components/schemas/InstallationTarget'
+        presence:
+          allOf:
+            - $ref: '#/components/schemas/ObservedPresence'
+            - const: absent
+        skillVersionId:
+          type: 'null'
+        version:
+          type: 'null'
+        packageDigest:
+          type: 'null'
+        runtimeSkillName:
+          $ref: '#/components/schemas/RuntimeSkillName'
+        enabled:
+          type: 'null'
+        loadState:
+          allOf:
+            - $ref: '#/components/schemas/SkillLoadState'
+            - const: absent
+        freshness:
+          $ref: '#/components/schemas/ReceiverFreshness'
+        observedAt:
+          type: string
+          format: date-time
+    ObservedSkillInstallation:
+      oneOf:
+        - $ref: '#/components/schemas/ObservedInstalledSkill'
+        - $ref: '#/components/schemas/ObservedAbsentSkill'
+      discriminator:
+        propertyName: presence
+        mapping:
+          installed: '#/components/schemas/ObservedInstalledSkill'
+          absent: '#/components/schemas/ObservedAbsentSkill'
+    ReceiverOperationPhase:
+      type: string
+      enum: [accepted, validating, installing, activating, succeeded, rejected, failed]
+      x-terminal-values: [succeeded, rejected, failed]
+      x-transitions:
+        accepted: [validating, rejected]
+        validating: [installing, rejected]
+        installing: [activating, failed]
+        activating: [succeeded, failed]
+        succeeded: []
+        rejected: []
+        failed: []
+    ReceiverOperationError:
+      type: object
+      additionalProperties: false
+      required: [code, title, detail, retryable, recoveryAction]
+      properties:
+        code:
+          $ref: '#/components/schemas/ReceiverErrorCode'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        detail:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Safe summary only; no raw scanner output, path, credential, or upstream body.
+        retryable:
+          type: boolean
+        recoveryAction:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 500
+            - type: 'null'
+    ReceiverOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - phase
+        - freshness
+        - target
+        - skillVersionId
+        - runtimeSkillName
+        - packageDigest
+        - observed
+        - acceptedAt
+        - updatedAt
+        - completedAt
+        - error
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        phase:
+          $ref: '#/components/schemas/ReceiverOperationPhase'
+        freshness:
+          $ref: '#/components/schemas/ReceiverFreshness'
+        target:
+          $ref: '#/components/schemas/InstallationTarget'
+        skillVersionId:
+          $ref: '#/components/schemas/SkillVersionId'
+        runtimeSkillName:
+          $ref: '#/components/schemas/RuntimeSkillName'
+        packageDigest:
+          $ref: '#/components/schemas/Sha256Digest'
+        observed:
+          anyOf:
+            - $ref: '#/components/schemas/ObservedSkillInstallation'
+            - type: 'null'
+        acceptedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/ReceiverOperationError'
+            - type: 'null'
+    ReceiverErrorCode:
+      type: string
+      pattern: '^[A-Z][A-Z0-9_]*$'
+      description: >-
+        Open for additive v1 codes. The values below are the stable provider registry.
+        Nexus maps every value explicitly; an unknown or malformed provider error becomes
+        RECEIVER_RESPONSE_INVALID at the Nexus public boundary and never an accidental success.
+      x-known-values:
+        - AUTHENTICATION_REQUIRED
+        - FORBIDDEN
+        - RATE_LIMITED
+        - RECEIVER_NOT_READY
+        - CAPABILITY_UNSUPPORTED
+        - CAPABILITY_READ_ONLY
+        - USER_DIRECTORY_UNSUPPORTED
+        - USER_DIRECTORY_UNAVAILABLE
+        - GLOBAL_INSTALL_UNSUPPORTED
+        - USER_INSTALL_UNSUPPORTED
+        - GLOBAL_ACTIVATION_UNSUPPORTED
+        - TARGET_USER_NOT_FOUND
+        - TARGET_USER_NOT_ELIGIBLE
+        - INVALID_INSTALLATION_TARGET
+        - SKILL_INCOMPATIBLE
+        - COMPATIBILITY_UNKNOWN
+        - TRUST_POLICY_NOT_CONFIGURED
+        - SIGNATURE_REQUIRED
+        - PACKAGE_TOO_LARGE
+        - PACKAGE_MEDIA_TYPE_UNSUPPORTED
+        - PACKAGE_INVALID
+        - PACKAGE_MANIFEST_MISMATCH
+        - DIGEST_MISMATCH
+        - SKILL_ALREADY_INSTALLED
+        - SKILL_NAME_CONFLICT
+        - OBSERVED_STATE_CONFLICT
+        - IDEMPOTENCY_KEY_REUSED
+        - ACTIVATION_FAILED
+        - UPSTREAM_TIMEOUT
+        - INTERNAL_ERROR
+    ReceiverProblem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, detail, instance, correlationId, timestamp, retryable]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          $ref: '#/components/schemas/ReceiverErrorCode'
+        detail:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Safe display text; raw provider diagnostics remain restricted and redacted.
+        instance:
+          type: string
+          format: uri-reference
+        correlationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._:/-]+$'
+        timestamp:
+          type: string
+          format: date-time
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: string
+            maxLength: 500
+        retryable:
+          type: boolean
+        recoveryAction:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 500
+            - type: 'null'
+        operationId:
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+  responses:
+    Unauthorized:
+      description: Dedicated receiver machine authentication is absent or invalid.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+          examples:
+            authenticationRequired:
+              value:
+                type: /problems/authentication-required
+                title: Authentication required
+                status: 401
+                code: AUTHENTICATION_REQUIRED
+                detail: A dedicated receiver service identity is required.
+                instance: /api/v1/nexus/skill-receiver/problems/01J5AUTHN
+                correlationId: receiver-authn-01
+                timestamp: '2026-08-11T04:05:00Z'
+                retryable: false
+    Forbidden:
+      description: The authenticated machine principal lacks a required receiver action.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+          examples:
+            serviceActionMissing:
+              value:
+                type: /problems/forbidden
+                title: Receiver action forbidden
+                status: 403
+                code: FORBIDDEN
+                detail: The receiver service principal lacks the required action.
+                instance: /api/v1/nexus/skill-receiver/problems/01J5AUTHZ
+                correlationId: receiver-authz-01
+                timestamp: '2026-08-11T04:05:00Z'
+                retryable: false
+    NotFound:
+      description: The exact receiver operation or selected directory user does not exist.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+    Conflict:
+      description: Capability, target eligibility, first-install state, or idempotency conflict.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+          examples:
+            idempotencyKeyReused:
+              value:
+                type: /problems/idempotency-key-reused
+                title: Idempotency key already bound
+                status: 409
+                code: IDEMPOTENCY_KEY_REUSED
+                detail: The idempotency key is bound to another operation or canonical request.
+                instance: /api/v1/nexus/skill-receiver/problems/01J5IDEMPOTENCY
+                correlationId: skill-install-20260811-02
+                timestamp: '2026-08-11T04:05:00Z'
+                retryable: false
+            targetUserNotEligible:
+              value:
+                type: /problems/target-user-not-eligible
+                title: Target user is not eligible
+                status: 409
+                code: TARGET_USER_NOT_ELIGIBLE
+                detail: The selected user cannot receive Skill installations.
+                instance: /api/v1/nexus/skill-receiver/problems/01J5TARGET
+                correlationId: skill-install-20260811-03
+                timestamp: '2026-08-11T04:05:00Z'
+                retryable: false
+    PackageTooLarge:
+      description: Package exceeds the reviewed receiver policy limit.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+    UnsupportedMediaType:
+      description: Package media type is not supported.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+    Unprocessable:
+      description: Target shape, package, manifest, digest, compatibility, or policy validation failed.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+          examples:
+            invalidGlobalTarget:
+              value:
+                type: /problems/invalid-installation-target
+                title: Invalid installation target
+                status: 422
+                code: INVALID_INSTALLATION_TARGET
+                detail: GLOBAL installation must not include deerFlowUserId.
+                instance: /api/v1/nexus/skill-receiver/problems/01J5GLOBALUSER
+                correlationId: skill-install-invalid-01
+                timestamp: '2026-08-11T04:05:00Z'
+                retryable: false
+                fieldErrors:
+                  target.deerFlowUserId: Must be absent when scope is GLOBAL.
+            digestMismatch:
+              value:
+                type: /problems/digest-mismatch
+                title: Package digest mismatch
+                status: 422
+                code: DIGEST_MISMATCH
+                detail: The uploaded package bytes do not match the declared digest.
+                instance: /api/v1/nexus/skill-receiver/problems/01J5DIGEST
+                correlationId: skill-install-invalid-02
+                timestamp: '2026-08-11T04:05:00Z'
+                retryable: false
+    RateLimited:
+      description: A bounded directory or command rate limit was reached.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+    Unavailable:
+      description: Receiver or requested provider capability is temporarily unavailable or not ready.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+    Timeout:
+      description: The result is unknown; no terminal phase is fabricated.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'
+    InternalError:
+      description: Unclassified receiver failure with restricted diagnostics.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ReceiverProblem'

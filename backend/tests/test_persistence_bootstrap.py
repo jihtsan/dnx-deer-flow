@@ -49,7 +49,7 @@ from deerflow.persistence.migrations._helpers import _normalize_default
 asyncio_test = pytest.mark.asyncio
 
 
-HEAD = "0009_repair_knowledge_retry_requests"
+HEAD = "0013_nexus_receiver_operations"
 BASELINE = "0001_baseline"
 
 
@@ -160,6 +160,10 @@ async def test_empty_branch_creates_all_and_stamps_head(tmp_path: Path) -> None:
         }:
             assert required in tables, f"missing table: {required}"
         assert "token_usage_by_model" in await _runs_columns(engine)
+        assert "cancel_action" in await _runs_columns(engine)
+        assert "cancel_requested_at" in await _runs_columns(engine)
+        operation_kind = await _runs_column_meta(engine, "operation_kind")
+        assert operation_kind["nullable"] is False
         assert await _alembic_version(engine) == HEAD
         # The partial unique index on (thread_id WHERE status IN pending/running)
         # must exist on a fresh DB because the empty-branch stamps head without
@@ -627,6 +631,7 @@ async def test_0006_downgrade_maps_terminal_states_before_restoring_0005_schema(
         assert statuses == ["failed", "failed"]
         assert "attempt_count" not in columns
         assert "knowledge_ingestion_retry_requests" not in await _table_names(engine)
+        # Downgrading one side of the merged graph restores both branch heads.
         assert await _alembic_versions(engine) == {
             "0005_knowledge_documents",
             "0006_agents",

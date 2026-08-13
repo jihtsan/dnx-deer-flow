@@ -1,0 +1,87 @@
+# Acceptance-only overlay. It is inert unless the explicit acceptance gate is
+# true and the frozen external manifest plus synthetic Secret files are mounted.
+services:
+  nexus-receiver-postgres:
+    profiles: ["nexus-receiver-ssh"]
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_DB: deerflow_acceptance
+      POSTGRES_USER: deerflow_acceptance
+      POSTGRES_PASSWORD_FILE: /run/secrets/nexus_receiver_acceptance_postgres_password
+    secrets:
+      - nexus_receiver_acceptance_postgres_password
+    volumes:
+      - nexus-receiver-acceptance-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deerflow_acceptance -d deerflow_acceptance"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - deer-flow
+    restart: "no"
+
+  gateway:
+    build:
+      args:
+        UV_EXTRAS: postgres
+    command: >-
+      sh -c "cd backend && PYTHONPATH=. .venv/bin/python -m
+      app.gateway.nexus_receiver.sshd_runtime_environment
+      --postgres-password-file /run/secrets/nexus_receiver_acceptance_postgres_password --
+      .venv/bin/uvicorn
+      app.gateway.nexus_receiver.acceptance_app:app
+      --host 0.0.0.0 --port 8001 --workers 1"
+    environment:
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED: ${DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED:-false}
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PROFILE: skill-hub-user-v1
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PREPARATION_REVISION: ad8600e3ec4282c33fba896be2bb62f1d6674f3b
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_HARNESS_REVISION: ${DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_HARNESS_REVISION:?set the reviewed Deer Flow harness revision}
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_MANIFEST: /run/nexus-receiver-acceptance/manifest.json
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PRINCIPAL_MAP_FILE: /run/secrets/nexus_receiver_principal_map
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PACKAGE_STAGE: /run/nexus-receiver-acceptance/packages
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_FAULT_DIR: /run/nexus-receiver-acceptance/faults
+      GATEWAY_WORKERS: "1"
+    volumes:
+      - ${DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_MANIFEST_FILE:?mount the materialized acceptance manifest}:/run/nexus-receiver-acceptance/manifest.json:ro
+      - nexus-receiver-acceptance-packages:/run/nexus-receiver-acceptance/packages
+      - nexus-receiver-acceptance-faults:/run/nexus-receiver-acceptance/faults
+    secrets:
+      - nexus_receiver_principal_map
+      - nexus_receiver_acceptance_postgres_password
+    depends_on:
+      nexus-receiver-postgres:
+        condition: service_healthy
+
+  nexus-receiver-sshd:
+    build:
+      args:
+        UV_EXTRAS: postgres
+    environment:
+      NEXUS_RECEIVER_FORCED_COMMAND_PROFILE: acceptance
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED: ${DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED:-false}
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PROFILE: skill-hub-user-v1
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PREPARATION_REVISION: ad8600e3ec4282c33fba896be2bb62f1d6674f3b
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_HARNESS_REVISION: ${DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_HARNESS_REVISION:?set the reviewed Deer Flow harness revision}
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_MANIFEST: /run/nexus-receiver-acceptance/manifest.json
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PRINCIPAL_MAP_FILE: /run/secrets/nexus_receiver_principal_map
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_PACKAGE_STAGE: /run/nexus-receiver-acceptance/packages
+      DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_FAULT_DIR: /run/nexus-receiver-acceptance/faults
+      GATEWAY_WORKERS: "1"
+    volumes:
+      - ${DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_MANIFEST_FILE:?mount the materialized acceptance manifest}:/run/nexus-receiver-acceptance/manifest.json:ro
+      - nexus-receiver-acceptance-packages:/run/nexus-receiver-acceptance/packages
+      - nexus-receiver-acceptance-faults:/run/nexus-receiver-acceptance/faults
+    secrets:
+      - nexus_receiver_host_key
+      - nexus_receiver_principal_map
+      - nexus_receiver_acceptance_postgres_password
+
+volumes:
+  nexus-receiver-acceptance-postgres:
+  nexus-receiver-acceptance-packages:
+  nexus-receiver-acceptance-faults:
+
+secrets:
+  nexus_receiver_acceptance_postgres_password:
+    file: ${DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_POSTGRES_PASSWORD_FILE:?provide an external acceptance PostgreSQL password file}

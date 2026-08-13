@@ -10,8 +10,9 @@ from app.gateway.auth_disabled import warn_if_auth_disabled_enabled
 from app.gateway.auth_middleware import AuthMiddleware
 from app.gateway.browser_capability import ensure_browser_runtime_available
 from app.gateway.config import get_gateway_config
-from app.gateway.csrf_middleware import CSRFMiddleware, get_configured_cors_origins
+from app.gateway.csrf_middleware import CORS_EXPOSED_HEADERS, CSRFMiddleware, get_configured_cors_origins
 from app.gateway.deps import langgraph_runtime
+from app.gateway.nexus_receiver import install_nexus_receiver_provider
 from app.gateway.routers import (
     agents,
     artifacts,
@@ -25,6 +26,7 @@ from app.gateway.routers import (
     feedback,
     github_webhooks,
     input_polish,
+    integrations,
     knowledge_data,
     knowledge_documents,
     knowledge_scope,
@@ -61,6 +63,10 @@ logger = logging.getLogger(__name__)
 # Bounds worker exit time so uvicorn's reload supervisor does not keep
 # firing signals into a worker that is stuck waiting for shutdown cleanup.
 _SHUTDOWN_HOOK_TIMEOUT_SECONDS = 5.0
+
+# The retrieval index is derived state, so shutdown only waits briefly for its
+# startup rebuild. The canonical memory flush keeps its full configured budget.
+_RETRIEVAL_WARM_SHUTDOWN_TIMEOUT_SECONDS = 1.0
 
 
 async def _ensure_admin_user(app: FastAPI) -> None:
@@ -172,6 +178,18 @@ async def _migrate_orphaned_threads(store, admin_user_id: str) -> int:
     return migrated
 
 
+async def _warm_memory_retrieval(manager) -> None:
+    """Rebuild the derived retrieval index without delaying Gateway readiness."""
+    try:
+        rebuilt = await asyncio.to_thread(manager.warm_retrieval)
+        if rebuilt:
+            logger.info("Memory retrieval index rebuilt successfully")
+        else:
+            logger.warning("Memory retrieval index rebuild failed; scoped searches will retry lazily")
+    except Exception:
+        logger.warning("Memory retrieval index rebuild skipped", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
@@ -196,6 +214,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = get_gateway_config()
     logger.info(f"Starting API Gateway on {config.host}:{config.port}")
 
+    from deerflow.skills.projection import ensure_public_skill_projection
+
+    public_projection_ready = await asyncio.to_thread(ensure_public_skill_projection, app_config=startup_config)
+    if public_projection_ready:
+        logger.info("Ensured the public skill projection; user projections repair lazily on sandbox acquire")
+
     # Agent observability (Monocle). Off by default; enabled with
     # MONOCLE_TRACING. Initialized here at startup — not at import time — so a
     # plain `import deerflow.agents` never installs a process-global tracer.
@@ -205,6 +229,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         setup_monocle_tracing_if_enabled()
     except Exception:  # observability must never break startup
         logger.exception("Monocle tracing setup failed; continuing without it")
+
+    # Rebuild the derived memory retrieval index in the background. Scoped
+    # searches remain correct while this runs because DeerMem lazily rebuilds
+    # the requested scope when the full warm-up has not completed yet.
+    retrieval_warm_task: asyncio.Task[None] | None = None
+    try:
+        from deerflow.agents.memory import get_memory_manager
+
+        if startup_config.memory.enabled:
+            manager = await asyncio.to_thread(get_memory_manager)
+            warm_retrieval = getattr(manager, "warm_retrieval", None)
+            if callable(warm_retrieval):
+                retrieval_warm_task = asyncio.create_task(
+                    _warm_memory_retrieval(manager),
+                    name="memory-retrieval-warm-up",
+                )
+        else:
+            logger.info("Memory is disabled; skipping retrieval index rebuild")
+    except Exception:
+        logger.warning("Memory retrieval index rebuild skipped", exc_info=True)
 
     # Pre-warm tiktoken encoding cache so the first memory-injection request
     # never blocks on the BPE data download (which hits an OpenAI/Azure URL
@@ -218,7 +262,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from deerflow.agents.memory import get_memory_manager
 
-        manager = get_memory_manager()
+        manager = await asyncio.to_thread(get_memory_manager)
         warmed = await asyncio.wait_for(
             asyncio.to_thread(manager.warm),
             timeout=5,
@@ -253,7 +297,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             from app.channels.service import start_channel_service
 
-            channel_service = await start_channel_service(startup_config)
+            # Closure over `app` (mirrors ScheduledTaskService's `launch_run`
+            # below) rather than resolving `app.state.stream_bridge` here
+            # directly: `stream_bridge` is a STARTUP_ONLY_FIELDS singleton set
+            # once, above, by `langgraph_runtime(app, startup_config)`, so
+            # either shape is safe by construction — the closure is just the
+            # more defensive/consistent-with-precedent form, and it is what
+            # ChannelManager's follow-up-drain watcher (issue #4121 Slice 2)
+            # uses to reach the same StreamBridge every other run consumer
+            # goes through `get_stream_bridge(request)` for.
+            channel_service = await start_channel_service(
+                startup_config,
+                get_stream_bridge=lambda: getattr(app.state, "stream_bridge", None),
+            )
             logger.info("Channel service started: %s", channel_service.get_status())
         except Exception:
             logger.exception("No IM channels configured or channel service failed to start")
@@ -276,6 +332,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     await scheduled_task_service.start()
         except Exception:
             logger.exception("Failed to initialize scheduled task service")
+
+        try:
+            from app.mcp_tasks import McpTaskService
+            from deerflow.mcp.tasks import McpTaskDriverRegistry
+
+            if getattr(app.state, "mcp_task_repo", None) is not None:
+                mcp_task_drivers = McpTaskDriverRegistry()
+                mcp_task_service = McpTaskService(
+                    repository=app.state.mcp_task_repo,
+                    drivers=mcp_task_drivers,
+                    poll_interval_seconds=startup_config.mcp_tasks.poll_interval_seconds,
+                    lease_seconds=startup_config.mcp_tasks.lease_seconds,
+                    max_concurrent_polls=startup_config.mcp_tasks.max_concurrent_polls,
+                )
+                app.state.mcp_task_drivers = mcp_task_drivers
+                app.state.mcp_task_service = mcp_task_service
+                if startup_config.mcp_tasks.enabled:
+                    await mcp_task_service.start()
+        except Exception:
+            logger.exception("Failed to initialize MCP task service")
+
+        from app.gateway.nexus_receiver.release import start_receiver_release_wiring
+        from deerflow.config.nexus_receiver_config import NexusReceiverConfig
+
+        await start_receiver_release_wiring(
+            app.state,
+            getattr(startup_config, "nexus_receiver", NexusReceiverConfig()),
+        )
 
         yield
 
@@ -305,6 +389,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await app.state.scheduled_task_service.stop()
             except Exception:
                 logger.exception("Failed to stop scheduled task service")
+
+        if getattr(app.state, "mcp_task_service", None) is not None:
+            try:
+                await app.state.mcp_task_service.stop()
+            except Exception:
+                logger.exception("Failed to stop MCP task service")
+
+        if getattr(app.state, "nexus_receiver_recovery_service", None) is not None:
+            try:
+                await app.state.nexus_receiver_recovery_service.stop()
+            except Exception:
+                logger.exception("Failed to stop Nexus receiver recovery service")
 
         try:
             from deerflow.community.browser_automation import get_browser_session_manager
@@ -340,15 +436,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         #
         # K8s caveat: ``shutdown_flush_timeout_seconds`` must fit inside the
         # pod's ``terminationGracePeriodSeconds`` (channel stop + browser
-        # session close + this drain + buffer), set on the gateway Helm
-        # deployment -- or K8s SIGKILLs the drain mid-flight and the loss this
-        # is fixing is silently re-introduced.
+        # session close + the brief retrieval-warm wait + this drain + buffer),
+        # set on the gateway Helm deployment -- or K8s SIGKILLs the drain
+        # mid-flight and the loss this is fixing is silently re-introduced.
+        # The retrieval index is derived from canonical memory files, so its
+        # wait is independently capped and never consumes the flush budget.
+        retrieval_warm_finished = True
+        if retrieval_warm_task is not None and not retrieval_warm_task.done():
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(retrieval_warm_task),
+                    timeout=min(
+                        _RETRIEVAL_WARM_SHUTDOWN_TIMEOUT_SECONDS,
+                        startup_config.memory.shutdown_flush_timeout_seconds,
+                    ),
+                )
+            except TimeoutError:
+                retrieval_warm_finished = False
+                logger.warning("Memory retrieval index rebuild is still running; leaving its connection open during shutdown")
+
+        manager = None
         try:
             app_cfg = get_app_config()
             if app_cfg.memory.enabled:
                 from deerflow.agents.memory import get_memory_manager
 
-                manager = get_memory_manager()
+                manager = await asyncio.to_thread(get_memory_manager)
                 flush_timeout = app_cfg.memory.shutdown_flush_timeout_seconds
                 completed = await asyncio.to_thread(manager.shutdown_flush, flush_timeout)
                 if completed:
@@ -360,6 +473,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     )
         except Exception:
             logger.exception("Failed to flush memory queue on shutdown")
+        finally:
+            close = getattr(manager, "close", None)
+            if callable(close) and retrieval_warm_finished:
+                try:
+                    await asyncio.to_thread(close)
+                except Exception:
+                    logger.exception("Failed to close memory backend on shutdown")
 
     logger.info("Shutting down API Gateway")
 
@@ -469,7 +589,11 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # CORS: the unified nginx endpoint is same-origin by default. Split-origin
     # browser clients must opt in with this explicit Gateway allowlist so CORS
-    # and CSRF origin checks share the same source of truth.
+    # and CSRF origin checks share the same source of truth. They also need the
+    # run id the Gateway returns in a non-safelisted response header; without
+    # exposing it the SDK never reports a created run, so a new thread keeps its
+    # placeholder route and every action gated on an established thread stays
+    # hidden until the page is reloaded.
     cors_origins = sorted(get_configured_cors_origins())
     if cors_origins:
         app.add_middleware(
@@ -478,6 +602,7 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=list(CORS_EXPOSED_HEADERS),
         )
 
     # Request trace correlation: when logging.enhance.enabled=true, bind one
@@ -487,6 +612,48 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     # runtime toggle would otherwise leave the log formatter (installed once by
     # configure_logging() at lifespan startup) out of sync with the middleware.
     app.add_middleware(TraceMiddleware, enabled=_resolve_trace_enabled_for_app_construction())
+
+    # Python extensions load once while the Gateway app is constructed. Agent
+    # middleware builders consume the same immutable set through the process
+    # singleton; app.state exposes it to the Gateway runtime.
+    from deerflow.extensions import (
+        EMPTY_EXTENSIONS,
+        ExtensionLoadError,
+        initialize_runtime_diagnostics,
+        load_extensions,
+        set_loaded_extensions,
+    )
+
+    # Resolving the configured plugin list is deliberately outside the
+    # fail-open guard below: a config.yaml that exists but cannot be parsed or
+    # validated is a configuration failure, not an extension failure. Reporting
+    # it as the latter would silently drop a `required: true` extension instead
+    # of failing the boot. Only an absent config.yaml is tolerated, mirroring
+    # _resolve_trace_enabled_for_app_construction() — create_app() runs at
+    # import time, and lifespan still performs strict config loading before
+    # serving.
+    try:
+        configured_plugins = get_app_config().plugins
+    except FileNotFoundError:
+        logger.debug("config.yaml not found while constructing Gateway app; loading no extensions for this app instance")
+        configured_plugins = []
+
+    try:
+        loaded_extensions, extension_diagnostics = load_extensions(configured_plugins)
+    except ExtensionLoadError:
+        # `required: true` makes the extension part of the startup contract.
+        # Booting without it would silently change configured behaviour.
+        raise
+    except Exception:
+        logger.exception("Extension loading failed; continuing with no extensions")
+        loaded_extensions, extension_diagnostics = EMPTY_EXTENSIONS, []
+    set_loaded_extensions(loaded_extensions)
+    app.state.extensions = loaded_extensions
+    app.state.extension_diagnostics = initialize_runtime_diagnostics(extension_diagnostics)
+
+    # Dedicated service-to-service receiver routes. Production remains closed
+    # until a reviewed authenticator and user-directory provider are injected.
+    install_nexus_receiver_provider(app)
 
     # Include routers
     # Models API is mounted at /api/models
@@ -516,6 +683,9 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Skills API is mounted at /api/skills
     app.include_router(skills.router)
+
+    # First-party integrations API is mounted at /api/integrations
+    app.include_router(integrations.router)
 
     # Artifacts API is mounted at /api/threads/{thread_id}/artifacts
     app.include_router(artifacts.router)

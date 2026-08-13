@@ -32,7 +32,7 @@ def test_lightrag_api_key_is_masked_in_config_representation() -> None:
 def test_config_example_documents_the_lightrag_connection() -> None:
     root = Path(__file__).resolve().parents[2]
     config = yaml.safe_load((root / "config.example.yaml").read_text(encoding="utf-8"))
-    assert config["config_version"] == 30
+    assert config["config_version"] == 34
     assert config["knowledge_base"] == {
         "enabled": False,
         "lightrag": {

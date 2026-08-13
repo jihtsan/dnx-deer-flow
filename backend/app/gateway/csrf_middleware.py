@@ -53,6 +53,12 @@ def should_check_csrf(request: Request) -> bool:
     # (e.g. GitHub's X-Hub-Signature-256), not the CSRF double-submit cookie.
     if request.url.path.startswith("/api/webhooks/"):
         return False
+    # The Nexus Skill receiver is a dedicated machine-authenticated boundary.
+    # It never accepts the browser session cookie as authority, so requiring a
+    # browser double-submit token here would block valid OAuth2/mTLS callers
+    # before the receiver's stricter service authenticator can run.
+    if request.url.path.startswith("/api/v1/nexus/skill-receiver/"):
+        return False
     return True
 
 
@@ -120,6 +126,13 @@ def _configured_cors_origins() -> set[str]:
 def get_configured_cors_origins() -> set[str]:
     """Return normalized explicit browser origins from GATEWAY_CORS_ORIGINS."""
     return _configured_cors_origins()
+
+
+# Response headers a split-origin browser client must be able to read. Only the
+# CORS-safelisted set is visible to JS by default, and the created run's id
+# travels in `Content-Location` — the LangGraph SDK resolves run metadata from
+# it, so withholding it leaves such a client unable to learn its own run id.
+CORS_EXPOSED_HEADERS: tuple[str, ...] = ("Content-Location",)
 
 
 def _first_header_value(value: str | None) -> str | None:

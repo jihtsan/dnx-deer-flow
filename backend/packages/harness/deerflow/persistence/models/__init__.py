@@ -30,12 +30,15 @@ from deerflow.persistence.knowledge_documents.model import (
     KnowledgeRemoteDocumentRow,
 )
 from deerflow.persistence.knowledge_scope.model import KnowledgeScopeRow
+from deerflow.persistence.mcp_tasks.model import McpTaskRow
 from deerflow.persistence.models.run_event import RunEventRow
+from deerflow.persistence.receiver_operations.model import ReceiverOperationRow
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.scheduled_task_runs.model import ScheduledTaskRunRow
 from deerflow.persistence.scheduled_tasks.model import ScheduledTaskRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 from deerflow.persistence.user.model import UserRow
+from deerflow.persistence.webhook_delivery.model import WebhookDeliveryRow
 
 __all__ = [
     "AgentRow",
@@ -50,10 +53,13 @@ __all__ = [
     "KnowledgeIngestionRetryRequestRow",
     "KnowledgeRemoteDocumentRow",
     "KnowledgeScopeRow",
+    "McpTaskRow",
     "RunEventRow",
     "RunRow",
+    "ReceiverOperationRow",
     "ScheduledTaskRow",
     "ScheduledTaskRunRow",
     "ThreadMetaRow",
     "UserRow",
+    "WebhookDeliveryRow",
 ]

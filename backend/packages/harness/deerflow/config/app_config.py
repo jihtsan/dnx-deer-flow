@@ -17,6 +17,7 @@ from deerflow.config.authorization_config import AuthorizationConfig, load_autho
 from deerflow.config.channel_connections_config import ChannelConnectionsConfig
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
 from deerflow.config.database_config import DatabaseConfig
+from deerflow.config.dedupe_storage_config import DedupeStorageConfig
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.file_signature import ConfigSignature as _ConfigSignature
 from deerflow.config.file_signature import get_config_signature as _get_config_signature
@@ -24,8 +25,10 @@ from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_
 from deerflow.config.input_polish_config import InputPolishConfig
 from deerflow.config.knowledge_base_config import KnowledgeBaseConfig
 from deerflow.config.loop_detection_config import LoopDetectionConfig
+from deerflow.config.mcp_tasks_config import McpTasksConfig
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
+from deerflow.config.nexus_receiver_config import NexusReceiverConfig
 from deerflow.config.read_before_write_config import ReadBeforeWriteConfig
 from deerflow.config.reload_boundary import format_field_description
 from deerflow.config.run_events_config import RunEventsConfig
@@ -48,6 +51,7 @@ from deerflow.config.tool_config import ToolConfig, ToolGroupConfig
 from deerflow.config.tool_output_config import ToolOutputConfig
 from deerflow.config.tool_progress_config import ToolProgressConfig
 from deerflow.config.tool_search_config import ToolSearchConfig, load_tool_search_config_from_dict
+from deerflow.extensions.loader import ExtensionSpec
 
 load_dotenv()
 
@@ -203,6 +207,19 @@ class AppConfig(BaseModel):
     )
     token_usage: TokenUsageConfig = Field(default_factory=TokenUsageConfig, description="Token usage tracking configuration")
     token_budget: TokenBudgetConfig = Field(default_factory=TokenBudgetConfig, description="Token Budget tracking and limits configuration.")
+    plugins: list[ExtensionSpec] = Field(
+        default_factory=list,
+        description=format_field_description(
+            "plugins",
+            field_doc=(
+                "Extension packages to load at startup, in order. Each entry names an install "
+                "entry point as 'module.path:install' and carries its own private config block. "
+                "Distinct from the `extensions` field above, which configures MCP servers, skills "
+                "and config-declared middlewares and is backed by the HTTP-writable "
+                "extensions_config.json."
+            ),
+        ),
+    )
     max_recursion_limit: int = Field(
         default=1000,
         ge=1,
@@ -280,6 +297,20 @@ class AppConfig(BaseModel):
             field_doc="Scheduled task runtime configuration (background poller for one-time and cron agent runs).",
         ),
     )
+    mcp_tasks: McpTasksConfig = Field(
+        default_factory=McpTasksConfig,
+        description=format_field_description(
+            "mcp_tasks",
+            field_doc="Long-running MCP task persistence and background polling runtime.",
+        ),
+    )
+    nexus_receiver: NexusReceiverConfig = Field(
+        default_factory=NexusReceiverConfig,
+        description=format_field_description(
+            "nexus_receiver",
+            field_doc="Fail-closed release wiring for Nexus receiver HTTP/SSH transports and durable recovery.",
+        ),
+    )
     checkpointer: CheckpointerConfig | None = Field(
         default=None,
         description=format_field_description(
@@ -299,6 +330,13 @@ class AppConfig(BaseModel):
         description=format_field_description(
             "run_ownership",
             field_doc="Run ownership and lease configuration for multi-worker deployments.",
+        ),
+    )
+    dedupe_storage: DedupeStorageConfig = Field(
+        default_factory=DedupeStorageConfig,
+        description=format_field_description(
+            "dedupe_storage",
+            field_doc="Inbound webhook dedupe storage backend (memory / postgres / auto) for cross-pod redelivery dedup. See issue #4120.",
         ),
     )
 
@@ -443,6 +481,16 @@ class AppConfig(BaseModel):
         if previous_checkpointer_config != config.checkpointer:
             # These runtime singletons derive their backend from checkpointer config.
             # Keep imports local to avoid cycles: both providers import get_app_config.
+            #
+            # The unified ``database`` section is intentionally NOT handled here.
+            # ``database`` is a restart-required field (reload_boundary.STARTUP_ONLY_FIELDS):
+            # ``init_engine_from_config()`` builds the ORM engine once at startup and
+            # never rebuilds it on a config.yaml edit. Resetting only the sync
+            # checkpointer/store singletons on a live ``database``/``postgres_schema``
+            # change would half-migrate the deployment -- new checkpoint/store tables
+            # would land in the new schema while ORM rows keep landing in the old one,
+            # with no error surfaced. Requiring the documented restart keeps the
+            # deployment self-consistent.
             from deerflow.runtime.checkpointer import reset_checkpointer
             from deerflow.runtime.store import reset_store
 

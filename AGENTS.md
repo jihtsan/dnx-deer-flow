@@ -35,6 +35,18 @@ Nginx is the single public entry: it serves the frontend and proxies `/api/langg
 to the Gateway's LangGraph runtime, rewriting it to Gateway's native `/api/*` routes; all
 other `/api/*` go straight to the Gateway REST routers. See
 [backend/AGENTS.md](backend/AGENTS.md) for the runtime and router detail.
+It compresses HTML and configured textual assets, while deliberately leaving SSE,
+fonts, images, audio, and video uncompressed at the proxy layer.
+
+Both compose files publish that entry as `"${BIND_HOST:-127.0.0.1}:${PORT:-2026}:2026"`
+— **loopback by default**, matching the README's documented deployment model. A bare
+`"${PORT}:2026"` binds `0.0.0.0`, which does not.
+Nginx itself listens `default_server` on IPv4+IPv6 and the
+Gateway binds `0.0.0.0:8001` inside the container on purpose — both are container-
+internal; the published nginx port is the entire external surface, and the Gateway's
+`8001` is deliberately not published. Any new published port needs an explicit bind
+address; `backend/tests/test_compose_default_bind_host.py` pins this for every service
+in both compose files.
 
 ## Repository Map
 
@@ -45,16 +57,24 @@ deer-flow/
 ├── extensions_config.example.json  # Template → copy to extensions_config.json (gitignored): MCP servers + skills
 ├── backend/                        # Python backend — see backend/AGENTS.md
 │   ├── Makefile                    # Per-module backend commands (dev, gateway, test, lint, migrate-rev)
+│   ├── packages/extension-api/     # deerflow-extension-api package (import: deerflow_extension_api.*) — public extension contract
 │   ├── packages/harness/           # deerflow-harness package (import: deerflow.*) — agent framework
 │   └── app/                        # FastAPI Gateway + IM channels (import: app.*)
 ├── frontend/                       # Next.js frontend (pnpm) — see frontend/AGENTS.md
 ├── docker/                         # docker-compose files, nginx config, provisioner
 ├── skills/                         # Agent skills: public/ (committed), custom/ (gitignored)
+│                                    # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
+│                                    # Integration credentials and enabled state remain per-user
 ├── contracts/                      # Cross-component JSON contracts (e.g. subagent status, skill review)
 ├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, support_bundle, serve, nginx, docker, deploy, setup_wizard)
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
+
+Third-party extensions are loaded from a top-level `plugins:` list in `config.yaml`
+(operator-controlled on purpose — that list causes code to be imported, so it is deliberately
+kept out of the API-writable `extensions_config.json`). See the Extension System section in
+[backend/AGENTS.md](backend/AGENTS.md).
 
 Runtime config lives at the **repo root**: copy `config.example.yaml` → `config.yaml`
 (main app config) and `extensions_config.example.json` → `extensions_config.json` (MCP
@@ -82,6 +102,59 @@ Knowledge-base note:
 - Document progress persists only the allowlisted LightRAG stage, optional non-negative `chunks_count`, and a DeerFlow-owned stage-change timestamp. The UI uses indeterminate progress because LightRAG does not expose a reliable per-document completion percentage; do not derive one from workspace-global pipeline status.
 - When the LightRAG data plane is not `ready`, all three knowledge workbench tabs render only the shared offline/admin-contact notice and recheck action. Do not mount document, directory, graph, or retrieval consumers until readiness returns.
 
+Nexus Skill receiver note:
+- `contracts/openapi/nexus-skill-receiver-v1.yaml` is DeerFlow's only canonical,
+  versioned receiver contract. The adjacent `.conformance.json` fixture and
+  `backend/tests/test_nexus_skill_receiver_contract.py` pin capabilities,
+  controlled cursor-based user search, closed `GLOBAL|USER` targets, durable
+  operation phases, exact Observed success, headers, stable errors, default
+  denial, transport/authentication profiles, and major-version rules. Its
+  `http_v1` and `ssh_v1` bindings reuse those same component schemas; there is
+  no second CLI schema.
+- The P0 `ssh_v1` binding is a USER-only forced-command profile with five exact
+  actions, bounded canonical JSON framing, raw package streaming for
+  `install.submit`, and closed stdout/exit behavior. It does not authorize an
+  interactive shell, PTY, forwarding, SCP, SFTP, `GLOBAL`, or direct Skill-path
+  access.
+- The shared receiver handler implements durable, idempotent `USER` first
+  installation and exact Observed closure for both HTTP and the strict
+  forced-command dispatcher. It reuses `UserScopedSkillStorage` for guarded
+  archive installation, persists operation phase/request bindings and expiring
+  execution claims in `nexus_receiver_operations`, and stages package bytes in
+  an atomic owner-only package store for restart recovery. Receiver identity is
+  committed with the disabled Skill tree before a separate idempotent activation
+  and exact loaded observation; every resumed write attempt revalidates the exact
+  controlled USER identity and eligibility, and a post-commit failure preserves
+  the explicit disabled state. `GLOBAL` remains unsupported.
+- The Gateway mounts capability, controlled-directory, operation, operation
+  poll, and Observed routes behind dedicated service-auth/runtime Ports. No
+  production authenticator, install-target resolver, operation/package store,
+  recovery runner, or installer is injected: missing auth is `401`, a missing runtime is
+  `503 RECEIVER_NOT_READY`, browser sessions/internal tokens are rejected, and
+  capabilities stay `read_only`/`unsupported`. The forced-command module entry
+  likewise has no production runtime wiring and exits `10` with a canonical,
+  redacted Problem.
+- `nexus_receiver` is a startup-only, default-disabled release gate. It stores
+  only opaque host-key/principal-map Secret references and policy revision IDs.
+  A complete deployment bootstrap installs HTTP auth, the shared runtime,
+  transport-principal mapping, and a supervised recovery service atomically;
+  missing any component installs none of them. Recovery runs immediately at
+  startup, after durable submit notification, and periodically. The opt-in SSH
+  overlay carries cross-process wake-up over a private Unix datagram socket;
+  its fixed payload contains no authority or operation data.
+- `docker/docker-compose.nexus-receiver-ssh.yaml` is an explicit opt-in profile
+  for a loopback-bound dedicated sshd account. Mounted host-key and principal-map
+  Secrets generate owner-only runtime files and exact `restrict,command` keys;
+  interactive shells, PTY, forwarding, SCP/SFTP and password auth remain closed.
+  The repository forced-command entry has no production context provider.
+- Real service-auth and directory policy, trust/compatibility policy, Secret and
+  host-key issuance/rotation, stable principal ownership, directory privacy,
+  native `GLOBAL`, and stable multi-process ownership remain release gates.
+  Their absence must never be replaced by an environment switch that enables
+  production writes.
+  Existing `/api/skills` routes are not a compatibility fallback, and Nexus must
+  not maintain a second canonical receiver OpenAPI.
+
 ## Commands: Root vs. Module
 
 **Root `make` targets drive the whole stack** (run from the repo root):
@@ -99,6 +172,9 @@ make stop        # Stop all running services
 make up / down   # Build/stop the production Docker stack (browser at localhost:2026)
 make docker-start / docker-stop / docker-logs   # Docker development environment
 ```
+
+Docker log and restart commands resolve `DEER_FLOW_ROOT` from the current
+checkout before invoking Compose, matching the start and stop commands.
 
 Run `make help` for the full list.
 
@@ -119,6 +195,8 @@ cd frontend && pnpm test      # Unit tests
 
 Rule of thumb: **root `make` = the full application**; **`backend/Makefile` and `frontend/`
 (`pnpm`) = per-module work.**
+
+Host-side pnpm consumers, including the root/frontend Makefiles and local diagnostic scripts, must run through `scripts/pnpm.py`. The runner preserves direct `pnpm`/`pnpm.cmd` priority, falls back to `corepack pnpm`, and is invoked from `frontend/` so Corepack honors the package-manager version pinned by that project.
 
 ## Where to Go Next
 

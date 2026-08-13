@@ -3,8 +3,19 @@
 import pytest
 from starlette.testclient import TestClient
 
-from app.gateway.auth_middleware import AuthMiddleware, _is_public
+from app.gateway.auth_middleware import AuthMiddleware, _is_public, _uses_dedicated_service_auth
 from app.gateway.csrf_middleware import CSRFMiddleware
+from deerflow.config.authorization_config import AuthorizationConfig
+
+
+@pytest.fixture(autouse=True)
+def _default_route_authorization_config(monkeypatch):
+    """Keep minimal middleware apps independent of a repository config.yaml."""
+    monkeypatch.setattr(
+        "app.gateway.authz._get_route_authorization_config",
+        lambda: AuthorizationConfig(),
+    )
+
 
 # ── _is_public unit tests ─────────────────────────────────────────────────
 
@@ -85,6 +96,14 @@ def test_unknown_api_path_is_protected():
     assert _is_public("/api/new-feature") is False
     assert _is_public("/api/v2/something") is False
     assert _is_public("/api/v1/auth/new-endpoint") is False
+
+
+def test_receiver_path_is_non_public_and_uses_dedicated_service_auth():
+    path = "/api/v1/nexus/skill-receiver/capabilities"
+
+    assert _is_public(path) is False
+    assert _uses_dedicated_service_auth(path) is True
+    assert _uses_dedicated_service_auth("/api/v1/nexus/skill-receiver-lookalike/capabilities") is False
 
 
 # ── Middleware integration tests ──────────────────────────────────────────

@@ -1,0 +1,532 @@
+{
+  "contractVersion": "1.0.0",
+  "source": "contracts/openapi/nexus-skill-receiver-v1.yaml",
+  "schemaCases": [
+    {
+      "name": "default-deny-capabilities",
+      "schema": "ReceiverCapabilitySnapshot",
+      "valid": true,
+      "value": {
+        "contractVersion": "1.0.0",
+        "transportProfile": "ssh_v1",
+        "runtimeVersion": "0.9.0",
+        "connection": "healthy",
+        "accessMode": "read_only",
+        "freshness": "current",
+        "authorization": {
+          "profile": "unapproved",
+          "grantedActions": []
+        },
+        "capabilities": {
+          "userDirectory": "unsupported",
+          "globalInstall": "unsupported",
+          "userInstall": "unsupported",
+          "observation": "unsupported",
+          "activation": "unsupported",
+          "durableOperations": "unsupported",
+          "observedPackageDigest": "unsupported"
+        },
+        "blockedBy": [
+          "CAPABILITY_READ_ONLY",
+          "USER_DIRECTORY_UNSUPPORTED",
+          "GLOBAL_INSTALL_UNSUPPORTED",
+          "USER_INSTALL_UNSUPPORTED"
+        ],
+        "observedAt": "2026-08-11T04:00:00Z"
+      }
+    },
+    {
+      "name": "controlled-user-page",
+      "schema": "ReceiverUserPage",
+      "valid": true,
+      "value": {
+        "items": [
+          {
+            "userId": "df-user-42",
+            "displayName": "Chen Wei",
+            "accountLabel": "c***@example.com",
+            "active": true,
+            "installEligible": true
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-11T04:01:00Z"
+      }
+    },
+    {
+      "name": "global-install-command",
+      "schema": "ReceiverInstallCommand",
+      "valid": true,
+      "value": {
+        "receiverOperationId": "39d78cd3-c529-4503-90f4-5077e3aebf91",
+        "receiverBindingId": "df-primary-prod",
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageSizeBytes": 12345,
+        "packageMediaType": "application/zip",
+        "policyRevision": "trust-policy-2026-08-11",
+        "expectedObservedState": "ABSENT",
+        "actorAudit": {
+          "principalId": "11111111-1111-4111-8111-111111111111",
+          "action": "skill:install_global"
+        },
+        "target": {
+          "scope": "GLOBAL"
+        }
+      }
+    },
+    {
+      "name": "user-install-command",
+      "schema": "ReceiverInstallCommand",
+      "valid": true,
+      "value": {
+        "receiverOperationId": "49d78cd3-c529-4503-90f4-5077e3aebf92",
+        "receiverBindingId": "df-primary-prod",
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageSizeBytes": 12345,
+        "packageMediaType": "application/zip",
+        "policyRevision": "trust-policy-2026-08-11",
+        "expectedObservedState": "ABSENT",
+        "actorAudit": {
+          "principalId": "11111111-1111-4111-8111-111111111111",
+          "action": "skill:install_for_user"
+        },
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        }
+      }
+    },
+    {
+      "name": "global-target-cannot-contain-user",
+      "schema": "ReceiverInstallCommand",
+      "valid": false,
+      "value": {
+        "receiverOperationId": "59d78cd3-c529-4503-90f4-5077e3aebf93",
+        "receiverBindingId": "df-primary-prod",
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageSizeBytes": 12345,
+        "packageMediaType": "application/zip",
+        "policyRevision": "trust-policy-2026-08-11",
+        "expectedObservedState": "ABSENT",
+        "actorAudit": {
+          "principalId": "11111111-1111-4111-8111-111111111111",
+          "action": "skill:install_global"
+        },
+        "target": {
+          "scope": "GLOBAL",
+          "deerFlowUserId": "df-user-42"
+        }
+      }
+    },
+    {
+      "name": "user-target-requires-directory-id",
+      "schema": "ReceiverInstallCommand",
+      "valid": false,
+      "value": {
+        "receiverOperationId": "69d78cd3-c529-4503-90f4-5077e3aebf94",
+        "receiverBindingId": "df-primary-prod",
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageSizeBytes": 12345,
+        "packageMediaType": "application/zip",
+        "policyRevision": "trust-policy-2026-08-11",
+        "expectedObservedState": "ABSENT",
+        "actorAudit": {
+          "principalId": "11111111-1111-4111-8111-111111111111",
+          "action": "skill:install_for_user"
+        },
+        "target": {
+          "scope": "USER"
+        }
+      }
+    },
+    {
+      "name": "target-and-action-must-match",
+      "schema": "ReceiverInstallCommand",
+      "valid": false,
+      "value": {
+        "receiverOperationId": "79d78cd3-c529-4503-90f4-5077e3aebf95",
+        "receiverBindingId": "df-primary-prod",
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageSizeBytes": 12345,
+        "packageMediaType": "application/zip",
+        "policyRevision": "trust-policy-2026-08-11",
+        "expectedObservedState": "ABSENT",
+        "actorAudit": {
+          "principalId": "11111111-1111-4111-8111-111111111111",
+          "action": "skill:install_global"
+        },
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        }
+      }
+    },
+    {
+      "name": "package-url-is-not-authority",
+      "schema": "ReceiverInstallCommand",
+      "valid": false,
+      "value": {
+        "receiverOperationId": "89d78cd3-c529-4503-90f4-5077e3aebf96",
+        "receiverBindingId": "df-primary-prod",
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageSizeBytes": 12345,
+        "packageMediaType": "application/zip",
+        "packageUrl": "https://packages.example.invalid/skill.zip",
+        "policyRevision": "trust-policy-2026-08-11",
+        "expectedObservedState": "ABSENT",
+        "actorAudit": {
+          "principalId": "11111111-1111-4111-8111-111111111111",
+          "action": "skill:install_for_user"
+        },
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        }
+      }
+    },
+    {
+      "name": "complete-email-is-not-a-directory-projection",
+      "schema": "ReceiverUserPage",
+      "valid": false,
+      "value": {
+        "items": [
+          {
+            "userId": "df-user-42",
+            "displayName": "Chen Wei",
+            "accountLabel": "chen.wei@example.com",
+            "active": true,
+            "installEligible": true
+          }
+        ],
+        "page": {
+          "hasMore": false,
+          "nextCursor": null
+        },
+        "observedAt": "2026-08-11T04:01:00Z"
+      }
+    },
+    {
+      "name": "unapproved-auth-cannot-advertise-write",
+      "schema": "ReceiverCapabilitySnapshot",
+      "valid": false,
+      "value": {
+        "contractVersion": "1.0.0",
+        "transportProfile": "ssh_v1",
+        "runtimeVersion": "0.9.0",
+        "connection": "healthy",
+        "accessMode": "read_write",
+        "freshness": "current",
+        "authorization": {
+          "profile": "unapproved",
+          "grantedActions": ["receiver:install:user"]
+        },
+        "capabilities": {
+          "userDirectory": "supported",
+          "globalInstall": "unsupported",
+          "userInstall": "supported",
+          "observation": "user_only",
+          "activation": "user_only",
+          "durableOperations": "supported",
+          "observedPackageDigest": "supported"
+        },
+        "blockedBy": [],
+        "observedAt": "2026-08-11T04:00:00Z"
+      }
+    },
+    {
+      "name": "ssh-transport-cannot-advertise-http-authentication",
+      "schema": "ReceiverCapabilitySnapshot",
+      "valid": false,
+      "value": {
+        "contractVersion": "1.0.0",
+        "transportProfile": "ssh_v1",
+        "runtimeVersion": "0.9.0",
+        "connection": "healthy",
+        "accessMode": "read_only",
+        "freshness": "current",
+        "authorization": {
+          "profile": "mtls",
+          "grantedActions": []
+        },
+        "capabilities": {
+          "userDirectory": "unsupported",
+          "globalInstall": "unsupported",
+          "userInstall": "unsupported",
+          "observation": "unsupported",
+          "activation": "unsupported",
+          "durableOperations": "unsupported",
+          "observedPackageDigest": "unsupported"
+        },
+        "blockedBy": ["CAPABILITY_READ_ONLY"],
+        "observedAt": "2026-08-11T04:00:00Z"
+      }
+    },
+    {
+      "name": "problem-code-is-stable-shaped",
+      "schema": "ReceiverProblem",
+      "valid": true,
+      "value": {
+        "type": "/problems/target-user-not-eligible",
+        "title": "Target user is not eligible",
+        "status": 409,
+        "code": "TARGET_USER_NOT_ELIGIBLE",
+        "detail": "The selected user cannot receive Skill installations.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/01J5TARGET",
+        "correlationId": "skill-install-20260811-01",
+        "timestamp": "2026-08-11T04:03:00Z",
+        "retryable": false
+      }
+    }
+  ],
+  "sshActionCases": [
+    {
+      "name": "read-capabilities-over-forced-command",
+      "action": "capabilities.get",
+      "argv": "nexus-skill-receiver-v1 capabilities.get",
+      "frame": {
+        "contractVersion": "1.0.0",
+        "correlationId": "receiver-capabilities-01"
+      }
+    },
+    {
+      "name": "search-users-over-forced-command",
+      "action": "users.list",
+      "argv": "nexus-skill-receiver-v1 users.list",
+      "frame": {
+        "contractVersion": "1.0.0",
+        "correlationId": "receiver-users-01",
+        "query": "chen",
+        "cursor": "opaque-page-02",
+        "limit": 25
+      }
+    },
+    {
+      "name": "submit-user-install-over-forced-command",
+      "action": "install.submit",
+      "argv": "nexus-skill-receiver-v1 install.submit",
+      "frame": {
+        "contractVersion": "1.0.0",
+        "correlationId": "skill-install-20260811-01",
+        "idempotencyKey": "install-user-01J5",
+        "requestSha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "command": {
+          "receiverOperationId": "49d78cd3-c529-4503-90f4-5077e3aebf92",
+          "receiverBindingId": "df-primary-prod",
+          "skillVersionId": "sv.research-assistant.1.0.0",
+          "runtimeSkillName": "research-assistant",
+          "packageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "packageSizeBytes": 12345,
+          "packageMediaType": "application/zip",
+          "policyRevision": "trust-policy-2026-08-11",
+          "expectedObservedState": "ABSENT",
+          "actorAudit": {
+            "principalId": "11111111-1111-4111-8111-111111111111",
+            "action": "skill:install_for_user"
+          },
+          "target": {
+            "scope": "USER",
+            "deerFlowUserId": "df-user-42"
+          }
+        }
+      },
+      "packageByteCount": 12345
+    },
+    {
+      "name": "read-operation-over-forced-command",
+      "action": "operations.get",
+      "argv": "nexus-skill-receiver-v1 operations.get",
+      "frame": {
+        "contractVersion": "1.0.0",
+        "correlationId": "receiver-operation-01",
+        "operationId": "49d78cd3-c529-4503-90f4-5077e3aebf92"
+      }
+    },
+    {
+      "name": "query-observation-over-forced-command",
+      "action": "observations.query",
+      "argv": "nexus-skill-receiver-v1 observations.query",
+      "frame": {
+        "contractVersion": "1.0.0",
+        "correlationId": "receiver-observation-01",
+        "query": {
+          "target": {
+            "scope": "USER",
+            "deerFlowUserId": "df-user-42"
+          },
+          "runtimeSkillName": "research-assistant"
+        }
+      }
+    }
+  ],
+  "sshBindingProblemCases": [
+    {
+      "name": "ssh-v1-rejects-global-install",
+      "action": "install.submit",
+      "exitCode": 10,
+      "command": {
+        "receiverOperationId": "39d78cd3-c529-4503-90f4-5077e3aebf91",
+        "receiverBindingId": "df-primary-prod",
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "packageSizeBytes": 12345,
+        "packageMediaType": "application/zip",
+        "policyRevision": "trust-policy-2026-08-11",
+        "expectedObservedState": "ABSENT",
+        "actorAudit": {
+          "principalId": "11111111-1111-4111-8111-111111111111",
+          "action": "skill:install_global"
+        },
+        "target": {
+          "scope": "GLOBAL"
+        }
+      },
+      "problem": {
+        "type": "/problems/global-install-unsupported",
+        "title": "Global installation is unsupported",
+        "status": 409,
+        "code": "GLOBAL_INSTALL_UNSUPPORTED",
+        "detail": "The ssh_v1 transport profile supports USER installation only.",
+        "instance": "/api/v1/nexus/skill-receiver/problems/01J5GLOBALSSH",
+        "correlationId": "skill-install-global-01",
+        "timestamp": "2026-08-11T04:05:00Z",
+        "retryable": false
+      }
+    }
+  ],
+  "operationSemanticCases": [
+    {
+      "name": "user-operation-succeeds-only-with-exact-observed",
+      "valid": true,
+      "value": {
+        "operationId": "49d78cd3-c529-4503-90f4-5077e3aebf92",
+        "phase": "succeeded",
+        "freshness": "current",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed": {
+          "target": {
+            "scope": "USER",
+            "deerFlowUserId": "df-user-42"
+          },
+          "presence": "installed",
+          "skillVersionId": "sv.research-assistant.1.0.0",
+          "version": "1.0.0",
+          "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtimeSkillName": "research-assistant",
+          "enabled": true,
+          "loadState": "loaded",
+          "freshness": "current",
+          "observedAt": "2026-08-11T04:04:00Z"
+        },
+        "acceptedAt": "2026-08-11T04:02:00Z",
+        "updatedAt": "2026-08-11T04:04:00Z",
+        "completedAt": "2026-08-11T04:04:00Z",
+        "error": null
+      }
+    },
+    {
+      "name": "loaded-state-cannot-prove-another-user",
+      "valid": false,
+      "value": {
+        "operationId": "49d78cd3-c529-4503-90f4-5077e3aebf92",
+        "phase": "succeeded",
+        "freshness": "current",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed": {
+          "target": {
+            "scope": "USER",
+            "deerFlowUserId": "df-user-43"
+          },
+          "presence": "installed",
+          "skillVersionId": "sv.research-assistant.1.0.0",
+          "version": "1.0.0",
+          "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtimeSkillName": "research-assistant",
+          "enabled": true,
+          "loadState": "loaded",
+          "freshness": "current",
+          "observedAt": "2026-08-11T04:04:00Z"
+        },
+        "acceptedAt": "2026-08-11T04:02:00Z",
+        "updatedAt": "2026-08-11T04:04:00Z",
+        "completedAt": "2026-08-11T04:04:00Z",
+        "error": null
+      }
+    },
+    {
+      "name": "package-copy-is-not-loaded-activation",
+      "valid": false,
+      "value": {
+        "operationId": "49d78cd3-c529-4503-90f4-5077e3aebf92",
+        "phase": "succeeded",
+        "freshness": "current",
+        "target": {
+          "scope": "USER",
+          "deerFlowUserId": "df-user-42"
+        },
+        "skillVersionId": "sv.research-assistant.1.0.0",
+        "runtimeSkillName": "research-assistant",
+        "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observed": {
+          "target": {
+            "scope": "USER",
+            "deerFlowUserId": "df-user-42"
+          },
+          "presence": "installed",
+          "skillVersionId": "sv.research-assistant.1.0.0",
+          "version": "1.0.0",
+          "packageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtimeSkillName": "research-assistant",
+          "enabled": true,
+          "loadState": "unknown",
+          "freshness": "current",
+          "observedAt": "2026-08-11T04:04:00Z"
+        },
+        "acceptedAt": "2026-08-11T04:02:00Z",
+        "updatedAt": "2026-08-11T04:04:00Z",
+        "completedAt": "2026-08-11T04:04:00Z",
+        "error": null
+      }
+    }
+  ],
+  "phaseTransitions": [
+    {"from": "accepted", "to": "validating", "valid": true},
+    {"from": "accepted", "to": "rejected", "valid": true},
+    {"from": "validating", "to": "installing", "valid": true},
+    {"from": "validating", "to": "rejected", "valid": true},
+    {"from": "installing", "to": "activating", "valid": true},
+    {"from": "installing", "to": "failed", "valid": true},
+    {"from": "activating", "to": "succeeded", "valid": true},
+    {"from": "activating", "to": "failed", "valid": true},
+    {"from": "succeeded", "to": "failed", "valid": false},
+    {"from": "rejected", "to": "accepted", "valid": false},
+    {"from": "failed", "to": "accepted", "valid": false}
+  ]
+}

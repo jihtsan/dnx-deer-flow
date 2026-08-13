@@ -19,6 +19,7 @@ https://github.com/user-attachments/assets/a8bcadc4-e040-4cf2-8fda-dd768b999c18
 ## Official Website
 
 Learn more and see **real demos** on our [**official website**](https://deerflow.tech).
+The landing-page case studies open as allowlisted, read-only showcases without requiring a sign-in.
 
 ## Sister Projects
 
@@ -139,6 +140,10 @@ That prompt is intended for coding agents. It tells the agent to clone the repo 
 
    > **Advanced / manual configuration**: If you prefer to edit `config.yaml` directly, run `make config` instead to copy the full template. See `config.example.yaml` for the complete reference including CLI-backed providers (Codex CLI, Claude Code OAuth), OpenRouter, Responses API, subagent runtime caps such as `subagents.max_total_per_run`, and more.
 
+   Optional per-model pricing must use one currency across all priced models.
+   DeerFlow disables Console cost estimates when currencies are mixed rather
+   than presenting an invalid aggregate.
+
    <details>
    <summary>Manual model configuration examples</summary>
 
@@ -182,7 +187,7 @@ That prompt is intended for coding agents. It tells the agent to clone the repo 
 
    To route OpenAI models through `/v1/responses`, keep using `langchain_openai:ChatOpenAI` and set `use_responses_api: true` with `output_version: responses/v1`.
 
-   For vLLM 0.19.0, use `deerflow.models.vllm_provider:VllmChatModel`. For Qwen-style reasoning models, DeerFlow toggles reasoning with `extra_body.chat_template_kwargs.enable_thinking` and preserves vLLM's non-standard `reasoning` field across multi-turn tool-call conversations. Legacy `thinking` configs are normalized automatically for backward compatibility. Reasoning models may also require the server to be started with `--reasoning-parser ...`. If your local vLLM deployment accepts any non-empty API key, you can still set `VLLM_API_KEY` to a placeholder value.
+   For vLLM 0.19.0, use `deerflow.models.vllm_provider:VllmChatModel`. For Qwen-style reasoning models, DeerFlow toggles reasoning with `extra_body.chat_template_kwargs.enable_thinking` and preserves vLLM's non-standard `reasoning` field across multi-turn tool-call conversations. Legacy `thinking` configs are normalized automatically for backward compatibility. If the endpoint reports a cumulative usage snapshot on every streaming chunk, set `cumulative_stream_usage: true` so DeerFlow converts those snapshots into per-chunk deltas; the option is disabled by default and leaves usage unchanged when a stable completion id is unavailable. Reasoning models may also require the server to be started with `--reasoning-parser ...`. If your local vLLM deployment accepts any non-empty API key, you can still set `VLLM_API_KEY` to a placeholder value.
 
    CLI-backed provider examples:
 
@@ -244,13 +249,31 @@ Use the table below as a practical starting point when choosing how to run DeerF
 ```bash
 make docker-init    # Pull sandbox image (only once or when image updates)
 make docker-start   # Start services (auto-detects sandbox mode from config.yaml)
+make docker-logs    # View logs
 ```
 
 `make docker-start` starts `provisioner` only when `config.yaml` uses provisioner mode (`sandbox.use: deerflow.community.aio_sandbox:AioSandboxProvider` with `provisioner_url`).
 
 Docker builds use the upstream `uv` registry by default. If you need faster mirrors in restricted networks, export `UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` and `NPM_REGISTRY=https://registry.npmmirror.com` before running `make docker-init` or `make docker-start`.
 
+Local AIO sandbox control traffic is always direct: loopback/private addresses,
+single-label cluster hosts, and Docker/Podman internal hostnames do not inherit
+`HTTP_PROXY` or `HTTPS_PROXY`. External sandbox FQDNs and public IPs still
+honor environment proxy settings.
+
 Backend processes automatically pick up `config.yaml` changes on the next config access, so model metadata updates do not require a manual restart during development.
+The checkpoint storage settings `database.checkpoint_channel_mode` and
+`database.checkpoint_delta.snapshot_frequency` (default `10`) are exceptions:
+both are frozen when the process first builds an agent (including through
+`DeerFlowClient`) and require a process restart to change safely.
+
+The optional `database.checkpoint_cache` section (delta channel mode only)
+caches materialized checkpoint histories: `type` is `memory` (default) or
+`redis`, and `max_entries: 0` disables the cache. The `redis` backend is
+Gateway/async-only; the sync TUI/embedded path supports `memory` only. The
+cache is performance-only — results are identical with it disabled — so it is
+never frozen and workers sharing one checkpoint database may safely run
+different cache settings.
 
 For deployments managed by DNX Nexus, `scripts/nexus-apply-models.py` accepts a versioned model catalog on standard input. The script validates the complete candidate `AppConfig` and atomically replaces only `config.yaml -> models`; it is intended for a trusted, fixed SSH command and never prints model credentials.
 
@@ -278,7 +301,13 @@ Browser login uses `HttpOnly` session cookies. The login page offers a "keep me 
 DeerFlow still uses `Forwarded` / `X-Forwarded-*` headers to recover the browser-facing scheme and origin behind a proxy. The bundled nginx sets `X-Forwarded-Proto`, but preserves an upstream HTTPS value and does not overwrite every forwarded header. Configure the outer trusted proxy to replace or strip client-supplied forwarding headers before traffic reaches DeerFlow.
 
 > [!IMPORTANT]
-> The Gateway still owns active run tasks in process, so production defaults to a single Gateway worker (`GATEWAY_WORKERS=1`). The Redis stream bridge (`stream_bridge.type: redis`) shares SSE delivery and `Last-Event-ID` replay across workers, with a rolling retained-buffer TTL (`stream_ttl_seconds`) as a cleanup safety net. Malformed reconnect IDs live-tail new events instead of replaying the retained buffer. It does not make run cancellation, request de-duplication, or IM channel state fully cross-worker by itself; use single-worker Gateway or explicit sticky routing/ownership before raising `GATEWAY_WORKERS`.
+> The Gateway still owns active run tasks in process, so production defaults to a single Gateway worker (`GATEWAY_WORKERS=1`). Multi-worker deployments require Postgres, the Redis stream bridge (`stream_bridge.type: redis`), `run_ownership.heartbeat_enabled: true`, and `run_events.backend: db`; process-local memory/JSONL event stores cannot enforce singleton delivery receipts across workers. The bridge shares SSE delivery and bounded `Last-Event-ID` replay across workers. When a valid reconnect cursor has been trimmed, or a subscriber that already established an empty-stream wait falls behind before its first delivery, Memory and Redis emit a machine-readable SSE `gap` event instead of silently returning a partial replay; the Web UI reloads durable thread/event state and resumes from the retained tail. Lease reconciliation marks runs from dead workers as errors, persists their delivery receipts, publishes the terminal stream marker, schedules retained-stream cleanup, and updates the affected thread status. SSE and `/wait` consumers also refresh durable status on heartbeats as a fallback if terminal publication fails. Malformed Redis reconnect IDs live-tail new events instead of replaying the retained buffer, and the rolling retained-buffer TTL (`stream_ttl_seconds`) remains a cleanup safety net rather than a run timeout. IM channel state and other process-local services still need their own multi-worker coordination.
+>
+> Run cancellation may land on any Gateway worker. A non-owning worker now persists the interrupt or rollback request for the live owner, which observes it during lease renewal and performs the normal cancellation flow; load-balancer routing alone no longer produces a 409. The first accepted action wins even if a retry lands on the owner, and accepted cancellation competes atomically with owner completion. Dead owners still follow lease takeover and orphan recovery. Cancellation latency is therefore bounded by the lease heartbeat interval.
+>
+> With lease heartbeat enabled, a transient RunStore renewal error is retried only until the last confirmed lease expires; the stale worker then cancels local execution and suppresses checkpoint, completion-hook, delivery-receipt, and thread-status finalization. A remote tool side effect already in flight may still be outside local cancellation.
+>
+> Reconciliation uses an atomic takeover claim that re-checks the lease after candidate selection, so a successful owner renewal wins over orphan recovery and only one reconciler can report a run as recovered. When multiple Gateway workers share the Docker/AIO or E2B sandbox backend, also configure `sandbox.ownership.type: redis`; E2B uses the leases during background startup and periodic reconciliation so duplicate/orphan cleanup cannot terminate a live peer's sandbox.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed Docker development guide.
 
@@ -293,6 +322,8 @@ On Windows, run the local development flow from Git Bash. Native `cmd.exe` and P
    ```bash
    make check  # Verifies Node.js 22+, pnpm, uv, nginx
    ```
+
+   The local `make check`, `make install`, `make dev`, and `make start` entry points use a direct `pnpm`/`pnpm.cmd` executable when available and otherwise fall back to `corepack pnpm`. Corepack runs from `frontend/`, so it honors the `packageManager` version pinned in `frontend/package.json`; enabling a global pnpm shim is not required.
 
 2. **Install dependencies**:
    ```bash
@@ -335,6 +366,21 @@ DeerFlow runs the agent runtime inside the Gateway API. Development mode enables
 
 Gateway owns `/api/langgraph/*` and translates those public LangGraph-compatible paths to its native `/api/*` routers behind nginx.
 
+For workflows that invoke `backend/langgraph.json` through LangGraph Studio or
+a direct LangGraph Server, DeerFlow consumes the authenticated identity
+published by that runtime and uses it for custom-agent configuration/SOUL, user
+skills and skill policy, uploads, thread data, and memory reads/writes. This
+keeps authenticated runs out of the shared `default` filesystem bucket, and the
+server-owned identity takes precedence over ordinary client-supplied `user_id`
+values. External identities such as email addresses are mapped to stable,
+collision-resistant directory-safe user IDs before accessing DeerFlow storage.
+The default DeerFlow service topology remains the Gateway-embedded runtime
+described above.
+
+Gateway runs automatically enforce native delivery for artifacts created or modified under `/mnt/user-data/outputs`: `present_files` must present at least one output produced by the current run, and the terminal `run.delivery` receipt must be durably recorded. Virtual artifact paths are resolved within the same authenticated user and thread scope that produced the output before the output-directory boundary is validated. Runs that do not produce output artifacts keep ordinary conversational behavior.
+
+DeerFlow's built-in custom events are available through both LangGraph streaming interfaces: native clients can continue subscribing to `stream_mode="custom"`, while callback-based integrations can consume the same payloads as `on_custom_event` records from `astream_events(version="v2")`. The callback event name matches the payload's `type` field.
+
 #### Docker Production Deployment
 
 `deploy.sh` supports building and starting separately:
@@ -368,14 +414,26 @@ See the [Sandbox Configuration Guide](backend/docs/CONFIGURATION.md#sandbox) to 
 DeerFlow supports configurable MCP servers and skills to extend its capabilities.
 For HTTP/SSE MCP servers, OAuth token flows are supported (`client_credentials`, `refresh_token`).
 For stdio MCP servers, per-tool call timeouts can be configured with `tool_call_timeout`.
+MCP tool names are prefixed with `<server_name>_` by default to prevent collisions across servers. If a server already namespaces its own tools, set `tool_name_prefix: false` on that server in `extensions_config.json` to keep the original names. Disable the prefix only when the resulting names remain unique across all enabled servers.
+Settings > Tools updates one MCP server at a time: an invalid stdio command on one server no longer blocks toggling another, while enabling that invalid server remains protected by the command allowlist and surfaces the backend validation message in the UI.
+Targeted updates accept both DeerFlow's `type` field and the MCP-spec `transport` field for SSE/HTTP servers.
+Runtime MCP and skill updates replace `extensions_config.json` atomically, so an interrupted write cannot leave the shared configuration truncated or partially written.
 MCP routing hints can also prefer a specific MCP tool for matching requests without forbidding other tools. When `tool_search` defers MCP schemas, matching routing metadata can auto-promote up to `tool_search.auto_promote_top_k` deferred schemas before the model call.
+
+The Gateway also includes a disabled-by-default, protocol-neutral foundation for durable long-running MCP tasks. It stores remote task handles outside model context, polls them under cross-worker leases, rejects results returned after their lease expires, schedules the next attempt from the time a remote status call finishes, isolates unexpected failures between claimed tasks, cancels in-flight polling during Gateway shutdown, and makes expired claims recoverable after restart. If remote submission succeeds but the handle cannot be persisted, the runtime makes a best-effort cancellation so an untracked task is not silently left running. The exact scoped duplicate-handle conflict is surfaced without cancellation because an existing durable row already owns that remote task. Durable recovery requires a SQL database backend (`sqlite` or `postgres`); the in-memory backend does not initialize this task repository. This foundation does not make existing MCP tools asynchronous by itself: `mcp_tasks.enabled` should remain `false` until a compatible task driver is configured. Ordinary `submit/status/cancel` tools and the future MCP Tasks extension can share the same runtime without making the model remember remote task IDs.
 See the [MCP Server Guide](backend/docs/MCP_SERVER.md) for detailed instructions.
+
+Security: pass per-request MCP credentials only through `config.context.secrets`;
+credentials must never be placed in either run metadata surface
+(`metadata.auth_token` or `config.metadata.auth_token`). See [MCP credential migration and cleanup](backend/docs/MCP_SERVER.md#migrating-legacy-mcp-credentials)
+for the supported interceptor flow and the required rotation and retained-copy
+cleanup when migrating from legacy metadata credentials.
 
 #### IM Channels
 
 DeerFlow supports receiving tasks from messaging apps. Channels auto-start when configured — no public IP required for any of them.
 
-DeerFlow can also expose user-owned IM channel connections in the workspace UI. When `channel_connections` is enabled, logged-in users can bind Telegram, Slack, Discord, Feishu/Lark, DingTalk, WeChat, or WeCom from the sidebar / Settings > Channels. It reuses the existing outbound `channels.*` transports, so no public IP or provider callback URL is required. Incoming IM messages then run under the connected DeerFlow user account. See [IM Channel Connections](backend/docs/IM_CHANNEL_CONNECTIONS.md) for setup and security notes.
+DeerFlow can also expose user-owned IM channel connections in the workspace UI. When `channel_connections` is enabled, logged-in users can bind Telegram, Slack, Discord, Feishu/Lark, DingTalk, WeChat, WeCom, or Buzz from the sidebar / Settings > Channels. It reuses the existing outbound `channels.*` transports, so no public IP or provider callback URL is required. Incoming IM messages then run under the connected DeerFlow user account. See [IM Channel Connections](backend/docs/IM_CHANNEL_CONNECTIONS.md) for setup and security notes.
 
 | Channel | Transport | Difficulty |
 |---------|-----------|------------|
@@ -385,6 +443,7 @@ DeerFlow can also expose user-owned IM channel connections in the workspace UI. 
 | WeChat | Tencent iLink (long-polling) | Moderate |
 | WeCom | WebSocket | Moderate |
 | DingTalk | Stream Push (WebSocket) | Moderate |
+| Buzz | Nostr relay (WebSocket, NIP-42) | Moderate |
 
 **Configuration in `config.yaml`:**
 
@@ -426,6 +485,8 @@ channels:
   telegram:
     enabled: true
     bot_token: $TELEGRAM_BOT_TOKEN
+    # Optional: render final Markdown replies as Telegram Rich Messages.
+    rich_messages: false
     allowed_users: []               # empty = allow all
 
   wechat:
@@ -503,6 +564,7 @@ DINGTALK_CLIENT_SECRET=your_client_secret
 
 1. Chat with [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the HTTP API token.
 2. Set `TELEGRAM_BOT_TOKEN` in `.env` and enable the channel in `config.yaml`.
+3. The bot accepts inbound text, photos, and documents (with or without captions). Hosted Bot API downloads are limited to 20 MB per attachment.
 
 **Slack Setup**
 
@@ -571,6 +633,17 @@ logging:
 ```
 
 When enabled, every Gateway HTTP response includes `X-Trace-Id`, logs include `trace_id`, and Langfuse traces created by that request include `metadata.deerflow_trace_id` with the same value.
+
+Gateway run history also records one terminal `run.delivery` receipt per run,
+including zero-output and crash-recovered runs. The receipt is persisted before
+the durable terminal run status during normal execution. Orphan recovery first
+atomically claims an expired lease and then idempotently backfills the receipt,
+so a stale recovery scan cannot overwrite a live run's detailed delivery facts.
+Receipt persistence remains best-effort during an event-store outage. Runs that
+fail checkpoint preflight (or are cancelled while waiting for prior
+finalization) keep the existing completion-data behavior: they receive the
+zero-delivery receipt but do not overwrite RunStore completion fields with an
+empty snapshot.
 
 #### LangSmith Tracing
 
@@ -658,9 +731,87 @@ A skill directory is a package boundary: once DeerFlow finds its `SKILL.md`, nes
 
 Users can explicitly activate an enabled skill for a single turn by starting the request with `/skill-name`, for example `/data-analysis analyze uploads/foo.csv`. DeerFlow loads that skill's `SKILL.md` as hidden current-turn context while leaving the base prompt limited to skill metadata. Slash activation respects disabled skills, custom-agent skill whitelists, and existing channel commands such as `/new` and `/help`.
 
-An enabled skill's `allowed-tools` policy applies only after that skill is explicitly slash-activated or captured in the thread's active skill context after a `read_file` load. Merely enabling, advertising, or listing a skill in a custom agent's `skills` allowlist does not reduce the lead agent's normal toolset. During a slash-activated run, that explicit skill's policy is authoritative: reading another `SKILL.md` may provide instructions but cannot widen the slash skill's tools. Without slash activation, policies from skills actually loaded into active context retain their union semantics. Once active, the policy filters both model-visible tool schemas and tool execution. Framework discovery tools (`tool_search` and `describe_skill`) remain available so an allowed deferred tool or installed skill can still be discovered, but discovery and promotion never grant permission to execute a business tool omitted from `allowed-tools`. `task` is not framework-exempt; a restrictive skill must list it explicitly to delegate to a subagent. Per-step policy decisions are internal runtime context and are removed from observable or persisted context copies. Registry failures and an active set with no remaining valid skill fail closed to framework-safe tools; individual stale paths are ignored only when another valid active skill remains. This is best-effort behavioral scoping, not a hard security boundary: loading skill instructions through another tool is not captured, and active-skill entries can be evicted from bounded context.
+An enabled skill's `allowed-tools` policy applies only after that skill is explicitly slash-activated or captured in the agent's active skill context after a `read_file` load. Merely enabling, advertising, or listing a skill in a custom agent or subagent `skills` allowlist does not reduce that agent's normal toolset; subagents use the same progressive discovery and activation policy as the lead agent. During a slash-activated run, that explicit skill's policy is authoritative: reading another `SKILL.md` may provide instructions but cannot widen the slash skill's tools. Without slash activation, policies from skills actually loaded into active context retain their union semantics. Once active, the policy filters both model-visible tool schemas and tool execution. Framework discovery tools (`tool_search` and `describe_skill`) remain available so an allowed deferred tool or installed skill can still be discovered, but discovery and promotion never grant permission to execute a business tool omitted from `allowed-tools`. `task` is not framework-exempt; a restrictive skill must list it explicitly to delegate to a subagent. Per-step policy decisions are internal runtime context and are removed from observable or persisted context copies. Registry failures and an active set with no remaining valid skill fail closed to framework-safe tools; individual stale paths are ignored only when another valid active skill remains. This is best-effort behavioral scoping, not a hard security boundary: loading skill instructions through another tool is not captured, and active-skill entries can be evicted from bounded context.
 
 When you install `.skill` archives through the Gateway, DeerFlow accepts standard optional frontmatter metadata such as `version`, `author`, and `compatibility` instead of rejecting otherwise valid external skills.
+
+Disabling a skill also removes it from the sandbox filesystem view, so shell commands and structured file tools follow the same enabled state. Local, Docker/AIO, hostPath provisioner, and newly created E2B sandboxes source `/mnt/skills` from enabled-only projections that update when public, custom, legacy, or managed integration skills are toggled, edited, created, deleted, or installed. Managed integration packages remain shared, while their projected filesystem visibility follows each user's enabled state. Multi-worker Gateways re-read on-disk enable state while rebuilding user projections, so a toggle handled by one worker is honored by another worker's next sandbox acquire. Existing E2B sandboxes retain their creation-time snapshot until they are recreated. PVC-backed provisioner skills keep their configured PVC snapshot/layout for now; dynamic PVC materialization is tracked separately.
+
+Managed integrations install shared read-only skill packs without mixing them
+into custom skills. The Lark/Feishu CLI integration is available under
+`Settings → Integrations → Lark / Feishu CLI`; an administrator installs or
+upgrades the official `lark-*` pack once under
+`{DEER_FLOW_HOME}/integrations/skills/lark-cli`, and every user discovers that
+same pack with an independent enabled state. Each user's app configuration and
+OAuth data remain isolated under
+`{DEER_FLOW_HOME}/users/{user_id}/integrations/lark-cli/{config,data}`. These
+secret directories are restricted to `0700`, regular credential files to
+`0600`, and symlinks are rejected.
+
+After installation, users can click **Connect Lark** to open a browser
+authorization link; no terminal authorization is required. The same UI can
+request additional permission domains such as Calendar, Docs, or Drive, or a
+specific OAuth scope reported by `lark-cli`. A cheap status refresh only
+inspects the local credential tree, so the UI reports **Credentials configured
+(not live-verified)** until an explicit browser completion performs live token
+verification. The action then remains **Reconnect Lark** so users can replace
+or extend authorization. If an agent hits missing Lark authorization during a
+conversation, the managed `lark-shared` guidance points the user back to the
+same settings entry with `?settings=integrations`.
+
+Once configured, **Change Lark app** lets a user point their DeerFlow account at
+a different Lark/Feishu app without a reinstall — either by pasting an existing
+app's App ID / App Secret or by re-registering an app in the browser. Switching
+is per-user (it never touches another user's credentials), validates the new
+credentials through the official CLI's live tenant-token probe before replacing
+the active app, and revokes/removes the previous app's OAuth tokens. A rejected
+credential change does not supersede an in-progress setup or authorization flow.
+DeerFlow then immediately opens browser authorization for the newly bound app so
+the switch ends in a usable connection.
+
+Installing the Lark skill pack resolves the latest official `larksuite/cli`
+release from GitHub and downloads that version's skills at install time, so the
+Gateway needs outbound internet access for that step (it falls back to a
+bottom-line pinned version if the release lookup fails). The settings page shows
+the installed version and, when available, the newest published version so an
+admin can reinstall to upgrade. Air-gapped deployments can pre-stage the archive
+and point `DEER_FLOW_LARK_CLI_SKILLS_ARCHIVE` at the local file. Integrity does
+not depend on a pinned archive byte hash (GitHub does not guarantee stable
+source-archive bytes); instead the download is restricted to the official GitHub
+host, every archive member passes structural safety guards, and a content hash
+of the effective installed skill tree (including DeerFlow's injected shared
+guidance) is recorded so content changes are auditable across reinstalls.
+
+When `sandbox.use` selects the AIO provider, the same install also downloads the
+official Linux amd64 and arm64 CLI release archives, verifies their published
+SHA-256 checksums, safely extracts one executable per architecture, and mounts
+the resulting runtime read-only at `/mnt/integrations/lark-cli/runtime`. An
+architecture-selecting launcher in that mount makes `lark-cli` available in the
+sandbox `PATH`. Air-gapped AIO deployments can pre-stage a symlink-free runtime
+tree containing `bin/lark-cli` plus both `linux-{amd64,arm64}/lark-cli` files and
+set `DEER_FLOW_LARK_CLI_SANDBOX_RUNTIME_DIR` to that directory.
+
+> **Sandbox trust boundary:** the browser never receives the Lark app secret, but
+> agent conversations run `lark-cli` inside the sandbox, so the per-user
+> credential directories are mounted into it: `config` (holding the long-lived
+> `appSecret`) is mounted **read-only**, its otherwise empty `config/locks`
+> subdirectory is over-mounted writable for `lark-cli` coordination files, and
+> `data` (refreshable OAuth tokens) is writable. The credential-bearing config
+> and data mounts remain *readable* by any process the agent runs there, so code
+> reached via prompt injection in a tool result could read them. Treat the
+> sandbox as inside the Lark credential trust boundary until the sidecar
+> credential-broker follow-up removes these mounts from sandbox execution.
+
+For remote/Kubernetes deployments (the provisioner backend), the sandbox
+`lark-cli` runtime can instead be supplied by an optional init container that
+copies the binaries into a shared `emptyDir` — no install-time GitHub download and
+no hostPath/PVC runtime mount. Publish the image under
+[`docker/lark-cli-init`](docker/lark-cli-init/README.md) and set
+`LARK_CLI_INIT_IMAGE` on the provisioner; it stays off (legacy behavior) when
+unset. The Lark integration status (`GET /api/integrations/lark/status`) reports
+`sandbox_runtime_mode` and `sandbox_runtime_ready` so the Settings UI shows
+whether `lark-cli` will actually be present in the sandbox at chat time, rather
+than a green status hiding a later `command not found`.
 
 If a trusted operator manages the configured skills directory through an external mount such as MinIO, NFS, or CSI, an administrator can call `POST /api/skills/reload` after changing files. This invalidates skill prompt caches for the current Gateway process and waits up to the bounded refresh timeout so subsequent runs rescan the latest files; running tasks are unchanged. A loader-level filesystem failure returns a generic server error and preserves the last successfully loaded process cache rather than publishing an empty catalog. Uvicorn workers and Kubernetes Pods must each be targeted separately. Direct mount writes bypass the validation, SkillScan, and history applied by DeerFlow's install/edit APIs, so only operator-controlled systems should have write access.
 
@@ -675,11 +826,27 @@ uv run python -m deerflow.skills.review.cli ../skills/public/data-analysis --for
 
 Tools follow the same philosophy. DeerFlow comes with a core toolset — web search, web fetch, rendered web capture, file operations, bash execution — and supports custom tools via MCP servers and Python functions. Swap anything. Add anything.
 
+Advanced deployments can enable pluggable authorization with `authorization.enabled` in `config.yaml`. A configured `AuthorizationProvider` filters denied tools before they reach the model or deferred-tool catalog, then the same provider is checked again before every business-tool execution through the existing guardrail middleware. Gateway `threads:*` and `runs:*` route permissions are derived from the same provider, while existing owner checks and admin-only management gates remain in force. A generated `tool_search` may bypass the second tool check only when it fronts the current build's already-filtered deferred catalog. The built-in RBAC provider supports per-role `tools` and `routes` allow/deny policies and validates that `default_role` names a configured role; authorization is disabled by default. See `config.example.yaml` and the [authorization RFC](docs/plans/2026-07-10-pluggable-authorization-rfc.md).
+
 Advanced deployments can also extend the agent runtime itself by declaring zero-argument `AgentMiddleware` classes under `extensions.middlewares` in `config.yaml` or `extensions_config.json`. DeerFlow loads the same configured class list into the lead-agent and subagent pipelines after their built-in runtime middlewares and loop/token guards, but before the terminal-response/safety/clarification tail, so enterprise forks can add domain guardrails, tool-call governance, or observability hooks without patching the built-in middleware builders. Missing packages, invalid classes, and broken modules fail loudly at agent creation. Treat `config.yaml` and `extensions_config.json` as trusted operator-controlled files: middleware paths are code execution, just like custom tool, model, sandbox, guardrail, MCP server, and MCP interceptor declarations. Gateway skill/MCP toggle endpoints preserve this field but do not expose an API write path for `extensions.middlewares`. Per-context parameterization and separate lead-only/subagent-only middleware lists are not supported yet.
+
+For packaged and configurable middleware integrations, use the top-level `plugins:` list
+in `config.yaml`. A plugin exposes `module.path:install`, depends only on the standalone
+`deerflow-extension-api` contract package, and can contribute isolated middleware to
+semantic lead/subagent model or tool positions without patching DeerFlow's builders.
+Plugin order is deterministic, per-plugin configuration is passed to `install()`, and
+`required: true` makes load failure abort startup; otherwise failures are reported and
+skipped. Plugins load once when the Gateway app is constructed, so changes require a
+restart. Because this imports Python code, `plugins:` is intentionally unavailable through
+the API-writable `extensions_config.json`. In Docker deployments, install the plugin in the
+Gateway image rather than only in the host environment. See `config.example.yaml` for
+configuration.
 
 Gateway-generated follow-up suggestions now normalize both plain-string model output and block/list-style rich content before parsing the JSON array response, so provider-specific content wrappers do not silently drop suggestions.
 
 The Web UI composer can polish draft input before sending. The rewrite runs as a short Gateway LLM request using the `input_polish` model configuration, keeps slash skill prefixes such as `/data-analysis`, and only replaces the local draft after the user clicks the polish button; it does not create a thread run or persist a message.
+
+When the agent asks for clarification, the Web UI shows the structured response card but keeps the normal composer available. Users can complete the card or send a free-form chat message to bypass it; that message closes the latest pending clarification and becomes the agent's next input.
 
 Unsent Web UI composer drafts survive page reloads and switching between conversations within the same browser tab. Drafts are isolated by user, agent, and conversation, include a selected slash skill when present, and are cleared once a send is accepted. Attachments and quoted conversation context are intentionally not persisted.
 
@@ -692,7 +859,11 @@ Interrupted first-turn runs still persist a fallback conversation title, so stop
 
 Streaming Markdown responses animate only newly arrived words; text that is already visible is not faded out and replayed when the next chunk extends the same block.
 
-In the Web UI, completed assistant turns can be branched into a new main conversation. The new thread starts from that turn's checkpoint. Because workspace files are not checkpointed, the branch only receives a best-effort copy of the current workspace when you branch from the latest turn; branching from an older turn keeps just the restored message history so the branch never inherits files that were created in a later part of the conversation.
+In the Web UI, completed assistant turns can be branched into a new main conversation. The new thread starts from that turn's checkpoint and keeps the preceding replay checkpoint, so the branched response can be regenerated immediately. The latest response can also be regenerated after an interruption, even when its streamed partial text never reached a checkpoint. Regenerating the latest response preserves the thread's current title, including a title you renamed manually after the original response. Legacy or imported histories without checkpoint parent links use a bounded chronological fallback; if no earlier replay checkpoint exists, branching still succeeds with the legacy single-checkpoint shape, while regeneration remains unavailable for that inherited response. Existing single-checkpoint branches are left unchanged rather than attempting an unsafe checkpoint copy. Because workspace files are not checkpointed, the branch only receives a best-effort copy of the current workspace when you branch from the latest turn; branching from an older turn keeps just the restored message history so the branch never inherits files that were created in a later part of the conversation.
+
+The Web UI reports completed task time once per run. This is total wall-clock time—including model reasoning, tool calls, and waiting—not a per-step or model-only thinking duration. Reasoning content remains available through its own separate disclosure.
+
+In the Web UI, the latest completed user turn can also be edited and rerun from the message toolbar. DeerFlow restores the conversation checkpoint before that user message, submits the edited text as a new user message, and hides the superseded turn once the replay is in progress or succeeds. This is a conversation-state replay only: files, memory updates, and external tool side effects are not undone.
 
 Web UI chat links percent-encode custom thread identifiers before placing them in route segments, so reserved URL characters such as `#` and `?` do not change which conversation is opened.
 
@@ -707,6 +878,9 @@ Web UI chat links percent-encode custom thread identifiers before placing them i
 
 /mnt/skills/custom
 └── your-custom-skill/SKILL.md      ← yours
+
+/mnt/skills/integrations
+└── lark-cli/lark-doc/SKILL.md      ← managed, read-only
 ```
 
 #### Claude Code Integration
@@ -752,31 +926,81 @@ Supported commands:
 
 After each Gateway-backed run, DeerFlow evaluates the visible conversation against the active goal with a non-thinking evaluator model. The evaluator must return a typed blocker (`missing_evidence`, `needs_user_input`, `run_failed`, `external_wait`, or `goal_not_met_yet`) plus visible evidence. DeerFlow only injects a hidden continuation when the latest assistant turn is durably checkpointed, the blocker is `goal_not_met_yet`, the thread did not change during evaluation, and the no-progress breaker has not fired. The safety cap defaults to 8 hidden continuations, and repeated identical non-progress evaluations stop after 2 attempts. `/goal clear` and any user-authored new input win over queued continuations. When the goal is satisfied, DeerFlow clears it automatically and publishes the updated thread state.
 
-The Web UI shows the active goal above the composer. The same command is available from the TUI and supported IM channels. In the Web UI and supported IM channels, setting `/goal <completion condition>` also starts a run with the condition as the task; status and clear commands only manage goal state.
+The Web UI shows the active goal above the composer. The same command is available from the TUI and supported IM channels. In the Web UI and supported IM channels, setting `/goal <completion condition>` also starts a run with the condition as the task; status and clear commands only manage goal state. Setting or clearing a goal is rejected while that thread has a run in flight, including a run owned by another Gateway worker, so the goal checkpoint cannot branch away from an active run's checkpoint lineage.
 
 ### Manual Context Compaction
 
-Use `/compact` in the Web UI composer to summarize older context for the current thread. DeerFlow keeps the full chat visible, but future model calls use the compacted summary plus recent messages. The command is ignored when there is not enough history to compact, and it is blocked while the thread has a run in flight.
+Use `/compact` in the Web UI composer to summarize older context for the current thread. DeerFlow keeps the full chat visible, but future model calls use the compacted summary plus recent messages. The command is ignored when there is not enough history to compact, and it is blocked while the thread has a run in flight, including when that run is owned by another Gateway worker. If a multi-worker reservation loses its lease, DeerFlow cancels the checkpoint writer before the replacing run proceeds and returns a retryable conflict after cleanup. Thread-title edits are serialized through the same state-write boundary and show a conflict without closing the rename dialog when a run is active.
+
+The chat header also shows a context-window gauge when the selected model has a positive `context_window` configured. It estimates the latest materialized checkpoint's message tokens and keeps the previous same-thread percentage visible while data refetches, independently of the cumulative token-usage setting.
 
 ### Sub-Agents
 
-Complex tasks rarely fit in a single pass. DeerFlow decomposes them.
+Sub-agents are an optimization, not the default response to a complex request.
 
-The lead agent can spawn sub-agents on the fly — each with its own scoped context, tools, and termination conditions. Sub-agents run in parallel when possible, report back structured results, and the lead agent synthesizes everything into a coherent output. Their configured skills are resolved from the same user-scoped catalog as the lead agent, so user-owned custom skills remain available without exposing another user's version. Their internal AI and tool messages stay scoped to the delegated graph instead of entering the parent chat stream. Long-running sub-agents compact older history when summarization is enabled and re-inject the summary as guarded, hidden durable context before continuing, so recent assistant/tool activity remains grounded in the task. Provider/model request failures are reported as failed sub-agent tasks rather than successful results, so the lead agent and Web UI can react to them correctly. Collapsed sub-agent cards show the effective model and, when the provider returns usage metadata, a cumulative token total that updates after each completed sub-agent LLM call and persists after a reload. When token usage tracking is enabled, completed sub-agent usage is also attributed back to the dispatching step.
+The lead agent can spawn sub-agents on the fly — each with its own scoped context, tools, and termination conditions — when delegation has clear net benefit from real parallel latency, specialist capability, or context isolation. It keeps interdependent scopes and overlapping side effects out of parallel dispatch; a bounded sequential chain can still run in one sub-agent when specialist or context-isolation benefit clearly wins. The lead uses the fewest useful sub-agents and re-evaluates later batches instead of fanning out solely because a task is large or multi-step. Sub-agents report back structured results, and the lead agent verifies and synthesizes them into a coherent output. Their configured skills are resolved from the same user-scoped catalog as the lead agent, so user-owned custom skills remain available without exposing another user's version. Their internal AI and tool messages stay scoped to the delegated graph instead of entering the parent chat stream. Reloaded thread history enforces the same boundary: callback-captured sub-agent AI responses remain available in run-event diagnostics but are excluded from the parent transcript, while the parent `task` result remains attached to its subtask card. Long-running sub-agents compact older history when summarization is enabled and re-inject the summary as guarded, hidden durable context before continuing, so recent assistant/tool activity remains grounded in the task. Provider/model request failures are reported as failed sub-agent tasks rather than successful results, so the lead agent and Web UI can react to them correctly. Collapsed sub-agent cards show the effective model and, when the provider returns usage metadata, a cumulative token total that updates after each completed sub-agent LLM call and persists after a reload. When token usage tracking is enabled, completed sub-agent usage is also attributed back to the dispatching step.
 
-This is how DeerFlow handles tasks that take minutes to hours: a research task might fan out into a dozen sub-agents, each exploring a different angle, then converge into a single report — or a website — or a slide deck with generated visuals. One harness, many hands.
+For example, independent read-only research can run concurrently when the wall-clock savings outweigh duplicated discovery and synthesis cost, while a repository refactor with shared files and sequential test feedback remains with the lead agent. When `max_concurrent_subagents` is `1`, parallel and multi-batch routing guidance is disabled; delegation remains available only for material specialist or context-isolation benefit.
 
 ### Sandbox & File System
+
+`E2BSandboxProvider` uses `wait` as its default overflow policy. It waits for
+`acquire_timeout`, then fails the agent turn. DeerFlow does not retry the turn
+automatically. Clients can use the structured error to schedule a retry.
+
+Use `burst` with `burst_limit` to permit bounded extra VMs. The `wait` and
+`reject` policies use only `replicas`. The `reject` policy can remove one warm
+VM before it returns an error.
+
+With in-memory ownership, `replicas` limits one Gateway process. With Redis
+ownership, E2B shares one capacity Hash between workers using the same
+`sandbox.ownership.key_prefix`; `replicas` (plus a configured burst) is then a
+deployment-wide hard limit. Use one unique prefix and the same effective limit
+per deployment. To change the limit, stop its Gateways, delete the capacity
+Hash, and restart; mismatched workers fail closed.
+
+The Hash counts remote VMs and in-flight creates, repairs interrupted creates
+from E2B metadata, grace-protects stale inventory omissions, and blocks new
+creates while Redis or initial inventory is unavailable. Run Redis with persistence, non-evicting memory, and HA.
+
+E2B acquisition uses a bounded executor. Waiting acquisitions do not use the
+default asyncio executor.
+
+An E2B VM keeps its slot until E2B confirms destruction. This rule covers
+create and reclaim operations. Discovery can find a VM from another Gateway.
+Shutdown closes an unowned discovery client without destroying its VM.
+Release stops counting a transition when the VM enters the warm pool.
+Shutdown races retry remote cleanup after a transient kill failure.
+Reset destroys tracked active and warm E2B VMs. The old provider instance
+cannot accept new acquisitions.
 
 DeerFlow doesn't just *talk* about doing things. It has its own computer.
 
 Each task gets its own execution environment with a full filesystem view — skills, workspace, uploads, outputs. The agent reads, writes, and edits files. It can view images and, when configured safely, execute shell commands.
 
+The built-in `grep` tool searches either one text file or all matching text files below a directory, so an agent can search an uploaded document directly without first broadening the request to the entire uploads directory.
+
 Image bytes loaded for a vision-model call are transient: DeerFlow removes the hidden base64 message after the model consumes it so later checkpoints do not keep duplicating that payload.
 
 After each run, DeerFlow records a workspace change summary for the run-owned `workspace` and `outputs` directories. The Web UI shows a compact "files changed" badge on the assistant turn; opening it reveals created, modified, and deleted files with text diffs when safe to display. Uploads are excluded because they are user inputs, not agent-generated changes. Large, binary, or sensitive-looking files are shown as metadata only.
 
+Files presented through `present_files` remain part of the thread's artifact state, and the Web UI restores the artifact panel and selected document after a page refresh. The currently selected formal artifact is refreshed once when the run finishes so edits become visible without a manual reload. Existing UTF-8 text artifacts under `/mnt/user-data/outputs` can also be edited and explicitly saved from the panel on Unix and Windows while the thread is idle; saves use content revisions to prevent overwriting agent changes.
+
+Text artifacts are streamed with HTTP byte-range support. The Web UI initially
+loads at most 1 MiB, shows the preview size when a file is larger, and waits for
+an explicit **Load full file** action before fetching the remainder or mounting
+the full code editor. Active HTML, XHTML, and SVG artifacts remain forced
+downloads at the Gateway boundary.
+
 With `AioSandboxProvider`, shell execution runs inside isolated containers. With `LocalSandboxProvider`, file tools still map to per-thread directories on the host, but host `bash` is disabled by default because it is not a secure isolation boundary. Re-enable host bash only for fully trusted local workflows. Host bash commands have a wall-clock timeout, and long-lived processes should be started in the background with output redirected to a workspace log.
+
+`AioSandboxProvider` normally detects thread-data mounts from its backend: local
+containers use the mounted gateway directories, while remote/provisioner
+sandboxes receive uploaded files through explicit synchronization. Deployments
+where both sides are guaranteed to share the same thread user-data directories
+can set `sandbox.thread_data_mounts: true` to skip that per-upload sandbox
+acquire and sync. Leave the field unset for automatic detection; setting it
+incorrectly can make uploaded files unavailable inside the sandbox.
 
 This is the difference between a chatbot with tool access and an agent with an actual execution environment.
 
@@ -802,6 +1026,13 @@ uv run playwright install chromium
 
 Then uncomment the `group: browser` tool entries in `config.yaml` (`browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_get_text`, `browser_back`, `browser_screenshot`, `browser_close`). `make dev` / Docker startup detects an enabled `browser_navigate` tool and preserves the `browser` extra on dependency syncs. The Gateway fails startup if browser control is configured but Playwright is missing, and `/api/features` hides the Browser UI unless the backend can actually serve it. Keep `headless: true` and `allow_private_addresses: false` for anything but local, trusted debugging. Attaching to an existing Chrome with `cdp_url` cannot enforce DeerFlow's subresource/redirect SSRF guard and therefore fails closed unless `allow_unguarded_cdp: true` explicitly acknowledges that risk; use it only with a trusted local browser. Browser sessions are process-local; keep `GATEWAY_WORKERS=1` while this tool group is enabled because ordinary uvicorn worker dispatch does not provide thread affinity.
 
+Existing, non-mock Custom Agent chats expose the same Browser Live controls when browser control is available and the agent either leaves `tool_groups` unrestricted or includes the `browser` group. An explicit tool-group allowlist without `browser` keeps those controls hidden.
+
+The workspace Browser Live client negotiates binary JPEG WebSocket frames,
+keeps only the newest pending frame per display refresh, and revokes replaced
+object URLs. Gateway control messages remain JSON, and clients that do not
+request the binary capability retain the legacy JSON/base64 frame protocol.
+
 ### Context Engineering
 
 **Isolated Sub-Agent Context**: Each sub-agent runs in its own isolated context. This means that the sub-agent will not be able to see the context of the main agent or other sub-agents. This is important to ensure that the sub-agent is able to focus on the task at hand and not be distracted by the context of the main agent or other sub-agents.
@@ -816,11 +1047,30 @@ Then uncomment the `group: browser` tool entries in `config.yaml` (`browser_navi
 
 Most agents forget everything the moment a conversation ends. DeerFlow remembers.
 
+DeerFlow also includes an optional `openviking` memory backend. It uses the
+official `langchain-openviking` package to capture completed turns into stable
+OpenViking Sessions and recall memory for prompt injection while leaving
+DeerMem as the default. The initial integration supports one DeerFlow user with
+one credential-bound OpenViking USER API key in `memory.mode: middleware` and
+does not inherit arbitrary HTTP headers from `ovcli.conf`.
+See [OpenViking memory backend](docs/OPENVIKING.md) for its configuration,
+behavior, and current boundaries.
+
 Across sessions, DeerFlow builds a persistent memory of your profile, preferences, and accumulated knowledge. The more you use it, the better it knows you — your writing style, your technical stack, your recurring workflows. Memory is stored locally and stays under your control.
+
+DeerMem remains the default local backend. An opt-in `mem0` backend is also
+available for the hosted mem0 Platform API or API-compatible self-hosted
+servers. Its token-bearing `base_url` must use HTTPS by default; plaintext HTTP
+requires an explicit local-development opt-in. See the
+[mem0 backend guide](backend/packages/harness/deerflow/agents/memory/backends/mem0/README.md).
 
 Memory updates now skip duplicate fact entries at apply time, so repeated preferences and context do not accumulate endlessly across sessions.
 
-File-backed memory now separates global user context from agent facts. Each user has one `memory.json` containing only the project-independent `user` and `history` summaries; every fact is a canonical Markdown file below `agents/{agent_name}/facts/`. Existing lead-agent middleware, API, Settings, import/export, and embedded-client calls that omit `agent_name` resolve inside DeerMem to the reserved `__default__` bucket. That bucket is outside the valid custom-agent name grammar, so a real custom agent named `lead-agent` has a separate fact repository and deleting a custom agent cannot delete a memory-only directory without `config.yaml`. Public agent identifiers are case-insensitive and canonicalized to lowercase. Runtime/API readers still receive a compatibility `facts` array for the selected/default agent, so the frontend does not read agent facts from `memory.json`; structured Markdown `source` metadata is projected to the historical string field at the MemoryManager boundary. An unscoped Clear All first migrates facts from unread legacy per-agent JSON without adopting its soon-to-be-cleared summaries, then removes shared summaries and facts from every agent bucket while preserving agent configuration files, so a later read cannot resurrect skipped legacy facts; an explicitly agent-scoped clear removes only that agent's facts. On first normal read, old facts embedded in the user JSON are migrated automatically to `__default__`; facts written to the earlier implicit `lead-agent` bucket are also moved when that directory is not a real custom agent. Migration and normal writes notify a configured retrieval adapter only after durable storage locks are released. Journaled writes, a shared user lock, and optimistic user-memory revisions prevent silent lost updates. Retrieval engines remain optional behind the memory retrieval-adapter contract, with an explicit local substring fallback when no adapter is configured.
+In the default DeerMem `middleware` mode, automatic extraction now classifies every proposed fact by scope, durability, and authority before a deterministic write gate accepts it. Only durable, descriptive user-level facts are stored; current-thread or project constraints and one-time action permissions stay in conversation state. User-global summaries require both user scope and descriptive authority, contradiction removals are scope-gated, and a replacement-dependent removal is applied only when its replacement actually survives validation and storage. These classification labels are extraction-only metadata, add no extra LLM call, and are not written into the fact files. The explicit CRUD tools in `memory.mode: tool` remain a separate, model-directed path. Deployments that override the bundled DeerMem prompts via `memory.backend_config.prompts_dir` must add the new classification fields to their custom templates (the `memory_update` fact/summary/removal formats and the `consolidation` consolidated-fact schema): the write gate fails closed, so an un-migrated template stops every extraction-driven fact, summary, and removal write, surfacing only through the `rejected_by_scope_gate` metrics and the high-rejection-rate warning.
+
+File-backed memory now separates global user context from agent facts. Each user has one `memory.json` containing only the project-independent `user` and `history` summaries; every fact is a canonical Markdown file below `agents/{agent_name}/facts/`. Existing lead-agent middleware, API, Settings, import/export, and embedded-client calls that omit `agent_name` resolve inside DeerMem to the reserved `__default__` bucket. That bucket is outside the valid custom-agent name grammar, so a real custom agent named `lead-agent` has a separate fact repository and deleting a custom agent cannot delete a memory-only directory without `config.yaml`. Public agent identifiers are case-insensitive and canonicalized to lowercase. Runtime/API readers still receive a compatibility `facts` array for the selected/default agent, so the frontend does not read agent facts from `memory.json`; structured Markdown `source` metadata is projected to the historical string field at the MemoryManager boundary. An unscoped Clear All first migrates facts from unread legacy per-agent JSON without adopting its soon-to-be-cleared summaries, then removes shared summaries and facts from every agent bucket while preserving agent configuration files, so a later read cannot resurrect skipped legacy facts; an explicitly agent-scoped clear removes only that agent's facts. On first normal read, old facts embedded in the user JSON are migrated automatically to `__default__`; facts written to the earlier implicit `lead-agent` bucket are also moved when that directory is not a real custom agent. Migration and normal writes notify the configured retrieval adapter only after durable storage locks are released. DeerMem uses a scope-aware SQLite FTS5/BM25 adapter by default, stores only rebuildable derived index data under `.retrieval/`, and rebuilds it in the background during Gateway startup or lazily on the first scoped search. A corrupt derived index is recreated automatically. Set `memory.backend_config.retrieval_adapter` to an empty string to disable it and use the local substring fallback. Chinese tokenization is optional; install the backend `memory-zh` extra (`uv sync --extra memory-zh`) for jieba-assisted sub-phrase search. Journaled writes, a shared user lock, and optimistic user-memory revisions prevent silent lost updates.
+
+Memory injection follows the configured operation mode. In `middleware` mode, DeerMem injects the user-global summaries and the selected agent's facts. In `tool` mode, the automatic `<memory>` block contains only the global `user` and `history` summaries; agent facts are retrieved explicitly through `memory_search`, avoiding duplicate automatic and tool-returned fact context. Setting `memory.injection_enabled: false` still disables the entire block in either mode.
 
 Single-fact repository operations are genuinely incremental: an upsert/delete reads, journals, writes, and re-indexes only the addressed fact files, and returns an explicit incomplete delta rather than a cache-dependent fake full document. Summary change sets merge the supplied `user`/`history` child keys over the persisted sections so a partial update cannot erase omitted siblings; full imports normalize both sections to the complete compatibility schema before applying replacement values. Manager/API compatibility methods materialize a fresh full document only when their public response contract requires one. Fact-level point operations use separate expected user-memory and fact revisions and may explicitly rebase when every addressed fact precondition still holds. Snapshot-derived operations such as scoped clear, capped create, consolidation, and trimming never replay stale delete/trim sets: a manifest conflict reloads the complete document and recomputes the operation, with a bounded retry. Fact paths use the first two hexadecimal characters of `SHA-256(fact_id)` so generated `fact_*` IDs distribute across shards. The cache token combines the shared JSON's nanosecond mtime, size, and persisted revision; this prevents coarse-mtime same-size writes from returning stale data without scanning fact files. Direct out-of-band Markdown edits require an explicit reload. Storage-specific conflicts and corruption are translated at the MemoryManager boundary; the Gateway returns conflict as HTTP 409 and a stable, non-sensitive corruption error as HTTP 500. Full-document `save()` remains a compatibility API and computes a diff before writing; malformed or missing `facts` can no longer silently erase an agent's Markdown files. Legacy migration preserves non-empty `user`/`history` before deleting an agent `memory.json`; conflicting summaries keep the legacy file and fail loudly instead of choosing a winner.
 
@@ -846,9 +1096,92 @@ DeerFlow is model-agnostic — it works with any LLM that implements the OpenAI-
 - **Multimodal inputs** for image understanding and video comprehension
 - **Strong tool-use** for reliable function calling and structured outputs
 
+## Nexus Skill Receiver Contract
+
+DeerFlow owns the canonical, versioned service contract used by DNX Nexus to
+discover receiver capabilities, search the controlled user directory, submit
+durable first-install operations for native `GLOBAL` or exact `USER` targets,
+and read scope-specific Observed state. The OpenAPI source is
+[`contracts/openapi/nexus-skill-receiver-v1.yaml`](contracts/openapi/nexus-skill-receiver-v1.yaml),
+with provider fixtures in the adjacent `.conformance.json` file.
+
+The same artifact defines the `http_v1` binding and the P0 `ssh_v1` forced-command
+binding. SSH accepts only the five allowlisted actions, reuses the canonical
+component schemas, and supports controlled directory reads plus exact `USER`
+first installation; it does not publish a separate CLI schema or enable `GLOBAL`.
+
+The Gateway mounts the canonical capability, controlled-directory, operation,
+operation-poll, and Observed paths behind dedicated service-auth and runtime
+Ports. HTTP and SSH use one transport-neutral handler for durable, idempotent
+`USER` first installation, exact Observed success, and restart replay. Archive
+digest/size, traversal, symlink, expansion, manifest-name, target eligibility,
+same-name, and idempotency conflicts are checked before success. Durable phases
+and canonical request bindings live in `nexus_receiver_operations`; atomic,
+owner-only package staging plus expiring execution claims allow nonterminal
+operations to resume after restart without another submit. The Skill tree and
+redacted receiver identity commit together in disabled state, then activation
+and exact `enabled=true` / `loadState=loaded` observation close the operation.
+Each resumed write attempt revalidates the exact controlled USER identity and
+eligibility; failures after the atomic tree commit retain an explicit disabled
+state rather than falling back to the normal enabled-by-default behavior.
+
+This implementation is not production enablement. `config.yaml` exposes a
+startup-only `nexus_receiver` release gate that defaults to `enabled: false` and
+contains only opaque host-key/principal-map Secret references and reviewed
+policy revision IDs, never Secret values. A deployment-owned bootstrap must
+atomically inject the authenticator, install-target resolver, durable operation
+and package stores, USER installer, and closed transport-principal mapper; the
+repository supplies no such production bootstrap, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
+`409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
+capabilities remain `read_only`/`unsupported`. The
+forced-command module entry accepts only the five exact `nexus-skill-receiver-v1`
+commands and canonical bounded frames. The opt-in
+`docker/docker-compose.nexus-receiver-ssh.yaml` profile adds a loopback-bound,
+dedicated-account sshd image whose principal-map Secret generates only
+`restrict,command=...` keys and whose host key is copied from a mounted Secret;
+it is absent from the base stack and also requires explicit environment and
+config gates. Its repository entry point intentionally has no runtime context
+provider and returns one redacted Problem with exit `10` until the deployment
+bootstrap is approved. When a complete Gateway bootstrap is injected, one
+supervised recovery service runs `recover_pending` at startup, after durable
+submit notifications, and periodically. The opt-in overlay shares a private
+Unix datagram socket between Gateway and the one-shot SSH process; the datagram
+carries only a fixed wake token and merely triggers a fenced durable-store scan.
+Periodic recovery remains the fail-safe if notification is unavailable. Real credentials and rotation,
+service-auth/directory privacy policy, stable RBAC principal ownership,
+trust/compatibility decisions, a stable single-worker/process ownership policy,
+and native `GLOBAL` support remain release gates. Nexus
+must not fall back to `/api/skills`, and browser clients must continue to call
+the Nexus public API instead of this service-to-service boundary.
+
+An independent acceptance-only profile is available for the frozen Skill Hub
+P0 USER rehearsal fixture. It must be layered explicitly with
+`docker/docker-compose.nexus-receiver-acceptance.yaml`, pins the reviewed Nexus
+preparation manifest and DeerFlow receiver revisions, and requires an isolated
+PostgreSQL database plus synthetic three-user directory and principal-map
+Secret. The profile uses the real SQL operation store, durable package staging,
+native USER installer/activation, and one-shot deterministic fault controls.
+It is disabled unless `DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED=true`; its
+HTTP authenticator always denies, and it neither enables production writes nor
+adds `GLOBAL`, upgrade, or delete behavior. See
+[`backend/docs/NEXUS_RECEIVER_ACCEPTANCE.md`](backend/docs/NEXUS_RECEIVER_ACCEPTANCE.md)
+for readiness-only validation.
+
 ## Embedded Python Client
 
 DeerFlow can be used as an embedded Python library without running the full HTTP services. The `DeerFlowClient` provides direct in-process access to all agent and Gateway capabilities, returning the same response schemas as the HTTP Gateway API. The HTTP Gateway also exposes `DELETE /api/threads/{thread_id}` to remove DeerFlow-managed local thread data after the LangGraph thread itself has been deleted:
+
+Thread IDs may be supplied by callers and do not have to be UUIDs. Explicit
+IDs must contain 1–64 ASCII letters, digits, hyphens, or underscores
+(`^[A-Za-z0-9_-]{1,64}$`). DeerFlow generates a UUID only when `thread_id` is
+omitted or `None`; an explicitly supplied empty string is invalid.
+Existing route-addressable threads created under older, looser rules remain
+readable and deletable, but cannot start new runs or create new filesystem or
+sandbox state. Legacy deletion skips local path cleanup when the ID is not
+safe under the canonical contract. For canonical legacy threads whose
+conversation exists only in LangGraph checkpoints, DeerFlow seeds an empty
+run-event feed from the checkpoint before the first new run so
+`/messages/page` keeps both the old and new turns.
 
 ```python
 from deerflow.client import DeerFlowClient
@@ -862,6 +1195,10 @@ response = client.chat("Analyze this paper for me", thread_id="my-thread")
 for event in client.stream("hello"):
     if event.type == "messages-tuple" and event.data.get("type") == "ai":
         print(event.data["content"])
+    elif event.type == "messages-tuple" and event.data.get("type") == "tool" and "artifact" in event.data:
+        # Structured tool artifacts (for example, ask_clarification cards)
+        # are preserved when the ToolMessage provides one.
+        print(event.data["artifact"])
 
 # Configuration & management — returns Gateway-aligned dicts
 models = client.list_models()        # {"models": [...]}
@@ -872,6 +1209,8 @@ client.set_goal("thread-1", "finish the implementation and make all tests pass")
 client.get_goal("thread-1")       # {"goal": {...}} or {"goal": None}
 client.clear_goal("thread-1")
 ```
+
+The HTTP Gateway accepts `values`, `messages-tuple`, `updates`, `debug`, `tasks`, `checkpoints`, and `custom` stream modes. Unsupported modes such as `messages` and `events`, unsupported non-default run options such as webhooks, delayed execution, or `multitask_strategy="enqueue"`, and undeclared SDK options such as checkpoint durability overrides return `422` before execution instead of being silently ignored or downgraded.
 
 All dict-returning methods are validated against Gateway Pydantic response models in CI (`TestGatewayConformance`), ensuring the embedded client stays in sync with the HTTP API schemas. See `backend/packages/harness/deerflow/client.py` for full API documentation.
 
@@ -991,10 +1330,12 @@ Enable background polling with `config.yaml -> scheduler.enabled`. Manual trigge
 uv pip install 'deerflow-harness[tui]'        # optional 'textual' dependency
 
 deerflow                                      # launch the terminal UI (TTY required)
+deerflow --tui-transparent                    # use the terminal's default background
 deerflow --continue                           # resume the most recent thread
 deerflow --resume THREAD                      # resume a thread by id
 deerflow --print "summarize this repo"        # headless one-shot answer to stdout
 deerflow --json  "hello"                       # headless newline-delimited StreamEvents
+deerflow --recursion-limit 250 --print "task" # override the headless agent-loop limit
 ```
 
 A keyboard-driven chat surface with a streaming transcript (Markdown-rendered answers), compact tool-activity cards, a `/` slash-command palette, display-only `/clear`, `/goal` goal management, `/model` and `/threads` pickers, input history, and `Esc` / `Ctrl+C` interrupt. `/clear` removes rows from the current terminal display without deleting the thread or its persisted conversation; `/new` and `/clear` ask you to wait during an active run instead of resetting in-flight display state. Sessions opened in the TUI also appear in the Web UI sidebar — it writes the shared thread store under the local default user, so terminal and web stay in sync **without running the Gateway**.
@@ -1007,6 +1348,7 @@ See [backend/docs/TUI.md](backend/docs/TUI.md) for the full guide.
 - [Configuration Guide](backend/docs/CONFIGURATION.md) - Setup and configuration instructions
 - [Architecture Overview](backend/CLAUDE.md) - Technical architecture details
 - [Backend Architecture](backend/README.md) - Backend architecture and API reference
+- [Nexus Skill Receiver OpenAPI](contracts/openapi/nexus-skill-receiver-v1.yaml) - Canonical receiver contract and version rules
 
 ## ⚠️ Security Notice
 
@@ -1016,6 +1358,27 @@ DeerFlow has key high-privilege capabilities including **system command executio
 
 - **Unauthorized illegal invocation**: Agent functionality could be discovered by unauthorized third parties or malicious internet scanners, triggering bulk unauthorized requests that execute high-risk operations such as system commands and file read/write, potentially causing serious security consequences.
 - **Compliance and legal risks**: If the agent is illegally invoked to conduct cyberattacks, data theft, or other illegal activities, it may result in legal liability and compliance risks.
+
+### Gateway Admin Is Equivalent to Code Execution
+
+An admin can register stdio MCP servers, which run commands inside the Gateway
+container. The API restricts them to an allowlist (`npx`, `uvx` by default,
+extended via `DEER_FLOW_MCP_STDIO_COMMAND_ALLOWLIST`) and rejects arguments and
+environment variables that would evaluate arbitrary code. That is defense in
+depth, not a boundary: these launchers exist to fetch and run remote packages,
+so **treat Gateway admin as equivalent to code execution on the host** and grant
+it accordingly.
+
+### Deployment Defaults
+
+The Docker stack publishes its entry port on `127.0.0.1` only, matching the
+local-trusted-environment model described above. To reach it from another
+machine, set `BIND_HOST` in `.env` (e.g. `BIND_HOST=0.0.0.0`) — and only after
+putting the security measures below in place.
+
+**Complete first-run setup before the host becomes reachable.** A fresh
+instance has no accounts yet, so create the admin account through `/setup`
+immediately after starting any deployment that is not loopback-only.
 
 ### Security Recommendations
 
@@ -1030,6 +1393,13 @@ DeerFlow has key high-privilege capabilities including **system command executio
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, workflow, and guidelines.
 
+Backend `make test` is offline by default and excludes live external-API
+coverage. Maintainers can explicitly run the real `DeerFlowClient` integration
+suite with `cd backend && make test-live` after providing a valid root
+`config.yaml` and API credentials; this may incur API costs and create local
+sandboxes, artifacts, or files. Direct pytest runs additionally require
+`DEER_FLOW_RUN_LIVE_TESTS=1`.
+
 Regression coverage includes Docker sandbox mode detection and provisioner kubeconfig-path handling tests in `backend/tests/`.
 Backend blocking-IO diagnostics are available from the repository root with
 `make detect-blocking-io`: it statically scans backend business code for
@@ -1038,6 +1408,12 @@ and writes complete JSON findings to `.deer-flow/blocking-io-findings.json`.
 The JSON includes compact review records with `priority`, `location`,
 `blocking_call`, `event_loop_exposure`, `reason`, and `code`.
 Gateway artifact serving now forces active web content types (`text/html`, `application/xhtml+xml`, `image/svg+xml`) to download as attachments instead of inline rendering, reducing XSS risk for generated artifacts.
+
+Frontend route asset budgets can be checked with `cd frontend && pnpm
+perf:check`. The command measures `/login` from a normal production build, then
+performs a production static-demo build for the fixture-backed workspace routes.
+It measures the unique JavaScript and CSS referenced by representative routes
+and writes the detailed result to `.next/performance-results.json`.
 
 ## License
 

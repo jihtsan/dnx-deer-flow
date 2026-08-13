@@ -14,6 +14,7 @@ from langgraph.types import Command
 
 from deerflow.authz.principal import normalize_authz_attributes
 from deerflow.config import get_app_config
+from deerflow.extensions import resolve_run_extensions
 from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.sandbox.security import LOCAL_BASH_SUBAGENT_DISABLED_MESSAGE, is_host_bash_allowed
 from deerflow.subagents import SubagentExecutor, get_available_subagent_names, get_subagent_config
@@ -32,6 +33,7 @@ from deerflow.subagents.status_contract import (
 )
 from deerflow.tools.types import Runtime
 from deerflow.trace_context import DEERFLOW_TRACE_METADATA_KEY, get_current_trace_id, normalize_trace_id
+from deerflow.utils.custom_events import aemit_custom_event
 
 if TYPE_CHECKING:
     from deerflow.config.app_config import AppConfig
@@ -234,20 +236,24 @@ async def task_tool(
     subagent_type: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> str | Command:
-    """Delegate a task to a specialized subagent that runs in its own context.
+    """Delegate a bounded task to a specialized subagent in its own context.
 
-    Subagents help you:
-    - Preserve context by keeping exploration and implementation separate
-    - Handle complex multi-step tasks autonomously
-    - Execute commands or operations in isolated contexts
+    Delegate only when expected benefit clearly exceeds delegation overhead.
+    Useful benefits are:
+    - Material wall-clock savings from independent parallel work
+    - Specialist tools, skills, models, or domain instructions
+    - Context isolation for a bounded, unusually context-heavy investigation
 
     Built-in subagent types:
-    - **general-purpose**: A capable agent for complex, multi-step tasks that require
-      both exploration and action. Use when the task requires complex reasoning,
-      multiple dependent steps, or would benefit from isolated context.
+    - **general-purpose**: A capable agent for bounded exploration and action. Use
+      when the assignment has clear specialist or context-isolation benefit, or is
+      one of several independent, non-overlapping tasks that can actually run in
+      parallel.
     - **bash**: Command execution specialist for running bash commands. This is only
       available when host bash is explicitly allowed or when using an isolated shell
-      sandbox such as `AioSandboxProvider`.
+      sandbox such as `AioSandboxProvider`. Use it only for a bounded shell workflow
+      with clear context-isolation or independent-parallel benefit.
+      Routine git, build, test, or deploy operations are not sufficient reason to delegate.
 
     Additional custom subagent types may be defined in config.yaml under
     `subagents.custom_agents`. Each custom type can have its own system prompt,
@@ -255,14 +261,22 @@ async def task_tool(
     is provided, the error message will list all available types.
 
     When to use this tool:
-    - Complex tasks requiring multiple steps or tools
-    - Tasks that produce verbose output
-    - When you want to isolate context from the main conversation
-    - Parallel research or exploration tasks
+    - Independent tasks that materially reduce wall-clock time when run in parallel
+    - A specialist subagent provides capability unavailable on the direct path
+    - Bounded exploration that would otherwise displace important parent context
 
     When NOT to use this tool:
-    - Simple, single-step operations (use tools directly)
+    - Merely because a task is complex, multi-step, verbose, or touches a large repo
+    - Splitting dependent steps across parallel subagents; keep the chain together
+      and delegate it as one bounded task only when specialist or context-isolation
+      benefit clearly wins
+    - Parallel work with overlapping files, shared mutable state, or external side effects
     - Tasks requiring user interaction or clarification
+
+    Costs to include in the delegation decision:
+    - Repeating the same repository discovery in multiple contexts
+    - Coordination, verification, and synthesis of returned results
+    - Any task the parent can complete more cheaply with direct tools
 
     Args:
         description: A short (3-5 word) description of the task for logging/display. ALWAYS PROVIDE THIS PARAMETER FIRST.
@@ -347,6 +361,10 @@ async def task_tool(
     # server-side provenance as user_role/oauth — see inject_authenticated_user_context.
     is_internal = parent_context.get("is_internal") is True
     authz_attributes = normalize_authz_attributes(parent_context.get("authz_attributes"))
+    # The run's immutable extension snapshot, published by the run worker. Stays
+    # None outside that path (embedded client, standalone LangGraph Server), where
+    # the executor keeps its process-singleton fallback.
+    run_extensions = resolve_run_extensions(parent_context)
     deerflow_trace_id = normalize_trace_id(parent_context.get(DEERFLOW_TRACE_METADATA_KEY)) or normalize_trace_id(metadata.get(DEERFLOW_TRACE_METADATA_KEY)) or get_current_trace_id()
 
     parent_available_skills = metadata.get("available_skills")
@@ -402,6 +420,8 @@ async def task_tool(
     }
     if resolved_app_config is not None:
         executor_kwargs["app_config"] = resolved_app_config
+    if run_extensions is not None:
+        executor_kwargs["extensions"] = run_extensions
     executor = SubagentExecutor(**executor_kwargs)
 
     # Start background execution (always async to prevent blocking)
@@ -419,13 +439,14 @@ async def task_tool(
 
     writer = get_stream_writer()
     # Send Task Started message'
-    writer(
+    await aemit_custom_event(
         {
             "type": "task_started",
             "task_id": task_id,
             "description": description,
             "model_name": effective_model,
-        }
+        },
+        writer=writer,
     )
 
     try:
@@ -434,7 +455,10 @@ async def task_tool(
 
             if result is None:
                 logger.error(f"[trace={trace_id}] Task {task_id} not found in background tasks")
-                writer({"type": "task_failed", "task_id": task_id, "error": "Task disappeared from background tasks"})
+                await aemit_custom_event(
+                    {"type": "task_failed", "task_id": task_id, "error": "Task disappeared from background tasks"},
+                    writer=writer,
+                )
                 cleanup_background_task(task_id)
                 error = f"Task {task_id} disappeared from background tasks"
                 return _task_result_command(
@@ -460,7 +484,7 @@ async def task_tool(
                 # Send task_running event for each new message
                 for i in range(last_message_count, current_message_count):
                     message = ai_messages[i]
-                    writer(
+                    await aemit_custom_event(
                         {
                             "type": "task_running",
                             "task_id": task_id,
@@ -469,7 +493,8 @@ async def task_tool(
                             "total_messages": current_message_count,
                             "usage": usage,
                             "model_name": effective_model,
-                        }
+                        },
+                        writer=writer,
                     )
                     logger.info(f"[trace={trace_id}] Task {task_id} sent message #{i + 1}/{current_message_count}")
                 last_message_count = current_message_count
@@ -478,14 +503,15 @@ async def task_tool(
             if result.status == SubagentStatus.COMPLETED:
                 _cache_subagent_usage(tool_call_id, usage, enabled=cache_token_usage)
                 _report_subagent_usage(runtime, result)
-                writer(
+                await aemit_custom_event(
                     {
                         "type": "task_completed",
                         "task_id": task_id,
                         "result": result.result,
                         "usage": usage,
                         "model_name": effective_model,
-                    }
+                    },
+                    writer=writer,
                 )
                 logger.info(f"[trace={trace_id}] Task {task_id} completed after {poll_count} polls")
                 cleanup_background_task(task_id)
@@ -503,14 +529,15 @@ async def task_tool(
             elif result.status == SubagentStatus.FAILED:
                 _cache_subagent_usage(tool_call_id, usage, enabled=cache_token_usage)
                 _report_subagent_usage(runtime, result)
-                writer(
+                await aemit_custom_event(
                     {
                         "type": "task_failed",
                         "task_id": task_id,
                         "error": result.error,
                         "usage": usage,
                         "model_name": effective_model,
-                    }
+                    },
+                    writer=writer,
                 )
                 logger.error(f"[trace={trace_id}] Task {task_id} failed: {result.error}")
                 cleanup_background_task(task_id)
@@ -528,14 +555,15 @@ async def task_tool(
             elif result.status == SubagentStatus.CANCELLED:
                 _cache_subagent_usage(tool_call_id, usage, enabled=cache_token_usage)
                 _report_subagent_usage(runtime, result)
-                writer(
+                await aemit_custom_event(
                     {
                         "type": "task_cancelled",
                         "task_id": task_id,
                         "error": result.error,
                         "usage": usage,
                         "model_name": effective_model,
-                    }
+                    },
+                    writer=writer,
                 )
                 logger.info(f"[trace={trace_id}] Task {task_id} cancelled: {result.error}")
                 cleanup_background_task(task_id)
@@ -549,14 +577,15 @@ async def task_tool(
             elif result.status == SubagentStatus.TIMED_OUT:
                 _cache_subagent_usage(tool_call_id, usage, enabled=cache_token_usage)
                 _report_subagent_usage(runtime, result)
-                writer(
+                await aemit_custom_event(
                     {
                         "type": "task_timed_out",
                         "task_id": task_id,
                         "error": result.error,
                         "usage": usage,
                         "model_name": effective_model,
-                    }
+                    },
+                    writer=writer,
                 )
                 logger.warning(f"[trace={trace_id}] Task {task_id} timed out: {result.error}")
                 cleanup_background_task(task_id)
@@ -581,13 +610,14 @@ async def task_tool(
                 _report_subagent_usage(runtime, result)
                 usage = _summarize_usage(getattr(result, "token_usage_records", None))
                 _cache_subagent_usage(tool_call_id, usage, enabled=cache_token_usage)
-                writer(
+                await aemit_custom_event(
                     {
                         "type": "task_timed_out",
                         "task_id": task_id,
                         "usage": usage,
                         "model_name": effective_model,
-                    }
+                    },
+                    writer=writer,
                 )
                 # The task may still be running in the background. Signal cooperative
                 # cancellation and schedule deferred cleanup to remove the entry from

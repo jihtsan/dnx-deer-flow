@@ -1,0 +1,43 @@
+# Explicit release-gated overlay. This service is absent from the base stack.
+# Invoke only after provisioning the referenced files and enabling both the
+# Compose environment gate and config.yaml nexus_receiver release gate.
+services:
+  gateway:
+    volumes:
+      - nexus-receiver-ipc:/run/nexus-receiver-ipc
+
+  nexus-receiver-sshd:
+    profiles: ["nexus-receiver-ssh"]
+    build:
+      context: ../
+      dockerfile: backend/Dockerfile
+      target: nexus-receiver-sshd
+      args:
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}
+        UV_EXTRAS: ${NEXUS_RECEIVER_UV_EXTRAS:-}
+    ports:
+      - "${NEXUS_RECEIVER_SSH_BIND_HOST:-127.0.0.1}:${NEXUS_RECEIVER_SSH_PORT:-2222}:22"
+    environment:
+      - NEXUS_RECEIVER_ENABLED=${NEXUS_RECEIVER_ENABLED:-false}
+      - DEER_FLOW_CONFIG_PATH=/app/backend/config.yaml
+      - DEER_FLOW_PROJECT_ROOT=/app
+      - DEER_FLOW_HOME=/app/backend/.deer-flow
+    volumes:
+      - ${DEER_FLOW_CONFIG_PATH}:/app/backend/config.yaml:ro
+      - ${DEER_FLOW_HOME}:/app/backend/.deer-flow
+      - nexus-receiver-ipc:/run/nexus-receiver-ipc
+    secrets:
+      - nexus_receiver_host_key
+      - nexus_receiver_principal_map
+    networks:
+      - deer-flow
+    restart: "no"
+
+secrets:
+  nexus_receiver_host_key:
+    file: ${NEXUS_RECEIVER_HOST_KEY_FILE}
+  nexus_receiver_principal_map:
+    file: ${NEXUS_RECEIVER_PRINCIPAL_MAP_FILE}
+
+volumes:
+  nexus-receiver-ipc:

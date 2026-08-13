@@ -3,6 +3,7 @@
  * for Docker builds.
  */
 import "./src/env.js";
+import { getAllowedDevOrigins } from "./src/dev-origins.js";
 
 import { hostname, networkInterfaces } from "node:os";
 
@@ -42,6 +43,7 @@ const config = {
     defaultLocale: "en",
   },
   devIndicators: false,
+  allowedDevOrigins: getAllowedDevOrigins(),
   async rewrites() {
     const rewrites = [];
     const gatewayURL = getInternalServiceURL(

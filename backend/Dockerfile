@@ -13,6 +13,8 @@ FROM python:3.12-slim-bookworm AS builder
 ARG NODE_MAJOR=22
 ARG APT_MIRROR
 ARG UV_INDEX_URL
+ARG NPM_REGISTRY
+ARG LARK_CLI_NPM_VERSION=1.0.65
 # Optional extras to install (e.g. "postgres" for PostgreSQL support)
 # Usage: docker build --build-arg UV_EXTRAS=postgres,discord ...
 ARG UV_EXTRAS
@@ -35,6 +37,11 @@ RUN apt-get update && apt-get install -y \
     && apt-get update \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install the official Lark/Feishu CLI used by the managed Lark integration.
+RUN if [ -n "${NPM_REGISTRY}" ]; then npm config set registry "${NPM_REGISTRY}"; fi \
+    && npm install -g @larksuite/cli@${LARK_CLI_NPM_VERSION} \
+    && lark-cli --version
 
 # Install uv (source image overridable via UV_IMAGE build arg)
 COPY --from=uv-source /uv /uvx /usr/local/bin/
@@ -85,7 +92,7 @@ CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app 
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 # Clean image without build-essential — reduces size (~200 MB) and attack surface.
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm AS runtime-base
 
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -95,7 +102,10 @@ ENV PYTHONIOENCODING=utf-8
 COPY --from=builder /usr/bin/node /usr/bin/node
 COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/bin/npx
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/bin/npx \
+    && LARK_CLI_BIN="$(node -p 'const bin=require("/usr/lib/node_modules/@larksuite/cli/package.json").bin; typeof bin === "string" ? bin : (bin["lark-cli"] || Object.values(bin)[0])')" \
+    && ln -s "../lib/node_modules/@larksuite/cli/${LARK_CLI_BIN#./}" /usr/bin/lark-cli \
+    && lark-cli --version
 
 # Install Docker CLI (for DooD: allows starting sandbox containers via host Docker socket)
 COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
@@ -114,3 +124,30 @@ EXPOSE 8001
 
 # Default command (can be overridden in docker-compose)
 CMD ["sh", "-c", "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001"]
+
+# Opt-in restricted SSH transport. It is built only by the dedicated Compose
+# overlay and cannot start until both environment and config release gates pass.
+FROM runtime-base AS nexus-receiver-sshd
+
+# Public-key login is permitted, but the deliberately invalid shadow value can
+# never authenticate even if PasswordAuthentication is misconfigured.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --home-dir /var/empty/nexus-receiver --shell /bin/sh nexus-receiver \
+    && chmod 0555 /var/empty/nexus-receiver \
+    && usermod --password 'x' nexus-receiver
+
+COPY docker/nexus-receiver-sshd/sshd_config /etc/ssh/nexus-receiver-sshd_config
+COPY docker/nexus-receiver-sshd/entrypoint.sh /usr/local/bin/nexus-receiver-sshd-entrypoint
+RUN chmod 0555 /usr/local/bin/nexus-receiver-sshd-entrypoint \
+    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec env PYTHONPATH=. .venv/bin/python -m app.gateway.nexus_receiver.forced_command "$@"' > /usr/local/bin/nexus-receiver-forced-command \
+    && chmod 0555 /usr/local/bin/nexus-receiver-forced-command \
+    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec env PYTHONPATH=. .venv/bin/python -m app.gateway.nexus_receiver.acceptance_forced_command "$@"' > /usr/local/bin/nexus-receiver-acceptance-forced-command \
+    && chmod 0555 /usr/local/bin/nexus-receiver-acceptance-forced-command
+
+EXPOSE 22
+ENTRYPOINT ["/usr/local/bin/nexus-receiver-sshd-entrypoint"]
+
+# Keep the ordinary Gateway image as Dockerfile's default final target.
+FROM runtime-base AS runtime
