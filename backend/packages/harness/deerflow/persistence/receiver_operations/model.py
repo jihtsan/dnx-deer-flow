@@ -21,6 +21,7 @@ class ReceiverOperationRow(Base):
     command_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     operation_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     execution_owner: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    execution_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
     execution_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

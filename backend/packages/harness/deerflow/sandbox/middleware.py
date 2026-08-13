@@ -51,14 +51,20 @@ class SandboxMiddleware(AgentMiddleware[SandboxMiddlewareState]):
         self._lazy_init = lazy_init
 
     def _acquire_sandbox(self, thread_id: str, *, user_id: str) -> str:
+        from deerflow.skills.revision import bind_global_skill_catalog_revision, current_global_skill_catalog_revision
+
         provider = get_sandbox_provider()
-        sandbox_id = provider.acquire(thread_id, user_id=user_id)
+        with bind_global_skill_catalog_revision(current_global_skill_catalog_revision()):
+            sandbox_id = provider.acquire(thread_id, user_id=user_id)
         logger.info(f"Acquiring sandbox {sandbox_id}")
         return sandbox_id
 
     async def _acquire_sandbox_async(self, thread_id: str, *, user_id: str) -> str:
+        from deerflow.skills.revision import bind_global_skill_catalog_revision, current_global_skill_catalog_revision
+
         provider = get_sandbox_provider()
-        sandbox_id = await provider.acquire_async(thread_id, user_id=user_id)
+        with bind_global_skill_catalog_revision(current_global_skill_catalog_revision()):
+            sandbox_id = await provider.acquire_async(thread_id, user_id=user_id)
         logger.info(f"Acquiring sandbox {sandbox_id}")
         return sandbox_id
 

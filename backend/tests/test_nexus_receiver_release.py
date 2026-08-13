@@ -121,6 +121,41 @@ async def test_secret_backed_principal_mapper_maps_only_exact_key_ids_and_action
 
 
 @pytest.mark.asyncio
+async def test_secret_backed_principal_mapper_keeps_user_and_global_actions_independent() -> None:
+    mapper = SecretBackedReceiverPrincipalMapper(
+        resolver=_SecretResolver(
+            _principal_map(
+                principals=[
+                    {
+                        "keyId": "user-only-key",
+                        "subject": "nexus.release.user",
+                        "actions": ["receiver:install:user", "receiver:observe:user"],
+                        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIUserOnlyKey nexus-user",
+                    },
+                    {
+                        "keyId": "global-only-key",
+                        "subject": "nexus.release.global",
+                        "actions": ["receiver:install:global", "receiver:observe:global"],
+                        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlobalOnlyKey nexus-global",
+                    },
+                ]
+            )
+        ),
+        reference=ReceiverSecretReference(name="principals", key="map"),
+    )
+
+    user = await mapper.map_principal("user-only-key")
+    global_principal = await mapper.map_principal("global-only-key")
+
+    assert user.actions == frozenset({"receiver:install:user", "receiver:observe:user"})
+    assert "receiver:install:global" not in user.actions
+    assert "receiver:observe:global" not in user.actions
+    assert global_principal.actions == frozenset({"receiver:install:global", "receiver:observe:global"})
+    assert "receiver:install:user" not in global_principal.actions
+    assert "receiver:observe:user" not in global_principal.actions
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "principals",
     [
@@ -234,6 +269,30 @@ class _Recoverer:
         return []
 
 
+class _SharedCoordinator:
+    def __init__(self) -> None:
+        self.owner = None
+        self.token = None
+
+    async def try_acquire_recovery_lease(self, *, owner, **kwargs):
+        del kwargs
+        if self.token is not None:
+            return None
+        self.owner = owner
+        self.token = uuid4().hex
+        return self.token
+
+    async def renew_recovery_lease(self, *, owner, token, **kwargs):
+        del kwargs
+        return (owner, token) == (self.owner, self.token)
+
+    async def release_recovery_lease(self, *, owner, token):
+        if (owner, token) != (self.owner, self.token):
+            return False
+        self.owner = self.token = None
+        return True
+
+
 @pytest.mark.asyncio
 async def test_recovery_service_runs_at_startup_after_submit_and_periodically() -> None:
     recoverer = _Recoverer()
@@ -290,6 +349,41 @@ async def test_recovery_service_is_single_flight_and_stops_cleanly() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recovery_coordinator_allows_one_leader_then_follower_takeover() -> None:
+    coordinator = _SharedCoordinator()
+    first_recoverer = _Recoverer()
+    second_recoverer = _Recoverer()
+    first = ReceiverRecoveryService(first_recoverer, poll_interval_seconds=60, coordinator=coordinator, owner="gateway-a")
+    second = ReceiverRecoveryService(second_recoverer, poll_interval_seconds=60, coordinator=coordinator, owner="gateway-b")
+
+    await first.start()
+    await second.start()
+    assert first_recoverer.calls == 1
+    assert second_recoverer.calls == 0
+
+    await first.stop()
+    await second.run_now()
+    assert second_recoverer.calls == 1
+    await second.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_start_failure_releases_leader_lease() -> None:
+    coordinator = _SharedCoordinator()
+
+    class _FailingRecoverer:
+        async def recover_pending(self):
+            raise RuntimeError("startup recovery failed")
+
+    service = ReceiverRecoveryService(_FailingRecoverer(), poll_interval_seconds=60, coordinator=coordinator, owner="gateway-a")
+
+    with pytest.raises(RuntimeError, match="startup recovery failed"):
+        await service.start()
+
+    assert coordinator.owner is coordinator.token is None
+
+
+@pytest.mark.asyncio
 async def test_recovery_service_shutdown_is_bounded(monkeypatch) -> None:
     import app.gateway.nexus_receiver.release as release_module
 
@@ -325,6 +419,23 @@ class _Bootstrap:
     async def build(self, config: NexusReceiverConfig) -> ReceiverReleaseComponents:
         assert config.enabled
         return self.components
+
+
+class _Coordinator:
+    async def get_catalog_revision(self):
+        return 0
+
+    async def try_acquire_recovery_lease(self, **kwargs):
+        del kwargs
+        return "lease-token"
+
+    async def renew_recovery_lease(self, **kwargs):
+        del kwargs
+        return True
+
+    async def release_recovery_lease(self, **kwargs):
+        del kwargs
+        return True
 
 
 @pytest.mark.asyncio
@@ -394,6 +505,7 @@ async def test_release_wiring_injects_complete_components_and_recovery_together(
                 runtime_handler=runtime,
                 service_authenticator=authenticator,
                 principal_mapper=mapper,
+                recovery_coordinator=_Coordinator(),
             )
         )
     )
@@ -406,5 +518,66 @@ async def test_release_wiring_injects_complete_components_and_recovery_together(
     assert state.nexus_receiver_runtime_handler is runtime
     assert state.nexus_receiver_service_authenticator is authenticator
     assert state.nexus_receiver_principal_mapper is mapper
+    assert state.nexus_receiver_catalog_revision_provider is state.nexus_receiver_release_bootstrap.components.recovery_coordinator
     assert notifier == [service.notify_pending]
     await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_release_wiring_rejects_coordinator_without_catalog_revision_provider() -> None:
+    class _IncompleteCoordinator:
+        async def try_acquire_recovery_lease(self, **kwargs):
+            del kwargs
+            return None
+
+        async def renew_recovery_lease(self, **kwargs):
+            del kwargs
+            return False
+
+        async def release_recovery_lease(self, **kwargs):
+            del kwargs
+            return False
+
+    state = SimpleNamespace(
+        nexus_receiver_release_bootstrap=_Bootstrap(
+            ReceiverReleaseComponents(
+                runtime_handler=SimpleNamespace(recover_pending=lambda: []),
+                service_authenticator=object(),
+                principal_mapper=object(),
+                recovery_coordinator=_IncompleteCoordinator(),
+            )
+        )
+    )
+
+    service = await start_receiver_release_wiring(state, NexusReceiverConfig.model_validate(_COMPLETE_CONFIG))
+
+    assert service is None
+    assert not hasattr(state, "nexus_receiver_runtime_handler")
+
+
+@pytest.mark.asyncio
+async def test_production_release_bootstrap_failure_aborts_startup(caplog) -> None:
+    class _FailingBootstrap:
+        async def build(self, config):
+            del config
+            raise ValueError("external provider unavailable")
+
+    values = dict(_COMPLETE_CONFIG)
+    values.update(
+        production=True,
+        cursor_signing_key_secret_ref={"name": "receiver/runtime", "key": "cursor-key"},
+        provider_factory="enterprise.receiver:build_providers",
+        package_stage_path="/var/lib/deer-flow/nexus-receiver/packages",
+        global_storage_path="/app/backend/.deer-flow/integrations/skills",
+        audit_policy_revision="audit-v1",
+        rate_limit_policy_revision="rate-v1",
+    )
+    state = SimpleNamespace(nexus_receiver_release_bootstrap=_FailingBootstrap())
+
+    with pytest.raises(RuntimeError, match="production bootstrap failed"):
+        await start_receiver_release_wiring(state, NexusReceiverConfig.model_validate(values))
+
+    assert not hasattr(state, "nexus_receiver_runtime_handler")
+    assert not hasattr(state, "nexus_receiver_service_authenticator")
+    assert not hasattr(state, "nexus_receiver_principal_mapper")
+    assert "external provider unavailable" not in caplog.text

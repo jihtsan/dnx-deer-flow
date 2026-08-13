@@ -1,14 +1,15 @@
 openapi: 3.1.0
 info:
   title: DeerFlow Nexus Skill Receiver API
-  version: 1.0.0
+  version: 1.1.0
   summary: Canonical service-to-service contract for Nexus-managed Skill installation in DeerFlow.
   description: >-
     This is the only canonical Nexus Skill receiver contract owned by DeerFlow. It is a
     service-to-service API for one Nexus binding; browsers must use the Nexus public API.
-    Version 1 defines capability discovery, a controlled user directory, first-install
-    commands for native GLOBAL and exact USER targets, durable operations, and scope-specific
-    Observed state. It does not claim that the provider implementation or release-gated
+    Version 1 defines capability discovery, a controlled user directory, USER-scoped Skill
+    inventory, first-install commands for native GLOBAL and exact USER targets, durable
+    operations, and scope-specific Observed state. Version 1.1 adds skills.list as a contract-only,
+    USER-scoped action; it does not claim that its provider implementation or release-gated
     authentication, privacy, global activation, trust, compatibility, or recovery policies
     are available. Until those gates are approved, providers advertise read_only or unsupported.
   license:
@@ -23,6 +24,9 @@ x-receiver-contract:
   legacyFallback: forbidden
   legacyPath: /api/skills
   versionPolicy:
+    acceptedVersions: [1.0.0, 1.1.0]
+    highestSupportedVersion: 1.1.0
+    negotiateThrough: capabilities.get
     closedEnumsRequireMajor: true
     optionalResponseFieldsAreAdditive: true
     additiveErrorCodesRequireMinor: true
@@ -61,6 +65,26 @@ x-receiver-contract:
     - packageTrustPolicy
     - runtimeCompatibilityGrammar
     - activationFailureRecovery
+  capabilityPublication:
+    globalInstall: default_deny_until_all_global_release_gates_pass
+    currentContractState: unsupported
+  actionAuthorization:
+    capabilities.get:
+      base: [receiver:capabilities:read]
+    users.list:
+      base: [receiver:user-directory:read]
+    skills.list:
+      USER: [receiver:skills:list:user]
+    install.submit:
+      USER: [receiver:install:user]
+      GLOBAL: [receiver:install:global]
+    operations.get:
+      base: [receiver:operations:read]
+      USER: [receiver:observe:user]
+      GLOBAL: [receiver:observe:global]
+    observations.query:
+      USER: [receiver:observe:user]
+      GLOBAL: [receiver:observe:global]
   bindings:
     http_v1:
       kind: http
@@ -68,15 +92,16 @@ x-receiver-contract:
       operationIds:
         capabilities.get: getNexusSkillReceiverCapabilities
         users.list: listNexusSkillReceiverUsers
+        skills.list: listNexusSkillReceiverSkills
         install.submit: createNexusSkillReceiverOperation
         operations.get: getNexusSkillReceiverOperation
         observations.query: queryNexusSkillReceiverObservation
     ssh_v1:
       kind: ssh
       authenticationProfile: ssh_forced_command
-      targetScopes: [USER]
+      targetScopes: [GLOBAL, USER]
       forcedCommand: nexus-skill-receiver-v1
-      argvGrammar: '^nexus-skill-receiver-v1 (capabilities\.get|users\.list|install\.submit|operations\.get|observations\.query)$'
+      argvGrammar: '^nexus-skill-receiver-v1 (capabilities\.get|users\.list|skills\.list|install\.submit|operations\.get|observations\.query)$'
       forbiddenFeatures:
         - interactive_shell
         - pty
@@ -105,6 +130,7 @@ x-receiver-contract:
           $ref: '#/components/schemas/ReceiverProblem'
       actions:
         capabilities.get:
+          minimumContractVersion: 1.0.0
           httpOperationId: getNexusSkillReceiverCapabilities
           serviceActions: [receiver:capabilities:read]
           requiredFrameFields: [contractVersion, correlationId]
@@ -112,23 +138,37 @@ x-receiver-contract:
           successSchema:
             $ref: '#/components/schemas/ReceiverCapabilitySnapshot'
         users.list:
+          minimumContractVersion: 1.0.0
           httpOperationId: listNexusSkillReceiverUsers
           serviceActions: [receiver:user-directory:read]
           requiredFrameFields: [contractVersion, correlationId, limit]
           optionalFrameFields: [query, cursor]
           successSchema:
             $ref: '#/components/schemas/ReceiverUserPage'
+        skills.list:
+          minimumContractVersion: 1.1.0
+          httpOperationId: listNexusSkillReceiverSkills
+          serviceActions: [receiver:skills:list:user]
+          requiredFrameFields: [contractVersion, correlationId, target, limit]
+          optionalFrameFields: [query, cursor]
+          requestSchema:
+            $ref: '#/components/schemas/ReceiverSkillListRequest'
+          successSchema:
+            $ref: '#/components/schemas/ReceiverSkillPage'
         install.submit:
+          minimumContractVersion: 1.0.0
           httpOperationId: createNexusSkillReceiverOperation
-          serviceActions: [receiver:install:user]
+          serviceActionsByTarget:
+            USER: [receiver:install:user]
+            GLOBAL: [receiver:install:global]
           requiredFrameFields: [contractVersion, correlationId, idempotencyKey, requestSha256, command]
           optionalFrameFields: []
           commandSchema:
             $ref: '#/components/schemas/ReceiverInstallCommand'
           successSchema:
             $ref: '#/components/schemas/ReceiverOperation'
-          unsupportedTargetProblemCode: GLOBAL_INSTALL_UNSUPPORTED
         operations.get:
+          minimumContractVersion: 1.0.0
           httpOperationId: getNexusSkillReceiverOperation
           serviceActions: [receiver:operations:read]
           requiredFrameFields: [contractVersion, correlationId, operationId]
@@ -136,8 +176,11 @@ x-receiver-contract:
           successSchema:
             $ref: '#/components/schemas/ReceiverOperation'
         observations.query:
+          minimumContractVersion: 1.0.0
           httpOperationId: queryNexusSkillReceiverObservation
-          serviceActions: [receiver:observe:user]
+          serviceActionsByTarget:
+            USER: [receiver:observe:user]
+            GLOBAL: [receiver:observe:global]
           requiredFrameFields: [contractVersion, correlationId, query]
           optionalFrameFields: []
           querySchema:
@@ -261,6 +304,94 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/nexus/skill-receiver/skills/query:
+    post:
+      operationId: listNexusSkillReceiverSkills
+      summary: List the minimal native Skill inventory for one exact USER target
+      description: >-
+        Returns DeerFlow-owned Observed inventory for one exact USER target. The receiver must
+        authorize the machine principal, action, and target entitlement before resolving the
+        user, so unauthorized existing and missing targets are indistinguishable. Items come
+        from native DeerFlow storage/runtime metadata; Nexus must not simulate this action by
+        scanning a directory. Results sort by normalized runtimeSkillName ascending. An opaque,
+        integrity-protected cursor binds the principal subject, target, normalized query,
+        catalog revision, last sort key, and expiry. A cursor chain stays on one revision;
+        omit cursor to refresh. Version 1.1 does not define GLOBAL listing.
+      tags: [Nexus Skill Receiver]
+      security:
+        - receiverServiceBearer: []
+        - receiverMutualTls: []
+      x-required-service-actions:
+        - receiver:skills:list:user
+      x-authorization-order:
+        - authenticate_principal
+        - authorize_action
+        - authorize_target_entitlement
+        - resolve_target_user
+        - read_skill_catalog
+      x-non-enumeration:
+        unauthorizedExistingTarget: FORBIDDEN
+        unauthorizedMissingTarget: FORBIDDEN
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiverSkillListRequest'
+            examples:
+              firstPage:
+                value:
+                  contractVersion: 1.1.0
+                  correlationId: receiver-skills-01
+                  target:
+                    scope: USER
+                    deerFlowUserId: df-user-42
+                  query: research
+                  limit: 25
+      responses:
+        '200':
+          description: Stable, minimal inventory page for the authorized USER target.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiverSkillPage'
+              examples:
+                installedSkill:
+                  value:
+                    items:
+                      - runtimeSkillName: research-assistant
+                        skillVersionId: sv.research-assistant.1.0.0
+                        version: 1.0.0
+                        packageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                        enabled: true
+                        loadState: loaded
+                        freshness: current
+                        observedAt: '2026-08-13T04:01:00Z'
+                    page:
+                      hasMore: false
+                      nextCursor: null
+                    observedAt: '2026-08-13T04:01:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/RateLimited'
         '503':
@@ -706,6 +837,7 @@ components:
       enum:
         - receiver:capabilities:read
         - receiver:user-directory:read
+        - receiver:skills:list:user
         - receiver:install:global
         - receiver:install:user
         - receiver:observe:global
@@ -889,6 +1021,97 @@ components:
           maxItems: 100
           items:
             $ref: '#/components/schemas/ReceiverUser'
+        page:
+          $ref: '#/components/schemas/CursorPage'
+        observedAt:
+          type: string
+          format: date-time
+    ReceiverSkillListRequest:
+      type: object
+      additionalProperties: false
+      required: [contractVersion, correlationId, target, limit]
+      properties:
+        contractVersion:
+          allOf:
+            - $ref: '#/components/schemas/SemVer'
+            - const: 1.1.0
+        correlationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._:/-]+$'
+        target:
+          $ref: '#/components/schemas/UserInstallationTarget'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        cursor:
+          type: string
+          minLength: 1
+          maxLength: 500
+        query:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Optional server-side match against normalized runtimeSkillName only.
+    ReceiverSkillListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - runtimeSkillName
+        - skillVersionId
+        - version
+        - packageDigest
+        - enabled
+        - loadState
+        - freshness
+        - observedAt
+      properties:
+        runtimeSkillName:
+          $ref: '#/components/schemas/RuntimeSkillName'
+        skillVersionId:
+          $ref: '#/components/schemas/SkillVersionId'
+        version:
+          type: string
+          minLength: 1
+          maxLength: 100
+        packageDigest:
+          $ref: '#/components/schemas/Sha256Digest'
+        enabled:
+          type: boolean
+        loadState:
+          allOf:
+            - $ref: '#/components/schemas/SkillLoadState'
+            - enum: [loaded, load_failed, disabled, unknown]
+        freshness:
+          $ref: '#/components/schemas/ReceiverFreshness'
+        observedAt:
+          type: string
+          format: date-time
+    ReceiverSkillPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, observedAt]
+      x-pagination:
+        sort: normalized runtimeSkillName ASC
+        cursorIntegrity: authenticated
+        cursorBindings:
+          - principalSubject
+          - target
+          - normalizedQuery
+          - catalogRevision
+          - lastSortKey
+          - expiresAt
+        sameCursorChainRevision: true
+        refreshRequiresNoCursor: true
+        unavailableRevisionProblemCode: CURSOR_EXPIRED
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ReceiverSkillListItem'
         page:
           $ref: '#/components/schemas/CursorPage'
         observedAt:
@@ -1278,6 +1501,9 @@ components:
         - SKILL_NAME_CONFLICT
         - OBSERVED_STATE_CONFLICT
         - IDEMPOTENCY_KEY_REUSED
+        - CURSOR_INVALID
+        - CURSOR_EXPIRED
+        - OBSERVATION_UNAVAILABLE
         - ACTIVATION_FAILED
         - UPSTREAM_TIMEOUT
         - INTERNAL_ERROR

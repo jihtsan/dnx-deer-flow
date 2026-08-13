@@ -708,6 +708,11 @@ def get_run_context(request: Request) -> RunContext:
         thread_store=get_thread_store(request),
         app_config=get_config(),
         extensions=getattr(request.app.state, "extensions", None),
+        global_skill_catalog_revision_provider=getattr(
+            request.app.state,
+            "nexus_receiver_catalog_revision_provider",
+            None,
+        ),
         on_run_completed=getattr(request.app.state, "scheduled_task_service", None).handle_run_completion if getattr(request.app.state, "scheduled_task_service", None) is not None else None,
     )
 

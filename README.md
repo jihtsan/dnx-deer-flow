@@ -1118,9 +1118,13 @@ and read scope-specific Observed state. The OpenAPI source is
 with provider fixtures in the adjacent `.conformance.json` file.
 
 The same artifact defines the `http_v1` binding and the P0 `ssh_v1` forced-command
-binding. SSH accepts only the five allowlisted actions, reuses the canonical
-component schemas, and supports controlled directory reads plus exact `USER`
-first installation; it does not publish a separate CLI schema or enable `GLOBAL`.
+binding. SSH accepts only six allowlisted actions, reuses the canonical
+component schemas, and supports controlled directory reads, USER-only
+`skills.list`, plus exact `USER` or `GLOBAL` first installation and observation.
+The principal map grants USER and GLOBAL actions independently; listing a
+GLOBAL action does not bypass runtime readiness or publish GLOBAL capability.
+SSH does not publish a separate CLI schema or enable production `GLOBAL`
+support by itself.
 
 The Gateway mounts the canonical capability, controlled-directory, operation,
 operation-poll, and Observed paths behind dedicated service-auth and runtime
@@ -1129,7 +1133,7 @@ Ports. HTTP and SSH use one transport-neutral handler for durable, idempotent
 digest/size, traversal, symlink, expansion, manifest-name, target eligibility,
 same-name, and idempotency conflicts are checked before success. Durable phases
 and canonical request bindings live in `nexus_receiver_operations`; atomic,
-owner-only package staging plus expiring execution claims allow nonterminal
+owner-only package staging plus renewable, random-token-fenced execution claims allow nonterminal
 operations to resume after restart without another submit. The Skill tree and
 redacted receiver identity commit together in disabled state, then activation
 and exact `enabled=true` / `loadState=loaded` observation close the operation.
@@ -1137,32 +1141,51 @@ Each resumed write attempt revalidates the exact controlled USER identity and
 eligibility; failures after the atomic tree commit retain an explicit disabled
 state rather than falling back to the normal enabled-by-default behavior.
 
-This implementation is not production enablement. `config.yaml` exposes a
+The backend also contains the disabled-by-default persistence and runtime
+foundation for a native `GLOBAL` receiver path: atomic same-filesystem managed storage at
+`integrations/skills/nexus`, a PostgreSQL global identity catalog and monotonic
+catalog revision, successful runtime-parser load probes, and a singleton
+recovery coordinator lease with takeover fencing. A native GLOBAL
+installer/observer can drive the durable operation state machine, and each run
+freezes the current catalog revision before agent construction. The revision is
+part of lead-agent cache and sandbox projection signatures, so a later run
+converges without changing a run already in progress. Capability advertisement
+is guarded by explicit scope-RBAC, storage, load-probe, revision-consumer,
+recovery, auth, directory, trust, compatibility, and shared-volume readiness;
+missing any gate remains fail-closed. The opt-in production composition loads
+an operator-supplied provider bundle and publishes support only after every
+production provider and shared-volume probe succeeds; the default and
+acceptance compositions continue to report `GLOBAL` as unsupported.
+
+Production assembly and conformance requirements are documented in
+[`backend/docs/NEXUS_RECEIVER_PRODUCTION.md`](backend/docs/NEXUS_RECEIVER_PRODUCTION.md).
+`config.yaml` exposes a
 startup-only `nexus_receiver` release gate that defaults to `enabled: false` and
-contains only opaque host-key/principal-map Secret references and reviewed
+contains only opaque Secret references, a provider factory path, storage paths, and reviewed
 policy revision IDs, never Secret values. A deployment-owned bootstrap must
 atomically inject the authenticator, install-target resolver, durable operation
 and package stores, USER installer, and closed transport-principal mapper; the
-repository supplies no such production bootstrap, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
+repository production bootstrap accepts only a complete operator-owned
+provider bundle, so missing inputs remain default-deny (`401 AUTHENTICATION_REQUIRED`,
 `409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
 capabilities remain `read_only`/`unsupported`. The
-forced-command module entry accepts only the five exact `nexus-skill-receiver-v1`
+forced-command module entry accepts only the six exact `nexus-skill-receiver-v1`
 commands and canonical bounded frames. The opt-in
 `docker/docker-compose.nexus-receiver-ssh.yaml` profile adds a loopback-bound,
 dedicated-account sshd image whose principal-map Secret generates only
 `restrict,command=...` keys and whose host key is copied from a mounted Secret;
 it is absent from the base stack and also requires explicit environment and
 config gates. Its repository entry point intentionally has no runtime context
-provider and returns one redacted Problem with exit `10` until the deployment
-bootstrap is approved. When a complete Gateway bootstrap is injected, one
+provider and returns one redacted Problem with exit `10` unless the production
+profile and provider bundle are complete. When a complete Gateway bootstrap is injected, one
 supervised recovery service runs `recover_pending` at startup, after durable
 submit notifications, and periodically. The opt-in overlay shares a private
 Unix datagram socket between Gateway and the one-shot SSH process; the datagram
 carries only a fixed wake token and merely triggers a fenced durable-store scan.
 Periodic recovery remains the fail-safe if notification is unavailable. Real credentials and rotation,
 service-auth/directory privacy policy, stable RBAC principal ownership,
-trust/compatibility decisions, a stable single-worker/process ownership policy,
-and native `GLOBAL` support remain release gates. Nexus
+trust/compatibility decisions, audit/rate limiting, shared-volume deployment
+topology, and production `GLOBAL` support remain release gates. Nexus
 must not fall back to `/api/skills`, and browser clients must continue to call
 the Nexus public API instead of this service-to-service boundary.
 

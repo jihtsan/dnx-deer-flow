@@ -8,7 +8,7 @@ import os
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from app.gateway.nexus_receiver.models import ReceiverInstallCommand
 
@@ -104,4 +104,80 @@ class UserScopedReceiverInstaller:
             "packageDigest": metadata.get("packageDigest"),
             "enabled": enabled,
             "loadState": "loaded" if enabled else "disabled",
+        }
+
+    async def list_user_skills(self, *, user_id: str) -> list[dict[str, Any]]:
+        storage = await asyncio.to_thread(self._storage_factory, user_id)
+        return await asyncio.to_thread(storage.list_receiver_inventory)
+
+
+class _GlobalCatalog(Protocol):
+    async def get_global_skill(self, runtime_skill_name: str): ...
+
+
+class _GlobalCommitter(Protocol):
+    async def commit(self, archive_path, *, receiver_metadata, precommit_scan, now): ...
+
+
+class GlobalScopedReceiverInstaller:
+    """Adapter over native GLOBAL managed storage plus its durable catalog."""
+
+    def __init__(self, *, storage: Any, catalog: _GlobalCatalog, committer: _GlobalCommitter, precommit_scan: Callable, clock: Callable[[], Any] | None = None) -> None:
+        from datetime import UTC, datetime
+
+        self._storage = storage
+        self._catalog = catalog
+        self._committer = committer
+        self._precommit_scan = precommit_scan
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    async def install_global_skill(self, *, command: ReceiverInstallCommand, manifest_version: str, package: bytes) -> None:
+        archive_path = await asyncio.to_thread(UserScopedReceiverInstaller._write_package, package)
+        try:
+            await self._committer.commit(
+                archive_path,
+                receiver_metadata={
+                    "contractVersion": "1.0.0",
+                    "skillVersionId": command.skill_version_id,
+                    "version": manifest_version,
+                    "runtimeSkillName": command.runtime_skill_name,
+                    "packageDigest": command.package_digest,
+                },
+                precommit_scan=self._precommit_scan,
+                now=self._clock(),
+            )
+        finally:
+            await asyncio.to_thread(Path(archive_path).unlink, missing_ok=True)
+
+    async def activate_global_skill(self, *, runtime_skill_name: str) -> None:
+        observed = await self.observe_global_skill(runtime_skill_name=runtime_skill_name)
+        if observed is None or observed.get("loadState") != "loaded" or observed.get("freshness") != "current":
+            raise ValueError("GLOBAL Skill is not exactly loaded from the active catalog")
+
+    async def observe_global_skill(self, *, runtime_skill_name: str) -> dict[str, Any] | None:
+        metadata, probe, catalog_entry = await asyncio.gather(
+            asyncio.to_thread(self._storage.receiver_metadata, runtime_skill_name),
+            asyncio.to_thread(self._storage.load_probe, runtime_skill_name),
+            self._catalog.get_global_skill(runtime_skill_name),
+        )
+        if metadata is None and catalog_entry is None and probe is None:
+            return None
+        if not isinstance(metadata, dict) or catalog_entry is None or probe is None or getattr(probe, "name", None) != runtime_skill_name:
+            return {
+                "skillVersionId": (metadata or {}).get("skillVersionId"),
+                "version": (metadata or {}).get("version"),
+                "packageDigest": (metadata or {}).get("packageDigest"),
+                "enabled": None,
+                "loadState": "unknown",
+                "freshness": "unavailable",
+            }
+        exact = metadata.get("skillVersionId") == catalog_entry.skill_version_id and metadata.get("version") == catalog_entry.version and metadata.get("packageDigest") == catalog_entry.package_digest
+        return {
+            "skillVersionId": metadata.get("skillVersionId"),
+            "version": metadata.get("version"),
+            "packageDigest": metadata.get("packageDigest"),
+            "enabled": True if exact else False,
+            "loadState": "loaded" if exact else "unknown",
+            "freshness": "current" if exact else "stale",
+            "catalogRevision": catalog_entry.activated_revision,
         }

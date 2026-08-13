@@ -40,7 +40,7 @@ class ReceiverCapabilities(_ReceiverModel):
 
 
 class ReceiverCapabilitySnapshot(_ReceiverModel):
-    contract_version: Literal["1.0.0"] = "1.0.0"
+    contract_version: Literal["1.1.0"] = "1.1.0"
     transport_profile: Literal["http_v1", "ssh_v1"] = "http_v1"
     runtime_version: str | None = Field(min_length=1, max_length=100)
     connection: Literal["healthy"] = "healthy"
@@ -104,6 +104,36 @@ class ReceiverUserTarget(_ReceiverModel):
 
 
 ReceiverInstallationTarget = Annotated[ReceiverGlobalTarget | ReceiverUserTarget, Field(discriminator="scope")]
+
+
+class ReceiverSkillListRequest(_ReceiverModel):
+    contract_version: Literal["1.1.0"]
+    correlation_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:/-]+$")
+    target: ReceiverUserTarget
+    limit: int = Field(ge=1, le=100)
+    cursor: str | None = Field(default=None, min_length=1, max_length=500)
+    query: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class ReceiverSkillListItem(_ReceiverModel):
+    runtime_skill_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$",
+    )
+    skill_version_id: str = Field(min_length=1, max_length=200)
+    version: str = Field(min_length=1, max_length=100)
+    package_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    enabled: bool
+    load_state: Literal["loaded", "load_failed", "disabled", "unknown"]
+    freshness: Literal["current", "stale", "unavailable"]
+    observed_at: datetime
+
+
+class ReceiverSkillPage(_ReceiverModel):
+    items: list[ReceiverSkillListItem] = Field(max_length=100)
+    page: ReceiverCursorPage
+    observed_at: datetime
 
 
 class ReceiverActorAudit(_ReceiverModel):

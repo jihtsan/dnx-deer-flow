@@ -255,7 +255,10 @@ def _extensions_state() -> dict:
 
 
 def _source_signature(storage: SkillStorage, scope: str) -> str:
+    from deerflow.skills.revision import current_global_skill_catalog_revision
+
     digest = hashlib.sha256()
+    digest.update(f"global-catalog-revision:{current_global_skill_catalog_revision()}\0".encode())
     host_root = storage.get_skills_root_path()
     if scope == "public":
         _update_tree_digest(digest, host_root / SkillCategory.PUBLIC.value, "public")

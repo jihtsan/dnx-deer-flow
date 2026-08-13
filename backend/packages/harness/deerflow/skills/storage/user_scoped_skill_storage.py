@@ -37,6 +37,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Awaitable, Callable, Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from deerflow.constants import DEFAULT_SKILLS_CONTAINER_PATH
@@ -225,6 +226,45 @@ class UserScopedSkillStorage(LocalSkillStorage):
             skills = [s for s in skills if s.enabled]
 
         return skills
+
+    def list_receiver_inventory(self) -> list[dict]:
+        """Return the minimal receiver-owned inventory for this USER scope.
+
+        The parser/storage result is authoritative for load and enabled state;
+        the sidecar proves Nexus identity. Non-receiver Skills are deliberately
+        omitted because their version/digest identity cannot be asserted.
+        """
+        observed_at = datetime.now(UTC)
+        inventory: list[dict] = []
+        for skill in self.load_skills(enabled_only=False):
+            if skill.category != SkillCategory.CUSTOM or skill.skill_dir.parent != self._user_custom_root:
+                continue
+            metadata_path = skill.skill_dir / ".nexus-receiver.json"
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("receiver Skill identity metadata is unavailable") from exc
+            if not isinstance(metadata, dict):
+                continue
+            try:
+                item = {
+                    "runtimeSkillName": skill.name,
+                    "skillVersionId": metadata["skillVersionId"],
+                    "version": metadata["version"],
+                    "packageDigest": metadata["packageDigest"],
+                    "enabled": bool(skill.enabled),
+                    "loadState": "loaded" if skill.enabled else "disabled",
+                    "freshness": "current",
+                    "observedAt": observed_at,
+                }
+                if not all(isinstance(item[key], str) and item[key] for key in ("skillVersionId", "version", "packageDigest")):
+                    continue
+            except KeyError as exc:
+                raise RuntimeError("receiver Skill identity metadata is incomplete") from exc
+            inventory.append(item)
+        return inventory
 
     # ------------------------------------------------------------------
     # Skill iteration — public from global, custom from user dir + fallback

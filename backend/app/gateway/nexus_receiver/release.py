@@ -12,6 +12,7 @@ import stat
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -29,7 +30,10 @@ _SSH_ACTIONS = frozenset(
     {
         "receiver:capabilities:read",
         "receiver:user-directory:read",
+        "receiver:skills:list:user",
+        "receiver:install:global",
         "receiver:install:user",
+        "receiver:observe:global",
         "receiver:observe:user",
         "receiver:operations:read",
     }
@@ -159,6 +163,29 @@ class _Recoverer(Protocol):
     async def recover_pending(self) -> list: ...
 
 
+class ReceiverRecoveryCoordinator(Protocol):
+    async def get_catalog_revision(self) -> int: ...
+
+    async def try_acquire_recovery_lease(
+        self,
+        *,
+        owner: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> str | None: ...
+
+    async def renew_recovery_lease(
+        self,
+        *,
+        owner: str,
+        token: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> bool: ...
+
+    async def release_recovery_lease(self, *, owner: str, token: str) -> bool: ...
+
+
 class ReceiverRecoveryService:
     """Own startup, submit-triggered and periodic durable recovery passes."""
 
@@ -168,6 +195,9 @@ class ReceiverRecoveryService:
         *,
         poll_interval_seconds: float,
         signal_path: Path | None = None,
+        coordinator: ReceiverRecoveryCoordinator | None = None,
+        owner: str | None = None,
+        lease_duration: timedelta = timedelta(seconds=30),
     ) -> None:
         self._recoverer = recoverer
         self._poll_interval_seconds = poll_interval_seconds
@@ -177,6 +207,12 @@ class ReceiverRecoveryService:
         self._task: asyncio.Task[None] | None = None
         self._signal_path = signal_path
         self._signal_socket: socket.socket | None = None
+        self._coordinator = coordinator
+        self._owner = owner
+        self._lease_duration = lease_duration
+        self._lease_token: str | None = None
+        self._lease_heartbeat: asyncio.Task[None] | None = None
+        self._active_recovery: asyncio.Task[list] | None = None
 
     @property
     def running(self) -> bool:
@@ -186,9 +222,16 @@ class ReceiverRecoveryService:
         if self.running:
             return
         self._stop.clear()
-        await self.run_now()
-        await self._start_signal_listener()
-        self._task = asyncio.create_task(self._run(), name="nexus-receiver-recovery")
+        try:
+            if self._coordinator is not None:
+                await self._try_become_leader()
+            await self.run_now(propagate=True)
+            if self._coordinator is None:
+                await self._start_signal_listener()
+            self._task = asyncio.create_task(self._run(), name="nexus-receiver-recovery")
+        except Exception:
+            await self._release_leadership()
+            raise
 
     def notify_pending(self) -> None:
         self._wake.set()
@@ -226,7 +269,7 @@ class ReceiverRecoveryService:
             pass
 
     async def _start_signal_listener(self) -> None:
-        if self._signal_path is None:
+        if self._signal_path is None or self._signal_socket is not None:
             return
         signal_socket = await asyncio.to_thread(self._open_signal_socket, self._signal_path)
         try:
@@ -236,6 +279,15 @@ class ReceiverRecoveryService:
             await asyncio.to_thread(self._remove_signal_path, self._signal_path)
             raise
         self._signal_socket = signal_socket
+
+    async def _stop_signal_listener(self) -> None:
+        if self._signal_socket is None:
+            return
+        asyncio.get_running_loop().remove_reader(self._signal_socket.fileno())
+        self._signal_socket.close()
+        self._signal_socket = None
+        if self._signal_path is not None:
+            await asyncio.to_thread(self._remove_signal_path, self._signal_path)
 
     def _receive_signal(self) -> None:
         if self._signal_socket is None:
@@ -247,14 +299,93 @@ class ReceiverRecoveryService:
         if payload == b"pending":
             self.notify_pending()
 
-    async def run_now(self) -> None:
+    async def run_now(self, *, propagate: bool = False) -> None:
         async with self._run_lock:
             try:
-                await self._recoverer.recover_pending()
+                if self._coordinator is not None and self._lease_token is None:
+                    await self._try_become_leader()
+                    if self._lease_token is None:
+                        return
+                recovery = asyncio.create_task(self._recoverer.recover_pending(), name="nexus-receiver-recovery-pass")
+                self._active_recovery = recovery
+                await recovery
             except asyncio.CancelledError:
+                if self._coordinator is not None and self._lease_token is None and not self._stop.is_set():
+                    return
                 raise
             except Exception:
+                if propagate:
+                    raise
                 logger.exception("Nexus receiver recovery pass failed; the next scheduled pass will retry")
+            finally:
+                self._active_recovery = None
+
+    async def _try_become_leader(self) -> None:
+        assert self._coordinator is not None and self._owner is not None
+        if self._lease_token is not None:
+            return
+        token = await self._coordinator.try_acquire_recovery_lease(
+            owner=self._owner,
+            now=datetime.now(UTC),
+            lease_duration=self._lease_duration,
+        )
+        if token is None:
+            return
+        self._lease_token = token
+        try:
+            await self._start_signal_listener()
+            self._lease_heartbeat = asyncio.create_task(
+                self._maintain_recovery_lease(token),
+                name="nexus-receiver-recovery-heartbeat",
+            )
+        except Exception:
+            self._lease_token = None
+            await self._coordinator.release_recovery_lease(owner=self._owner, token=token)
+            raise
+
+    async def _maintain_recovery_lease(self, token: str) -> None:
+        assert self._coordinator is not None and self._owner is not None
+        heartbeat_seconds = self._lease_duration.total_seconds() / 3
+        while not self._stop.is_set() and self._lease_token == token:
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=heartbeat_seconds)
+                return
+            except TimeoutError:
+                pass
+            try:
+                renewed = await self._coordinator.renew_recovery_lease(
+                    owner=self._owner,
+                    token=token,
+                    now=datetime.now(UTC),
+                    lease_duration=self._lease_duration,
+                )
+            except Exception:
+                logger.exception("Nexus receiver recovery lease renewal failed")
+                renewed = False
+            if not renewed:
+                if self._lease_token == token:
+                    self._lease_token = None
+                await self._stop_signal_listener()
+                if self._active_recovery is not None:
+                    self._active_recovery.cancel()
+                return
+
+    async def _release_leadership(self) -> None:
+        if self._lease_heartbeat is not None:
+            self._lease_heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._lease_heartbeat
+            self._lease_heartbeat = None
+        if self._lease_token is None:
+            return
+        assert self._coordinator is not None and self._owner is not None
+        token = self._lease_token
+        self._lease_token = None
+        await self._stop_signal_listener()
+        try:
+            await self._coordinator.release_recovery_lease(owner=self._owner, token=token)
+        except Exception:
+            logger.exception("Nexus receiver recovery lease release failed")
 
     async def _run(self) -> None:
         while not self._stop.is_set():
@@ -269,6 +400,7 @@ class ReceiverRecoveryService:
     async def stop(self) -> None:
         task = self._task
         if task is None:
+            await self._release_leadership()
             return
         self._stop.set()
         self._wake.set()
@@ -281,12 +413,8 @@ class ReceiverRecoveryService:
                 await task
         finally:
             self._task = None
-            if self._signal_socket is not None:
-                asyncio.get_running_loop().remove_reader(self._signal_socket.fileno())
-                self._signal_socket.close()
-                self._signal_socket = None
-            if self._signal_path is not None:
-                await asyncio.to_thread(self._remove_signal_path, self._signal_path)
+            await self._release_leadership()
+            await self._stop_signal_listener()
 
 
 class UnixDatagramReceiverRecoveryNotifier:
@@ -336,6 +464,7 @@ class ReceiverReleaseComponents:
     runtime_handler: ReceiverRuntimeHandler
     service_authenticator: ReceiverServiceAuthenticator
     principal_mapper: ReceiverPrincipalMapper
+    recovery_coordinator: ReceiverRecoveryCoordinator
 
 
 class ReceiverReleaseBootstrap(Protocol):
@@ -357,6 +486,7 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
         "nexus_receiver_service_authenticator",
         "nexus_receiver_principal_mapper",
         "nexus_receiver_recovery_service",
+        "nexus_receiver_catalog_revision_provider",
     ):
         if hasattr(app_state, attribute):
             delattr(app_state, attribute)
@@ -368,24 +498,34 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
         return None
     try:
         components = await bootstrap.build(config)
+        if not callable(getattr(components.recovery_coordinator, "get_catalog_revision", None)):
+            raise RuntimeError("receiver recovery coordinator does not provide the GLOBAL catalog revision")
         if not callable(getattr(components.runtime_handler, "recover_pending", None)):
             raise TypeError("receiver runtime handler is incomplete")
         if not callable(getattr(components.service_authenticator, "authenticate", None)):
             raise TypeError("receiver service authenticator is incomplete")
         if not callable(getattr(components.principal_mapper, "map_principal", None)):
             raise TypeError("receiver principal mapper is incomplete")
+        if not callable(getattr(components.recovery_coordinator, "try_acquire_recovery_lease", None)):
+            raise TypeError("receiver recovery coordinator is incomplete")
         recovery = ReceiverRecoveryService(
             components.runtime_handler,
             poll_interval_seconds=config.recovery_poll_interval_seconds,
             signal_path=Path(config.recovery_signal_socket) if config.recovery_signal_socket is not None else None,
+            coordinator=components.recovery_coordinator,
+            owner=f"gateway-{os.getpid()}-{id(app_state)}",
         )
         components.runtime_handler.set_pending_recovery_notifier(recovery.notify_pending)
         await recovery.start()
     except Exception:
+        if config.production:
+            logger.error("Nexus receiver production bootstrap failed; startup aborted")
+            raise RuntimeError("Nexus receiver production bootstrap failed") from None
         logger.exception("Nexus receiver release bootstrap is incomplete; remaining default-deny")
         return None
     setattr(app_state, "nexus_receiver_runtime_handler", components.runtime_handler)
     setattr(app_state, "nexus_receiver_service_authenticator", components.service_authenticator)
     setattr(app_state, "nexus_receiver_principal_mapper", components.principal_mapper)
     setattr(app_state, "nexus_receiver_recovery_service", recovery)
+    setattr(app_state, "nexus_receiver_catalog_revision_provider", components.recovery_coordinator)
     return recovery

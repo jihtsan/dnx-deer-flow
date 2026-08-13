@@ -427,6 +427,7 @@ class RunContext:
     thread_store: Any | None = field(default=None)
     app_config: AppConfig | None = field(default=None)
     extensions: Any | None = field(default=None)
+    global_skill_catalog_revision_provider: Any | None = field(default=None)
     checkpoint_channel_mode: CheckpointChannelMode = "full"
     # Delta snapshot cadence frozen at startup; ``None`` means "not frozen in
     # this process" (embedded/tests) and resolves to the config default.
@@ -605,6 +606,7 @@ async def run_agent(
     # finally is safe even if an exception fires before streaming begins.
     subagent_events: _SubagentEventBuffer | None = None
     started = False
+    catalog_revision_binding = None
 
     async def _finish_cancellation(
         action: str,
@@ -786,6 +788,17 @@ async def run_agent(
             task_store,
             extensions,
         )
+        from deerflow.skills.revision import (
+            GLOBAL_SKILL_CATALOG_REVISION_CONTEXT_KEY,
+            bind_global_skill_catalog_revision,
+        )
+
+        catalog_revision = "0"
+        if ctx.global_skill_catalog_revision_provider is not None:
+            catalog_revision = str(await ctx.global_skill_catalog_revision_provider.get_catalog_revision())
+        catalog_revision_binding = bind_global_skill_catalog_revision(catalog_revision)
+        catalog_revision_binding.__enter__()
+        runtime_ctx[GLOBAL_SKILL_CATALOG_REVISION_CONTEXT_KEY] = catalog_revision
         incoming_metadata = config.get("metadata") if isinstance(config.get("metadata"), dict) else {}
         deerflow_trace_id = resolve_deerflow_trace_id(incoming_metadata.get(DEERFLOW_TRACE_METADATA_KEY))
         if deerflow_trace_id:
@@ -1104,6 +1117,8 @@ async def run_agent(
             )
 
     finally:
+        if catalog_revision_binding is not None:
+            catalog_revision_binding.__exit__(None, None, None)
         if record.ownership_lost:
             logger.warning(
                 "Skipping durable finalization for run %s because this worker no longer owns its lease",

@@ -550,6 +550,66 @@ class TestSkillLoadingRespectsGlobalDisable:
                         assert shared[0].enabled is False
 
 
+class TestCatalogRevisionCache:
+    def test_catalog_revision_change_reloads_skill_snapshot(self, monkeypatch) -> None:
+        from collections import OrderedDict
+
+        from deerflow.agents.lead_agent import prompt as prompt_module
+
+        prompt_module._enabled_skills_by_config_cache = OrderedDict()
+
+        class FakeStorage:
+            def __init__(self) -> None:
+                self.load_calls = 0
+
+            def load_skills(self, *, enabled_only: bool = False):
+                self.load_calls += 1
+                return []
+
+        config = object()
+        storage = FakeStorage()
+        monkeypatch.setattr(prompt_module, "get_or_new_user_skill_storage", lambda *args, **kwargs: storage)
+
+        prompt_module.get_enabled_skills_for_config(config, user_id="user-a", catalog_revision="17")
+        prompt_module.get_enabled_skills_for_config(config, user_id="user-a", catalog_revision="17")
+        prompt_module.get_enabled_skills_for_config(config, user_id="user-a", catalog_revision="18")
+
+        assert storage.load_calls == 2
+
+
+class TestReceiverInventoryIsolation:
+    def test_lists_only_receiver_owned_user_custom_skills(
+        self,
+        user_storage: UserScopedSkillStorage,
+        base_dir: Path,
+    ) -> None:
+        import json
+
+        user_dir = user_storage.get_custom_skill_dir("user-receiver")
+        user_dir.mkdir(parents=True)
+        (user_dir / "SKILL.md").write_text(_skill_content("user-receiver"), encoding="utf-8")
+        metadata = {
+            "contractVersion": "1.0.0",
+            "skillVersionId": "sv.user.1",
+            "version": "1.0.0",
+            "runtimeSkillName": "user-receiver",
+            "packageDigest": "sha256:" + "a" * 64,
+        }
+        (user_dir / ".nexus-receiver.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+        global_dir = base_dir / "integrations" / "skills" / "nexus" / "global-receiver"
+        global_dir.mkdir(parents=True)
+        (global_dir / "SKILL.md").write_text(_skill_content("global-receiver"), encoding="utf-8")
+        (global_dir / ".nexus-receiver.json").write_text(
+            json.dumps({**metadata, "runtimeSkillName": "global-receiver"}),
+            encoding="utf-8",
+        )
+
+        inventory = user_storage.list_receiver_inventory()
+
+        assert [item["runtimeSkillName"] for item in inventory] == ["user-receiver"]
+
+
 class TestEnabledSkillsByConfigCacheBounded:
     """P2-4: ``_enabled_skills_by_config_cache`` must be bounded so a
     long-running process cannot leak one entry per distinct

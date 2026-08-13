@@ -642,11 +642,17 @@ def _available_skill_names(agent_config, is_bootstrap: bool) -> set[str] | None:
     return None
 
 
-def _load_enabled_available_skills(available_skills: set[str] | None, *, app_config: AppConfig, user_id: str | None = None) -> list[Skill]:
+def _load_enabled_available_skills(
+    available_skills: set[str] | None,
+    *,
+    app_config: AppConfig,
+    user_id: str | None = None,
+    catalog_revision: str = "0",
+) -> list[Skill]:
     try:
         from deerflow.agents.lead_agent.prompt import get_enabled_skills_for_config
 
-        skills = get_enabled_skills_for_config(app_config, user_id=user_id)
+        skills = get_enabled_skills_for_config(app_config, user_id=user_id, catalog_revision=catalog_revision)
     except Exception:
         logger.exception("Failed to load enabled skills")
         raise
@@ -706,6 +712,9 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     from deerflow.runtime.user_context import resolve_config_user_id
 
     resolved_user_id = resolve_config_user_id(config)
+    from deerflow.skills.revision import GLOBAL_SKILL_CATALOG_REVISION_CONTEXT_KEY
+
+    catalog_revision = str(cfg.get(GLOBAL_SKILL_CATALOG_REVISION_CONTEXT_KEY, "0"))
 
     requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")
     is_plan_mode = cfg.get("is_plan_mode", False)
@@ -791,7 +800,12 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             existing = list(existing)
         config["callbacks"] = [*existing, *tracing_callbacks]
 
-    enabled_skills = _load_enabled_available_skills(available_skills, app_config=resolved_app_config, user_id=resolved_user_id)
+    enabled_skills = _load_enabled_available_skills(
+        available_skills,
+        app_config=resolved_app_config,
+        user_id=resolved_user_id,
+        catalog_revision=catalog_revision,
+    )
 
     # Build skill search setup (deferred skill discovery).
     # Controlled by skills.deferred_discovery — independent from tool_search.enabled.

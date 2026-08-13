@@ -18,6 +18,7 @@ from app.gateway.nexus_receiver.runtime import (
 _COMMANDS = {
     "nexus-skill-receiver-v1 capabilities.get": "capabilities.get",
     "nexus-skill-receiver-v1 users.list": "users.list",
+    "nexus-skill-receiver-v1 skills.list": "skills.list",
     "nexus-skill-receiver-v1 install.submit": "install.submit",
     "nexus-skill-receiver-v1 operations.get": "operations.get",
     "nexus-skill-receiver-v1 observations.query": "observations.query",
@@ -28,6 +29,7 @@ _CORRELATION_PATTERN = re.compile(r"^[A-Za-z0-9._:/-]{1,128}$")
 _FRAME_FIELDS = {
     "capabilities.get": (frozenset({"contractVersion", "correlationId"}), frozenset()),
     "users.list": (frozenset({"contractVersion", "correlationId", "limit"}), frozenset({"query", "cursor"})),
+    "skills.list": (frozenset({"contractVersion", "correlationId", "target", "limit"}), frozenset({"query", "cursor"})),
     "install.submit": (
         frozenset({"contractVersion", "correlationId", "idempotencyKey", "requestSha256", "command"}),
         frozenset(),
@@ -75,8 +77,9 @@ def _parse_stdin(action: str, stdin: bytes) -> tuple[dict, bytes]:
         frame = json.loads(frame_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 JSON frame is invalid.", status_code=422) from None
-    if not isinstance(frame, dict) or frame.get("contractVersion") != "1.0.0":
-        raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 JSON frame does not match contract version 1.0.0.", status_code=422)
+    expected_version = "1.1.0" if action == "skills.list" else "1.0.0"
+    if not isinstance(frame, dict) or frame.get("contractVersion") != expected_version:
+        raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail=f"The ssh_v1 JSON frame does not match contract version {expected_version}.", status_code=422)
     required, optional = _FRAME_FIELDS[action]
     fields = frozenset(frame)
     if not required.issubset(fields) or fields - required - optional:
@@ -96,6 +99,19 @@ def _parse_stdin(action: str, stdin: bytes) -> tuple[dict, bytes]:
             raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 user-directory query is invalid.", status_code=422)
         if cursor is not None and (not isinstance(cursor, str) or not 1 <= len(cursor) <= 500):
             raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 user-directory cursor is invalid.", status_code=422)
+    if action == "skills.list":
+        limit = frame.get("limit")
+        query = frame.get("query")
+        cursor = frame.get("cursor")
+        target = frame.get("target")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 Skill inventory limit is invalid.", status_code=422)
+        if query is not None and (not isinstance(query, str) or not 1 <= len(query) <= 100):
+            raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 Skill inventory query is invalid.", status_code=422)
+        if cursor is not None and (not isinstance(cursor, str) or not 1 <= len(cursor) <= 500):
+            raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 Skill inventory cursor is invalid.", status_code=422)
+        if not isinstance(target, dict) or target.get("scope") != "USER" or set(target) != {"scope", "deerFlowUserId"}:
+            raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The ssh_v1 Skill inventory target is invalid.", status_code=422)
     if action == "operations.get":
         try:
             UUID(frame.get("operationId", ""))
@@ -145,20 +161,24 @@ async def dispatch_forced_command(
                 request_sha256=frame.get("requestSha256", ""),
                 command_payload=frame.get("command", {}),
                 package=package,
+                correlation_id=correlation_id,
             )
         elif action == "operations.get":
-            result = await handler.get_operation(principal=principal, operation_id=frame.get("operationId", ""))
+            result = await handler.get_operation(principal=principal, operation_id=frame.get("operationId", ""), correlation_id=correlation_id)
         elif action == "observations.query":
-            result = await handler.query_observation(principal=principal, query_payload=frame.get("query", {}))
+            result = await handler.query_observation(principal=principal, query_payload=frame.get("query", {}), correlation_id=correlation_id)
         elif action == "capabilities.get":
-            result = await handler.get_capabilities(principal=principal)
+            result = await handler.get_capabilities(principal=principal, correlation_id=correlation_id)
         elif action == "users.list":
             result = await handler.list_users(
                 principal=principal,
                 query=frame.get("query"),
                 cursor=frame.get("cursor"),
                 limit=frame.get("limit", 0),
+                correlation_id=correlation_id,
             )
+        elif action == "skills.list":
+            result = await handler.list_skills(principal=principal, request_payload=frame, correlation_id=correlation_id)
         else:
             raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The forced command action is invalid.", status_code=422)
         return ForcedCommandResult(0, _json(result.model_dump(mode="json", by_alias=True)))
