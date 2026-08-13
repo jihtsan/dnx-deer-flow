@@ -150,6 +150,17 @@ class _BlockingInstaller(_Installer):
         await super().install_user_skill(user_id=user_id, command=command, manifest_version=manifest_version, package=package)
 
 
+class _LeaseLosingStore(InMemoryReceiverOperationStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.renew_calls = 0
+
+    async def renew_claim(self, *args, **kwargs) -> bool:
+        del args, kwargs
+        self.renew_calls += 1
+        return self.renew_calls < 3
+
+
 class _SearchDirectory:
     async def search(self, *, principal, query, cursor, limit) -> ReceiverUserPage:
         assert principal.subject in {"nexus-receiver-test", "nexus-ssh-test"}
@@ -321,6 +332,31 @@ async def test_concurrent_same_operation_replay_does_not_execute_or_terminalize_
 
 
 @pytest.mark.asyncio
+async def test_operation_lease_loss_cancels_blocked_installer(monkeypatch) -> None:
+    import app.gateway.nexus_receiver.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_EXECUTION_HEARTBEAT_SECONDS", 0.01)
+    package = _archive()
+    command = _command(package)
+    store = _LeaseLosingStore()
+    installer = _BlockingInstaller()
+    handler = _handler(store=store, installer=installer, execution_owner="worker")
+    await handler.submit_install(
+        principal=_principal("receiver:install:user"),
+        idempotency_key="install-user-lease-loss",
+        request_sha256=handler.canonical_command_digest(command),
+        command_payload=command,
+        package=package,
+    )
+
+    recovered = await asyncio.wait_for(handler.recover_pending(), timeout=0.5)
+
+    assert recovered[0].phase == "installing"
+    assert installer.started.is_set()
+    assert installer.calls == installer.activation_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_expired_execution_owner_is_fenced_after_takeover() -> None:
     package = _archive()
     command_payload = _command(package)
@@ -334,20 +370,69 @@ async def test_expired_execution_owner_is_fenced_after_takeover() -> None:
         command=command,
         now=now,
     )
-    assert await store.try_claim(str(command.receiver_operation_id), owner="worker-a", now=now, expires_at=now + timedelta(seconds=1))
-    assert await store.try_claim(
+    token_a = await store.try_claim(str(command.receiver_operation_id), owner="worker-a", now=now, expires_at=now + timedelta(seconds=1))
+    assert token_a is not None
+    token_b = await store.try_claim(
         str(command.receiver_operation_id),
         owner="worker-b",
         now=now + timedelta(seconds=2),
         expires_at=now + timedelta(minutes=5),
     )
+    assert token_b is not None
 
     with pytest.raises(ReceiverProviderError) as fenced:
-        await store.transition(str(command.receiver_operation_id), phase="validating", now=now, owner="worker-a")
-    claimed = await store.transition(str(command.receiver_operation_id), phase="validating", now=now, owner="worker-b")
+        await store.transition(str(command.receiver_operation_id), phase="validating", now=now, owner="worker-a", token=token_a)
+    claimed = await store.transition(str(command.receiver_operation_id), phase="validating", now=now, owner="worker-b", token=token_b)
 
     assert fenced.value.code == "OBSERVED_STATE_CONFLICT"
     assert claimed.operation.phase == "validating"
+
+
+@pytest.mark.asyncio
+async def test_reused_execution_owner_is_fenced_by_claim_token() -> None:
+    package = _archive()
+    command_payload = _command(package)
+    handler = _handler()
+    command = handler.validate_command(command_payload)
+    store = InMemoryReceiverOperationStore()
+    now = datetime(2026, 8, 11, 5, 55, tzinfo=UTC)
+    await store.reserve(
+        idempotency_key="install-user-token-fencing",
+        request_sha256=handler.canonical_command_digest(command_payload),
+        command=command,
+        now=now,
+    )
+    token_a = await store.try_claim(str(command.receiver_operation_id), owner="worker", now=now, expires_at=now + timedelta(seconds=1))
+    token_b = await store.try_claim(
+        str(command.receiver_operation_id),
+        owner="worker",
+        now=now + timedelta(seconds=2),
+        expires_at=now + timedelta(minutes=5),
+    )
+    assert token_a is not None and token_b is not None and token_a != token_b
+
+    assert not await store.renew_claim(
+        str(command.receiver_operation_id),
+        owner="worker",
+        token=token_a,
+        now=now + timedelta(seconds=2),
+        expires_at=now + timedelta(minutes=10),
+    )
+    with pytest.raises(ReceiverProviderError):
+        await store.transition(
+            str(command.receiver_operation_id),
+            phase="validating",
+            now=now + timedelta(seconds=2),
+            owner="worker",
+            token=token_a,
+        )
+    assert await store.renew_claim(
+        str(command.receiver_operation_id),
+        owner="worker",
+        token=token_b,
+        now=now + timedelta(seconds=2),
+        expires_at=now + timedelta(minutes=10),
+    )
 
 
 @pytest.mark.asyncio

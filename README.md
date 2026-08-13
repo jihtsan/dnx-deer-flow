@@ -1115,13 +1115,22 @@ Ports. HTTP and SSH use one transport-neutral handler for durable, idempotent
 digest/size, traversal, symlink, expansion, manifest-name, target eligibility,
 same-name, and idempotency conflicts are checked before success. Durable phases
 and canonical request bindings live in `nexus_receiver_operations`; atomic,
-owner-only package staging plus expiring execution claims allow nonterminal
+owner-only package staging plus renewable, random-token-fenced execution claims allow nonterminal
 operations to resume after restart without another submit. The Skill tree and
 redacted receiver identity commit together in disabled state, then activation
 and exact `enabled=true` / `loadState=loaded` observation close the operation.
 Each resumed write attempt revalidates the exact controlled USER identity and
 eligibility; failures after the atomic tree commit retain an explicit disabled
 state rather than falling back to the normal enabled-by-default behavior.
+
+The backend also contains the disabled-by-default persistence foundation for a
+later native `GLOBAL` receiver path: atomic same-filesystem managed storage at
+`integrations/skills/nexus`, a PostgreSQL global identity catalog and monotonic
+catalog revision, successful runtime-parser load probes, and a singleton
+recovery coordinator lease with takeover fencing. These are internal primitives
+only. No `GLOBAL` install/observe action is wired and capabilities continue to
+report GLOBAL support as unavailable until the remaining runtime and production
+readiness stages are complete.
 
 This implementation is not production enablement. `config.yaml` exposes a
 startup-only `nexus_receiver` release gate that defaults to `enabled: false` and

@@ -234,6 +234,30 @@ class _Recoverer:
         return []
 
 
+class _SharedCoordinator:
+    def __init__(self) -> None:
+        self.owner = None
+        self.token = None
+
+    async def try_acquire_recovery_lease(self, *, owner, **kwargs):
+        del kwargs
+        if self.token is not None:
+            return None
+        self.owner = owner
+        self.token = uuid4().hex
+        return self.token
+
+    async def renew_recovery_lease(self, *, owner, token, **kwargs):
+        del kwargs
+        return (owner, token) == (self.owner, self.token)
+
+    async def release_recovery_lease(self, *, owner, token):
+        if (owner, token) != (self.owner, self.token):
+            return False
+        self.owner = self.token = None
+        return True
+
+
 @pytest.mark.asyncio
 async def test_recovery_service_runs_at_startup_after_submit_and_periodically() -> None:
     recoverer = _Recoverer()
@@ -290,6 +314,41 @@ async def test_recovery_service_is_single_flight_and_stops_cleanly() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recovery_coordinator_allows_one_leader_then_follower_takeover() -> None:
+    coordinator = _SharedCoordinator()
+    first_recoverer = _Recoverer()
+    second_recoverer = _Recoverer()
+    first = ReceiverRecoveryService(first_recoverer, poll_interval_seconds=60, coordinator=coordinator, owner="gateway-a")
+    second = ReceiverRecoveryService(second_recoverer, poll_interval_seconds=60, coordinator=coordinator, owner="gateway-b")
+
+    await first.start()
+    await second.start()
+    assert first_recoverer.calls == 1
+    assert second_recoverer.calls == 0
+
+    await first.stop()
+    await second.run_now()
+    assert second_recoverer.calls == 1
+    await second.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_start_failure_releases_leader_lease() -> None:
+    coordinator = _SharedCoordinator()
+
+    class _FailingRecoverer:
+        async def recover_pending(self):
+            raise RuntimeError("startup recovery failed")
+
+    service = ReceiverRecoveryService(_FailingRecoverer(), poll_interval_seconds=60, coordinator=coordinator, owner="gateway-a")
+
+    with pytest.raises(RuntimeError, match="startup recovery failed"):
+        await service.start()
+
+    assert coordinator.owner is coordinator.token is None
+
+
+@pytest.mark.asyncio
 async def test_recovery_service_shutdown_is_bounded(monkeypatch) -> None:
     import app.gateway.nexus_receiver.release as release_module
 
@@ -325,6 +384,20 @@ class _Bootstrap:
     async def build(self, config: NexusReceiverConfig) -> ReceiverReleaseComponents:
         assert config.enabled
         return self.components
+
+
+class _Coordinator:
+    async def try_acquire_recovery_lease(self, **kwargs):
+        del kwargs
+        return "lease-token"
+
+    async def renew_recovery_lease(self, **kwargs):
+        del kwargs
+        return True
+
+    async def release_recovery_lease(self, **kwargs):
+        del kwargs
+        return True
 
 
 @pytest.mark.asyncio
@@ -394,6 +467,7 @@ async def test_release_wiring_injects_complete_components_and_recovery_together(
                 runtime_handler=runtime,
                 service_authenticator=authenticator,
                 principal_mapper=mapper,
+                recovery_coordinator=_Coordinator(),
             )
         )
     )
