@@ -1449,6 +1449,12 @@ RBAC/trust/compatibility/audit/rate-limit bundle, and a shared-volume probe;
 missing any item atomically prevents runtime publication. See
 `docs/NEXUS_RECEIVER_PRODUCTION.md`.
 
+The restricted SSH principal map uses the same independent scope actions as
+HTTP: USER install/observe actions never imply their GLOBAL counterparts.
+GLOBAL actions may be listed explicitly for a production principal, but that
+does not bypass `ReceiverCapabilityReadiness`; absent GLOBAL readiness remains
+unsupported and is never advertised from principal authority alone.
+
 `skills.list` is a USER-only 1.1 action over HTTP and SSH. It reads native USER
 storage, emits only the eight canonical fields, sorts by normalized runtime Skill
 name, and uses expiry-bound HMAC cursors bound to principal, target, query, and

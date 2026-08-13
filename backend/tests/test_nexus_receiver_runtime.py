@@ -918,6 +918,64 @@ async def test_forced_install_validates_raw_package_bytes_before_shared_handler(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "principal_action", "frame_field"),
+    [
+        ("install.submit", "receiver:install:user", "command"),
+        ("observations.query", "receiver:observe:user", "query"),
+    ],
+)
+async def test_forced_global_actions_require_explicit_scope_authority_before_readiness(
+    action: str,
+    principal_action: str,
+    frame_field: str,
+) -> None:
+    package = _archive()
+    command = _command(package)
+    command.update(
+        target={"scope": "GLOBAL"},
+        actorAudit={**command["actorAudit"], "action": "skill:install_global"},
+    )
+    if action == "install.submit":
+        payload = command
+        frame = {
+            "contractVersion": "1.0.0",
+            "correlationId": "receiver-ssh-global-rbac",
+            "idempotencyKey": "install-global-ssh-rbac-0001",
+            "requestSha256": _handler().canonical_command_digest(command),
+            frame_field: payload,
+        }
+        stdin = json.dumps(frame, sort_keys=True, separators=(",", ":")).encode() + b"\n" + package
+        global_action = "receiver:install:global"
+    else:
+        payload = {"target": {"scope": "GLOBAL"}, "runtimeSkillName": "research-assistant"}
+        frame = {
+            "contractVersion": "1.0.0",
+            "correlationId": "receiver-ssh-global-rbac",
+            frame_field: payload,
+        }
+        stdin = json.dumps(frame, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        global_action = "receiver:observe:global"
+
+    forbidden = await dispatch_forced_command(
+        f"nexus-skill-receiver-v1 {action}",
+        stdin,
+        handler=_handler(),
+        principal=_ssh_principal(principal_action),
+    )
+    readiness_blocked = await dispatch_forced_command(
+        f"nexus-skill-receiver-v1 {action}",
+        stdin,
+        handler=_handler(),
+        principal=_ssh_principal(global_action),
+    )
+
+    assert forbidden.exit_code == readiness_blocked.exit_code == 10
+    assert json.loads(forbidden.stdout)["code"] == "FORBIDDEN"
+    assert json.loads(readiness_blocked.stdout)["code"] == "GLOBAL_INSTALL_UNSUPPORTED"
+
+
+@pytest.mark.asyncio
 async def test_forced_install_success_uses_shared_handler_and_one_canonical_document() -> None:
     package = _archive()
     command = _command(package)

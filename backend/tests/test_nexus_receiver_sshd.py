@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,28 @@ def test_receiver_authorized_keys_generator_uses_exact_restrictions() -> None:
     assert rendered.endswith(" nexus\n")
     assert "nexus_receiver_host_key" in entrypoint
     assert "nexus_receiver_principal_map" in entrypoint
+
+
+def test_production_authorized_keys_accepts_explicit_global_actions_without_broadening_ssh() -> None:
+    payload = json.dumps(
+        {
+            "version": 1,
+            "principals": [
+                {
+                    "keyId": "global-key-1",
+                    "subject": "nexus.release.global",
+                    "actions": ["receiver:install:global", "receiver:observe:global"],
+                    "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlobalReleaseKey nexus-global",
+                }
+            ],
+        }
+    ).encode()
+
+    rendered = render_authorized_keys(payload, forced_command_profile="production").decode()
+
+    assert rendered == ('restrict,command="/usr/local/bin/nexus-receiver-production-forced-command --principal-id global-key-1" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlobalReleaseKey nexus-global\n')
+    assert "receiver:install:global" not in rendered
+    assert "receiver:observe:global" not in rendered
 
 
 def test_receiver_image_includes_only_the_required_sshd_build_context() -> None:

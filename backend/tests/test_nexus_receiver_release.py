@@ -121,6 +121,41 @@ async def test_secret_backed_principal_mapper_maps_only_exact_key_ids_and_action
 
 
 @pytest.mark.asyncio
+async def test_secret_backed_principal_mapper_keeps_user_and_global_actions_independent() -> None:
+    mapper = SecretBackedReceiverPrincipalMapper(
+        resolver=_SecretResolver(
+            _principal_map(
+                principals=[
+                    {
+                        "keyId": "user-only-key",
+                        "subject": "nexus.release.user",
+                        "actions": ["receiver:install:user", "receiver:observe:user"],
+                        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIUserOnlyKey nexus-user",
+                    },
+                    {
+                        "keyId": "global-only-key",
+                        "subject": "nexus.release.global",
+                        "actions": ["receiver:install:global", "receiver:observe:global"],
+                        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlobalOnlyKey nexus-global",
+                    },
+                ]
+            )
+        ),
+        reference=ReceiverSecretReference(name="principals", key="map"),
+    )
+
+    user = await mapper.map_principal("user-only-key")
+    global_principal = await mapper.map_principal("global-only-key")
+
+    assert user.actions == frozenset({"receiver:install:user", "receiver:observe:user"})
+    assert "receiver:install:global" not in user.actions
+    assert "receiver:observe:global" not in user.actions
+    assert global_principal.actions == frozenset({"receiver:install:global", "receiver:observe:global"})
+    assert "receiver:install:user" not in global_principal.actions
+    assert "receiver:observe:user" not in global_principal.actions
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "principals",
     [

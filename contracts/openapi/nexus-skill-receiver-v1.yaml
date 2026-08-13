@@ -99,7 +99,7 @@ x-receiver-contract:
     ssh_v1:
       kind: ssh
       authenticationProfile: ssh_forced_command
-      targetScopes: [USER]
+      targetScopes: [GLOBAL, USER]
       forcedCommand: nexus-skill-receiver-v1
       argvGrammar: '^nexus-skill-receiver-v1 (capabilities\.get|users\.list|skills\.list|install\.submit|operations\.get|observations\.query)$'
       forbiddenFeatures:
@@ -158,14 +158,15 @@ x-receiver-contract:
         install.submit:
           minimumContractVersion: 1.0.0
           httpOperationId: createNexusSkillReceiverOperation
-          serviceActions: [receiver:install:user]
+          serviceActionsByTarget:
+            USER: [receiver:install:user]
+            GLOBAL: [receiver:install:global]
           requiredFrameFields: [contractVersion, correlationId, idempotencyKey, requestSha256, command]
           optionalFrameFields: []
           commandSchema:
             $ref: '#/components/schemas/ReceiverInstallCommand'
           successSchema:
             $ref: '#/components/schemas/ReceiverOperation'
-          unsupportedTargetProblemCode: GLOBAL_INSTALL_UNSUPPORTED
         operations.get:
           minimumContractVersion: 1.0.0
           httpOperationId: getNexusSkillReceiverOperation
@@ -177,7 +178,9 @@ x-receiver-contract:
         observations.query:
           minimumContractVersion: 1.0.0
           httpOperationId: queryNexusSkillReceiverObservation
-          serviceActions: [receiver:observe:user]
+          serviceActionsByTarget:
+            USER: [receiver:observe:user]
+            GLOBAL: [receiver:observe:global]
           requiredFrameFields: [contractVersion, correlationId, query]
           optionalFrameFields: []
           querySchema:
