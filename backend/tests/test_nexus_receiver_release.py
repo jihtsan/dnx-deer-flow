@@ -518,3 +518,31 @@ async def test_release_wiring_rejects_coordinator_without_catalog_revision_provi
 
     assert service is None
     assert not hasattr(state, "nexus_receiver_runtime_handler")
+
+
+@pytest.mark.asyncio
+async def test_production_release_bootstrap_failure_aborts_startup(caplog) -> None:
+    class _FailingBootstrap:
+        async def build(self, config):
+            del config
+            raise ValueError("external provider unavailable")
+
+    values = dict(_COMPLETE_CONFIG)
+    values.update(
+        production=True,
+        cursor_signing_key_secret_ref={"name": "receiver/runtime", "key": "cursor-key"},
+        provider_factory="enterprise.receiver:build_providers",
+        package_stage_path="/var/lib/deer-flow/nexus-receiver/packages",
+        global_storage_path="/app/backend/.deer-flow/integrations/skills",
+        audit_policy_revision="audit-v1",
+        rate_limit_policy_revision="rate-v1",
+    )
+    state = SimpleNamespace(nexus_receiver_release_bootstrap=_FailingBootstrap())
+
+    with pytest.raises(RuntimeError, match="production bootstrap failed"):
+        await start_receiver_release_wiring(state, NexusReceiverConfig.model_validate(values))
+
+    assert not hasattr(state, "nexus_receiver_runtime_handler")
+    assert not hasattr(state, "nexus_receiver_service_authenticator")
+    assert not hasattr(state, "nexus_receiver_principal_mapper")
+    assert "external provider unavailable" not in caplog.text

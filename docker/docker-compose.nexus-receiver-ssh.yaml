@@ -3,8 +3,12 @@
 # Compose environment gate and config.yaml nexus_receiver release gate.
 services:
   gateway:
+    environment:
+      - NEXUS_RECEIVER_ENABLED=${NEXUS_RECEIVER_ENABLED:-false}
     volumes:
       - nexus-receiver-ipc:/run/nexus-receiver-ipc
+      - nexus-receiver-global:/app/backend/.deer-flow/integrations/skills
+      - nexus-receiver-packages:/var/lib/deer-flow/nexus-receiver/packages
 
   nexus-receiver-sshd:
     profiles: ["nexus-receiver-ssh"]
@@ -18,17 +22,21 @@ services:
     ports:
       - "${NEXUS_RECEIVER_SSH_BIND_HOST:-127.0.0.1}:${NEXUS_RECEIVER_SSH_PORT:-2222}:22"
     environment:
-      - NEXUS_RECEIVER_ENABLED=${NEXUS_RECEIVER_ENABLED:-false}
-      - DEER_FLOW_CONFIG_PATH=/app/backend/config.yaml
-      - DEER_FLOW_PROJECT_ROOT=/app
-      - DEER_FLOW_HOME=/app/backend/.deer-flow
+      NEXUS_RECEIVER_ENABLED: ${NEXUS_RECEIVER_ENABLED:-false}
+      NEXUS_RECEIVER_FORCED_COMMAND_PROFILE: production
+      DEER_FLOW_CONFIG_PATH: /app/backend/config.yaml
+      DEER_FLOW_PROJECT_ROOT: /app
+      DEER_FLOW_HOME: /app/backend/.deer-flow
     volumes:
       - ${DEER_FLOW_CONFIG_PATH}:/app/backend/config.yaml:ro
       - ${DEER_FLOW_HOME}:/app/backend/.deer-flow
       - nexus-receiver-ipc:/run/nexus-receiver-ipc
+      - nexus-receiver-global:/app/backend/.deer-flow/integrations/skills:ro
+      - nexus-receiver-packages:/var/lib/deer-flow/nexus-receiver/packages
     secrets:
       - nexus_receiver_host_key
       - nexus_receiver_principal_map
+      - nexus_receiver_database_url
     networks:
       - deer-flow
     restart: "no"
@@ -38,6 +46,12 @@ secrets:
     file: ${NEXUS_RECEIVER_HOST_KEY_FILE}
   nexus_receiver_principal_map:
     file: ${NEXUS_RECEIVER_PRINCIPAL_MAP_FILE}
+  nexus_receiver_database_url:
+    # /dev/null keeps the acceptance overlay compatible; production preflight
+    # rejects the empty Secret before sshd listens.
+    file: ${NEXUS_RECEIVER_DATABASE_URL_FILE:-/dev/null}
 
 volumes:
   nexus-receiver-ipc:
+  nexus-receiver-global:
+  nexus-receiver-packages:

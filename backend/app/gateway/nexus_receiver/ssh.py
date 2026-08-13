@@ -161,22 +161,24 @@ async def dispatch_forced_command(
                 request_sha256=frame.get("requestSha256", ""),
                 command_payload=frame.get("command", {}),
                 package=package,
+                correlation_id=correlation_id,
             )
         elif action == "operations.get":
-            result = await handler.get_operation(principal=principal, operation_id=frame.get("operationId", ""))
+            result = await handler.get_operation(principal=principal, operation_id=frame.get("operationId", ""), correlation_id=correlation_id)
         elif action == "observations.query":
-            result = await handler.query_observation(principal=principal, query_payload=frame.get("query", {}))
+            result = await handler.query_observation(principal=principal, query_payload=frame.get("query", {}), correlation_id=correlation_id)
         elif action == "capabilities.get":
-            result = await handler.get_capabilities(principal=principal)
+            result = await handler.get_capabilities(principal=principal, correlation_id=correlation_id)
         elif action == "users.list":
             result = await handler.list_users(
                 principal=principal,
                 query=frame.get("query"),
                 cursor=frame.get("cursor"),
                 limit=frame.get("limit", 0),
+                correlation_id=correlation_id,
             )
         elif action == "skills.list":
-            result = await handler.list_skills(principal=principal, request_payload=frame)
+            result = await handler.list_skills(principal=principal, request_payload=frame, correlation_id=correlation_id)
         else:
             raise ReceiverRuntimeError(code="PACKAGE_INVALID", detail="The forced command action is invalid.", status_code=422)
         return ForcedCommandResult(0, _json(result.model_dump(mode="json", by_alias=True)))

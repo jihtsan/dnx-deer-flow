@@ -356,9 +356,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from app.gateway.nexus_receiver.release import start_receiver_release_wiring
         from deerflow.config.nexus_receiver_config import NexusReceiverConfig
 
+        receiver_config = getattr(startup_config, "nexus_receiver", NexusReceiverConfig())
+        if receiver_config.production:
+            from app.gateway.nexus_receiver.production import ProductionReceiverReleaseBootstrap
+
+            app.state.nexus_receiver_release_bootstrap = ProductionReceiverReleaseBootstrap()
         await start_receiver_release_wiring(
             app.state,
-            getattr(startup_config, "nexus_receiver", NexusReceiverConfig()),
+            receiver_config,
         )
 
         yield

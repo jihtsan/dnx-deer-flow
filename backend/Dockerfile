@@ -143,6 +143,8 @@ COPY docker/nexus-receiver-sshd/entrypoint.sh /usr/local/bin/nexus-receiver-sshd
 RUN chmod 0555 /usr/local/bin/nexus-receiver-sshd-entrypoint \
     && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec env PYTHONPATH=. .venv/bin/python -m app.gateway.nexus_receiver.forced_command "$@"' > /usr/local/bin/nexus-receiver-forced-command \
     && chmod 0555 /usr/local/bin/nexus-receiver-forced-command \
+    && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec env PYTHONPATH=. .venv/bin/python -m app.gateway.nexus_receiver.production_forced_command "$@"' > /usr/local/bin/nexus-receiver-production-forced-command \
+    && chmod 0555 /usr/local/bin/nexus-receiver-production-forced-command \
     && printf '%s\n' '#!/bin/sh' 'cd /app/backend' 'exec env PYTHONPATH=. .venv/bin/python -m app.gateway.nexus_receiver.acceptance_forced_command "$@"' > /usr/local/bin/nexus-receiver-acceptance-forced-command \
     && chmod 0555 /usr/local/bin/nexus-receiver-acceptance-forced-command
 

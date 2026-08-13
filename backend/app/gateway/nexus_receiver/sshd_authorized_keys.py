@@ -10,6 +10,7 @@ from app.gateway.nexus_receiver.release import parse_receiver_principal_map
 
 _FORCED_COMMANDS = {
     "release": "/usr/local/bin/nexus-receiver-forced-command",
+    "production": "/usr/local/bin/nexus-receiver-production-forced-command",
     "acceptance": "/usr/local/bin/nexus-receiver-acceptance-forced-command",
 }
 

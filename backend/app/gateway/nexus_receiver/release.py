@@ -516,6 +516,9 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
         components.runtime_handler.set_pending_recovery_notifier(recovery.notify_pending)
         await recovery.start()
     except Exception:
+        if config.production:
+            logger.error("Nexus receiver production bootstrap failed; startup aborted")
+            raise RuntimeError("Nexus receiver production bootstrap failed") from None
         logger.exception("Nexus receiver release bootstrap is incomplete; remaining default-deny")
         return None
     setattr(app_state, "nexus_receiver_runtime_handler", components.runtime_handler)

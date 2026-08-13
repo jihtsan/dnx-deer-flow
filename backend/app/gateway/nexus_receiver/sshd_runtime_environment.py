@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from urllib.parse import quote
 
+from sqlalchemy.engine.url import make_url
+
 _PASSTHROUGH_NAMES = (
     "DEER_FLOW_CONFIG_PATH",
     "DEER_FLOW_HOME",
@@ -38,6 +40,17 @@ def runtime_environment(source: dict[str, str], *, postgres_password: str | None
     return result
 
 
+def production_database_url(path: Path) -> str:
+    try:
+        value = path.read_text(encoding="utf-8").rstrip("\r\n")
+        parsed = make_url(value)
+    except (OSError, UnicodeError, ValueError):
+        raise ValueError("receiver production database Secret is invalid") from None
+    if parsed.get_backend_name() != "postgresql" or not parsed.host or not parsed.database or not parsed.username or parsed.password is None:
+        raise ValueError("receiver production database Secret is invalid")
+    return value
+
+
 def render_sshd_environment(environment: dict[str, str]) -> str:
     assignments: list[str] = []
     for name, value in sorted(environment.items()):
@@ -54,12 +67,17 @@ def _read_password(path: Path) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--postgres-password-file", type=Path)
+    parser.add_argument("--database-url-file", type=Path)
     parser.add_argument("--sshd-output", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
     password = _read_password(args.postgres_password_file) if args.postgres_password_file else None
     environment = runtime_environment(dict(os.environ), postgres_password=password)
+    if args.database_url_file:
+        if password is not None:
+            parser.error("acceptance and production database Secrets cannot be combined")
+        environment["DATABASE_URL"] = production_database_url(args.database_url_file)
     if args.sshd_output:
         args.sshd_output.write_text(render_sshd_environment(environment), encoding="utf-8")
         os.chmod(args.sshd_output, 0o600)
