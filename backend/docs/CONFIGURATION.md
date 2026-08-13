@@ -2,6 +2,13 @@
 
 This guide explains how to configure DeerFlow for your environment.
 
+For the repository-wide inventory and the exact hot-reload, service-restart,
+and rebuild boundaries, see the
+[configuration reload matrix](../../docs/configuration-reload-matrix.zh-CN.md).
+For the complete `config.yaml` field catalog, including types, defaults, and
+configuration-center release channels, see the
+[Chinese field reference](../../docs/config-yaml-reference.zh-CN.md).
+
 ## Config Versioning
 
 `config.example.yaml` contains a `config_version` field that tracks schema changes. When the example version is higher than your local `config.yaml`, the application emits a startup warning:

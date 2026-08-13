@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data Service API"
+  short_description: "Resolve stations and call standard data services."
+  default_prompt: "Use $data-service-api to resolve the station, select the right endpoint, validate its parameters, and prepare or execute a request."

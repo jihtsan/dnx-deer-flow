@@ -1,0 +1,733 @@
+{
+  "schemaVersion": 1,
+  "sourceAsset": "assets/iot-device-stations.sql",
+  "recordCount": 72,
+  "uniqueSiteIdentifyCount": 72,
+  "tenantCount": 11,
+  "duplicateSiteIdentifyCount": 0,
+  "conflictingSiteIdentifyCount": 0,
+  "duplicateSiteIdentifies": [],
+  "conflictingSiteIdentifies": [],
+  "records": [
+    {
+      "sourceLine": 1,
+      "siteIdentify": "ZSHYZYFGCZ",
+      "stationName": "中石化10948扬州扬帆路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "119.560734314",
+      "latitude": "32.456560605",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 2,
+      "siteIdentify": "NTHMHSGCZ",
+      "stationName": "中石化11007南通海安海石光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "120.901591739",
+      "latitude": "31.986549431",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 3,
+      "siteIdentify": "RGDHSCN",
+      "stationName": "中石化11048南通如皋定慧寺光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 4,
+      "siteIdentify": "2026-BJNH-GCCDZ",
+      "stationName": "中石化11129南京南化光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "118.761090578",
+      "latitude": "32.242992586",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 5,
+      "siteIdentify": "LYGXFLCDZ",
+      "stationName": "中石化11132连云港幸福路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 6,
+      "siteIdentify": "JHCCDZ2",
+      "stationName": "中石化113淮安金湖城西充电站",
+      "tenantId": "1937774603663912962",
+      "longitude": "119.004432923",
+      "latitude": "33.020788988",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 7,
+      "siteIdentify": "ZSHKSZJGCZ",
+      "stationName": "中石化12702昆山章基光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "121.055541150",
+      "latitude": "31.373297775",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 8,
+      "siteIdentify": "ZSHWXYXTQGCCZ",
+      "stationName": "中石化1364无锡宜兴团氿光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "119.804577829",
+      "latitude": "31.392376759",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 9,
+      "siteIdentify": "ZSHSQSYBJLGCCZ",
+      "stationName": "中石化14446宿迁宿豫北京路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 10,
+      "siteIdentify": "ZSHWXHSGCC",
+      "stationName": "中石化14476无锡北外环光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "120.318421110",
+      "latitude": "31.646650282",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 11,
+      "siteIdentify": "2026-NJGTS-CDZ",
+      "stationName": "中石化14552南京国土所光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 12,
+      "siteIdentify": "ZSHXZHSGCZ",
+      "stationName": "中石化15037徐州云龙黄山光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "117.235112444",
+      "latitude": "34.265500789",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 13,
+      "siteIdentify": "SZCSBYGCC",
+      "stationName": "中石化213苏州常熟白云光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 14,
+      "siteIdentify": "ZSHTZHLGCZ",
+      "stationName": "中石化32803545泰州海陵光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 15,
+      "siteIdentify": "ZSHSQSJDDGCZ",
+      "stationName": "中石化3281028宿迁世纪大道光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 16,
+      "siteIdentify": "ZSHSQSYLGDJGCZ",
+      "stationName": "中石化328102宿迁沭阳老供电局光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 17,
+      "siteIdentify": "ZSHYCDHLGCC",
+      "stationName": "中石化3497盐城东环路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "120.213486272",
+      "latitude": "33.346494672",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 18,
+      "siteIdentify": "SZTCZNGCZ",
+      "stationName": "中石化4123苏州太仓闸南光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "121.269454196",
+      "latitude": "31.497019738",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 19,
+      "siteIdentify": "ZSHTZJZBLGCCZ",
+      "stationName": "中石化4498泰州江洲北路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "119.904681943",
+      "latitude": "32.504920982",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 20,
+      "siteIdentify": "CZLJLGCZ",
+      "stationName": "中石化6903常州龙江路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "119.936654388",
+      "latitude": "31.844002921",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 21,
+      "siteIdentify": "NJTXLCN",
+      "stationName": "中石化7440南京同夏路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "118.870498045",
+      "latitude": "31.963162621",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 22,
+      "siteIdentify": "ZSHLYGRMLGCCZ",
+      "stationName": "中石化8712连云港人民路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "119.185088880",
+      "latitude": "34.624342160",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 23,
+      "siteIdentify": "ZSHXZTSGCZ",
+      "stationName": "中石化9011徐州铜山泰顺站光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": "117.183753027",
+      "latitude": "34.161894751",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 24,
+      "siteIdentify": "ZSHHACZXQGCCZ",
+      "stationName": "中石化9523淮安楚州席桥光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 25,
+      "siteIdentify": "SZCSZTSPCGCC",
+      "stationName": "中石化9553苏州常熟支塘食品城光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 26,
+      "siteIdentify": "ZSHHAXMDLGCZ",
+      "stationName": "中石化9633淮安新民东路光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 27,
+      "siteIdentify": "ZJXIZSHGCZ",
+      "stationName": "中石化972镇江西郊光储充站",
+      "tenantId": "1937774603663912962",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 28,
+      "siteIdentify": "NHXNYGCZ2025",
+      "stationName": "宁淮新能源-淮安盱眙宁淮产业园站",
+      "tenantId": "3662819686115328",
+      "longitude": "118.542123045",
+      "latitude": "32.992597479",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 29,
+      "siteIdentify": "WJWDDGCZ",
+      "stationName": "帮吾停光充站-邵舍路西站",
+      "tenantId": "2004005010028556289",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 30,
+      "siteIdentify": "cgxwdw202503",
+      "stationName": "常州新北区政府微电网",
+      "tenantId": "1869215965426749441",
+      "longitude": "119.967531679",
+      "latitude": "31.869386259",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 31,
+      "siteIdentify": "CZWJZKLSYJY",
+      "stationName": "常州武进中科绿色研究院",
+      "tenantId": "2031613650845474818",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 32,
+      "siteIdentify": "XBQZFGCCZZ",
+      "stationName": "常高新新能源-常州新北区政府站",
+      "tenantId": "1869215965426749441",
+      "longitude": "119.968481959",
+      "latitude": "31.870735491",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 33,
+      "siteIdentify": "pgxx",
+      "stationName": "平冈小学",
+      "tenantId": "1800435403244253186",
+      "longitude": "119.929909546",
+      "latitude": "31.797239805",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 34,
+      "siteIdentify": "HYXCGCZ",
+      "stationName": "新运微电网-常州钟楼花园新村站",
+      "tenantId": "1800435403244253186",
+      "longitude": "119.923436026",
+      "latitude": "31.781965832",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 35,
+      "siteIdentify": "GCWFCCDZ",
+      "stationName": "新运高淳万福城新能源车充电场站",
+      "tenantId": "1800435403244253186",
+      "longitude": "118.914876000",
+      "latitude": "31.349891000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 36,
+      "siteIdentify": "GCTCJNCDZ",
+      "stationName": "新运高淳天淳江南新能源车充电场站",
+      "tenantId": "1800435403244253186",
+      "longitude": "118.916867000",
+      "latitude": "31.349559000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 37,
+      "siteIdentify": "GCYXYCDZ",
+      "stationName": "新运高淳御沁园新能源车充电场站",
+      "tenantId": "1800435403244253186",
+      "longitude": "118.905623000",
+      "latitude": "31.345589000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 38,
+      "siteIdentify": "GCJCHYCDZ",
+      "stationName": "新运高淳金淳花园新能源车充电场站",
+      "tenantId": "1800435403244253186",
+      "longitude": "118.891820000",
+      "latitude": "31.332425000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 39,
+      "siteIdentify": "ZGGC2024",
+      "stationName": "智谷工场",
+      "tenantId": "1800435403244253186",
+      "longitude": "119.981484710",
+      "latitude": "31.815795650",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 40,
+      "siteIdentify": "STCCWXCGCC",
+      "stationName": "未投运-电能侠-南通崇川万象城站",
+      "tenantId": "3662819686115328",
+      "longitude": "120.865363480",
+      "latitude": "32.057318892",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 41,
+      "siteIdentify": "WHZJSJGCZ",
+      "stationName": "武汉中建三局光充站",
+      "tenantId": "2037094202625495041",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 42,
+      "siteIdentify": "TAICUNCDZ",
+      "stationName": "泰村充电站",
+      "tenantId": "1800435403244253186",
+      "longitude": "119.773946000",
+      "latitude": "31.784498000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 43,
+      "siteIdentify": "JGCYY",
+      "stationName": "激光产业园",
+      "tenantId": "1800435403244253186",
+      "longitude": "119.839548000",
+      "latitude": "31.806214000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 44,
+      "siteIdentify": "CZDSCYY",
+      "stationName": "电商产业园",
+      "tenantId": "1800435403244253186",
+      "longitude": "119.855004000",
+      "latitude": "31.814964000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 45,
+      "siteIdentify": "SHQPTYGYZ",
+      "stationName": "电能侠-上海青浦崧盈路站",
+      "tenantId": "3662819686115328",
+      "longitude": "121.191249399",
+      "latitude": "31.160433640",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 46,
+      "siteIdentify": "FSNHBCGCZ",
+      "stationName": "电能侠-佛山南海北村站",
+      "tenantId": "3662819686115328",
+      "longitude": "113.186484464",
+      "latitude": "23.136517984",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 47,
+      "siteIdentify": "NJQLHGCZ",
+      "stationName": "电能侠-南京江北新区七里河站",
+      "tenantId": "3662819686115328",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 48,
+      "siteIdentify": "NTCCSLDGCZ",
+      "stationName": "电能侠-南通崇川三里墩站",
+      "tenantId": "3662819686115328",
+      "longitude": "120.896294515",
+      "latitude": "31.973748449",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 49,
+      "siteIdentify": "NTCCTYHZZXZ",
+      "stationName": "电能侠-南通崇川体育会展中心站",
+      "tenantId": "3662819686115328",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 50,
+      "siteIdentify": "NTHMQZFGCZ",
+      "stationName": "电能侠-南通海门区政府站",
+      "tenantId": "3662819686115328",
+      "longitude": "121.191433554",
+      "latitude": "31.877250190",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 51,
+      "siteIdentify": "NTXFDTZGCZ",
+      "stationName": "电能侠-南通通州先锋站",
+      "tenantId": "3662819686115328",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 52,
+      "siteIdentify": "JXNHWCLGCZ",
+      "stationName": "电能侠-嘉兴南湖文昌路站",
+      "tenantId": "3662819686115328",
+      "longitude": "120.742490862",
+      "latitude": "30.756257345",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 53,
+      "siteIdentify": "TNBHXCGCZX",
+      "stationName": "电能侠-常州天宁北环新村站（新）",
+      "tenantId": "3662819686115328",
+      "longitude": "119.986880566",
+      "latitude": "31.792622439",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 54,
+      "siteIdentify": "hyyhz",
+      "stationName": "电能侠-常州天宁弘阳广场站",
+      "tenantId": "3662819686115328",
+      "longitude": "119.994163118",
+      "latitude": "31.764063476",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 55,
+      "siteIdentify": "TNPBXCZ",
+      "stationName": "电能侠-常州天宁浦北新村站",
+      "tenantId": "3662819686115328",
+      "longitude": "119.961254742",
+      "latitude": "31.765509618",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 56,
+      "siteIdentify": "XBZGYDGCZ",
+      "stationName": "电能侠-常州新北移动站",
+      "tenantId": "3662819686115328",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 57,
+      "siteIdentify": "WJJZXLDZ",
+      "stationName": "电能侠-常州武进九洲喜来登站",
+      "tenantId": "3662819686115328",
+      "longitude": "119.919447849",
+      "latitude": "31.701844203",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 58,
+      "siteIdentify": "WJDHGGCZ",
+      "stationName": "电能侠-常州武进凤凰谷站",
+      "tenantId": "3662819686115328",
+      "longitude": "119.950589031",
+      "latitude": "31.702359960",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 59,
+      "siteIdentify": "wuhaozhan",
+      "stationName": "电能侠-常州溧阳古县街道站",
+      "tenantId": "3662819686115328",
+      "longitude": "119.473352189",
+      "latitude": "31.377226717",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 60,
+      "siteIdentify": "JTTYGGCZX",
+      "stationName": "电能侠-常州金坛体育馆站",
+      "tenantId": "3662819686115328",
+      "longitude": "119.576436280",
+      "latitude": "31.733390668",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 61,
+      "siteIdentify": "GZHDSLGCZ",
+      "stationName": "电能侠-广州花都狮岭站",
+      "tenantId": "3662819686115328",
+      "longitude": "113.181645655",
+      "latitude": "23.460776330",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 62,
+      "siteIdentify": "XZYLHCZ",
+      "stationName": "电能侠-徐州云龙复兴路站",
+      "tenantId": "3662819686115328",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 63,
+      "siteIdentify": "EWHYMGGYCZ",
+      "stationName": "电能侠-武汉汉阳玫瑰公园站",
+      "tenantId": "3662819686115328",
+      "longitude": "114.213149986",
+      "latitude": "30.582197215",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 64,
+      "siteIdentify": "EWHYJPGCZ",
+      "stationName": "电能侠-武汉汉阳界牌站",
+      "tenantId": "3662819686115328",
+      "longitude": "114.254356561",
+      "latitude": "30.531200555",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 65,
+      "siteIdentify": "EWHYLYHGCZ",
+      "stationName": "电能侠-武汉汉阳龙阳湖站",
+      "tenantId": "3662819686115328",
+      "longitude": "114.192062655",
+      "latitude": "30.560546119",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 66,
+      "siteIdentify": "JHHXHGCZ",
+      "stationName": "电能侠-武汉江汉后襄河站",
+      "tenantId": "3662819686115328",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 67,
+      "siteIdentify": "KJCWK",
+      "stationName": "电能侠-科教城武科光储充站",
+      "tenantId": "2031613651845474818",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 68,
+      "siteIdentify": "KSZZGZGCZ",
+      "stationName": "电能侠-苏州周庄古镇站",
+      "tenantId": "3662819686115328",
+      "longitude": "120.851063505",
+      "latitude": "31.133002513",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 69,
+      "siteIdentify": "CSGDGCZ",
+      "stationName": "电能侠-长沙广电站",
+      "tenantId": "3662819686115328",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 70,
+      "siteIdentify": "WJHLWGCZ",
+      "stationName": "科维城充常州汇龙湾光储充站",
+      "tenantId": "1993197671745191937",
+      "longitude": null,
+      "latitude": null,
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 71,
+      "siteIdentify": "WWY-TEST",
+      "stationName": "苏文电能零碳园区",
+      "tenantId": "1846381400579190786",
+      "longitude": "119.838725000",
+      "latitude": "31.727262000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    },
+    {
+      "sourceLine": 72,
+      "siteIdentify": "jrd",
+      "stationName": "金瑞达",
+      "tenantId": "1800324350372032514",
+      "longitude": "119.889330000",
+      "latitude": "31.819124000",
+      "duplicateSiteIdentify": false,
+      "conflictingRecord": false
+    }
+  ]
+}

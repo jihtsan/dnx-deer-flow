@@ -1,0 +1,1050 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeerFlow + n8n 中间控制层架构调研</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18201d;
+      --muted: #5e6964;
+      --line: #d8dfdb;
+      --soft: #f3f6f4;
+      --paper: #ffffff;
+      --green: #176b4d;
+      --green-soft: #e7f2ed;
+      --blue: #245f89;
+      --blue-soft: #e9f1f7;
+      --orange: #a35219;
+      --orange-soft: #fbefe6;
+      --red: #9b3434;
+      --red-soft: #f8eaea;
+      --gold: #806215;
+      --gold-soft: #f7f1dd;
+      --shadow: 0 10px 30px rgba(24, 32, 29, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--soft);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+      letter-spacing: 0;
+    }
+
+    a { color: var(--blue); text-underline-offset: 3px; }
+    code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.92em; }
+
+    .skip-link {
+      position: fixed;
+      left: 16px;
+      top: 12px;
+      z-index: 1000;
+      padding: 10px 14px;
+      color: #fff;
+      background: var(--blue);
+      transform: translateY(-160%);
+      transition: transform 180ms ease-out;
+    }
+    .skip-link:focus { transform: translateY(0); }
+    a:focus-visible,
+    button:focus-visible { outline: 3px solid #62a8d5; outline-offset: 3px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .side {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 24px 18px;
+      overflow-y: auto;
+      color: #edf5f1;
+      background: #1e2925;
+      border-right: 1px solid #31403a;
+    }
+
+    .side-brand { margin: 0 0 6px; font-size: 16px; font-weight: 760; }
+    .side-meta { margin: 0 0 22px; color: #aebcb5; font-size: 12px; }
+    .side nav { display: grid; gap: 3px; }
+    .side nav a {
+      display: block;
+      padding: 7px 9px;
+      color: #c6d2cc;
+      border-left: 2px solid transparent;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .side nav a:hover,
+    .side nav a.active { color: #fff; border-left-color: #58b38c; background: rgba(255,255,255,0.05); }
+
+    main { min-width: 0; background: var(--paper); }
+
+    .hero {
+      min-height: 520px;
+      padding: 72px clamp(28px, 6vw, 92px) 54px;
+      color: #f7fbf9;
+      background: #1b3028;
+      border-bottom: 6px solid #d98b46;
+    }
+
+    .eyebrow { margin: 0 0 18px; color: #86c7aa; font-size: 13px; font-weight: 720; text-transform: uppercase; }
+    h1 { max-width: 980px; margin: 0; font-size: clamp(36px, 5vw, 68px); line-height: 1.05; font-weight: 820; letter-spacing: 0; }
+    .hero-lead { max-width: 880px; margin: 28px 0 0; color: #d7e4de; font-size: 20px; line-height: 1.7; }
+
+    .verdict-strip {
+      display: grid;
+      grid-template-columns: 1.5fr repeat(3, minmax(120px, 0.55fr));
+      max-width: 1120px;
+      margin-top: 44px;
+      border-top: 1px solid #456056;
+      border-bottom: 1px solid #456056;
+    }
+    .verdict-strip > div { padding: 16px 18px; border-right: 1px solid #456056; }
+    .verdict-strip > div:last-child { border-right: 0; }
+    .verdict-strip strong { display: block; color: #fff; font-size: 18px; }
+    .verdict-strip span { color: #aebfb7; font-size: 12px; }
+
+    .content { max-width: 1280px; margin: 0 auto; padding: 0 clamp(22px, 5vw, 72px) 96px; }
+    section { padding: 64px 0; border-bottom: 1px solid var(--line); }
+    section:last-child { border-bottom: 0; }
+    h2 { margin: 0 0 16px; font-size: 30px; line-height: 1.2; letter-spacing: 0; }
+    h3 { margin: 32px 0 10px; font-size: 20px; line-height: 1.3; letter-spacing: 0; }
+    h4 { margin: 20px 0 8px; font-size: 16px; letter-spacing: 0; }
+    p { margin: 10px 0; }
+    .section-lead { max-width: 900px; color: var(--muted); font-size: 17px; }
+    .caption { margin-top: 10px; color: var(--muted); font-size: 12px; }
+
+    .callout {
+      margin: 26px 0;
+      padding: 20px 22px;
+      border-left: 4px solid var(--green);
+      background: var(--green-soft);
+    }
+    .callout strong { color: var(--green); }
+    .callout.warning { border-left-color: var(--orange); background: var(--orange-soft); }
+    .callout.warning strong { color: var(--orange); }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 26px;
+    }
+    .decision {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+    .decision.recommended { border: 2px solid var(--green); box-shadow: var(--shadow); }
+    .decision .tag { display: inline-block; padding: 2px 7px; color: var(--muted); background: var(--soft); font-size: 11px; font-weight: 720; }
+    .decision.recommended .tag { color: var(--green); background: var(--green-soft); }
+    .decision h3 { margin-top: 14px; }
+    .score { color: var(--green); font-size: 28px; font-weight: 820; }
+    .decision ul { padding-left: 20px; color: var(--muted); }
+
+    .arch {
+      margin-top: 30px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      background: #fbfcfb;
+      overflow-x: auto;
+    }
+    .arch-row {
+      display: grid;
+      grid-template-columns: 150px minmax(690px, 1fr);
+      gap: 18px;
+      align-items: stretch;
+      min-width: 880px;
+      border-bottom: 1px dashed #cbd5d0;
+      padding: 14px 0;
+    }
+    .arch-row:last-child { border-bottom: 0; }
+    .arch-label { display: flex; align-items: center; color: var(--muted); font-size: 12px; font-weight: 760; text-transform: uppercase; }
+    .arch-cells { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); gap: 10px; }
+    .arch-box {
+      display: flex;
+      min-height: 72px;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      text-align: center;
+      border: 1px solid #b8c4be;
+      border-radius: 5px;
+      background: #fff;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .arch-box.control { border-color: #74aa92; background: var(--green-soft); color: #14543e; }
+    .arch-box.runtime { border-color: #7ba3c0; background: var(--blue-soft); color: #204f70; }
+    .arch-box.data { border-color: #d6a77f; background: var(--orange-soft); color: #7d4017; }
+    .arch-arrow { text-align: center; color: var(--muted); font-size: 12px; font-weight: 700; }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+    .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border: 1px solid #777; }
+    .legend .l-control::before { background: var(--green-soft); border-color: #74aa92; }
+    .legend .l-runtime::before { background: var(--blue-soft); border-color: #7ba3c0; }
+    .legend .l-data::before { background: var(--orange-soft); border-color: #d6a77f; }
+
+    .segmented { display: flex; flex-wrap: wrap; gap: 2px; margin: 24px 0 12px; }
+    .segmented button {
+      appearance: none;
+      padding: 8px 13px;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+    }
+    .segmented button[aria-pressed="true"] { color: #fff; border-color: var(--green); background: var(--green); }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 12px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: #33403a; background: var(--soft); font-size: 12px; font-weight: 760; white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td { background: #fafcfb; }
+    .pill { display: inline-block; min-width: 78px; padding: 3px 7px; text-align: center; border-radius: 999px; font-size: 11px; font-weight: 760; white-space: nowrap; }
+    .pill.common { color: var(--green); background: var(--green-soft); }
+    .pill.isolated { color: var(--orange); background: var(--orange-soft); }
+    .pill.runtime { color: var(--red); background: var(--red-soft); }
+    .pill.conditional { color: var(--gold); background: var(--gold-soft); }
+
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+    .three-col { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    .flat-panel { padding: 20px 0; border-top: 3px solid var(--line); }
+    .flat-panel.green { border-color: var(--green); }
+    .flat-panel.blue { border-color: var(--blue); }
+    .flat-panel.orange { border-color: var(--orange); }
+    .flat-panel ul, .checklist { padding-left: 20px; }
+    .flat-panel li, .checklist li { margin: 7px 0; }
+
+    .ownership-map {
+      margin-top: 28px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .ownership-lane {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 24px;
+      padding: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .ownership-lane:last-child { border-bottom: 0; }
+    .ownership-lane.must { background: var(--green-soft); }
+    .ownership-lane.managed { background: var(--orange-soft); }
+    .ownership-lane.exclude { background: var(--red-soft); }
+    .ownership-label { align-self: start; }
+    .ownership-label span {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .ownership-label strong { display: block; font-size: 17px; }
+    .ownership-items {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px 22px;
+    }
+    .ownership-item { min-width: 0; }
+    .ownership-item strong { display: block; margin-bottom: 2px; font-size: 14px; }
+    .ownership-item span { display: block; color: var(--muted); font-size: 12px; }
+
+    .scope-table td:first-child { min-width: 150px; font-weight: 760; }
+    .scope-table td:nth-child(2) { min-width: 210px; }
+    .scope-table td:nth-child(3) { min-width: 200px; }
+    .priority {
+      display: inline-block;
+      min-width: 34px;
+      padding: 2px 6px;
+      text-align: center;
+      color: #fff;
+      background: var(--green);
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .priority.p1 { background: var(--blue); }
+    .priority.p2 { color: var(--ink); background: #d7ddd9; }
+
+    .admin-pages {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-top: 22px;
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+    }
+    .admin-page {
+      min-height: 118px;
+      padding: 16px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+    .admin-page code { color: var(--blue); }
+    .admin-page strong { display: block; margin: 7px 0 3px; font-size: 14px; }
+    .admin-page span { color: var(--muted); font-size: 12px; }
+
+    .sequence {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(90px, 1fr));
+      gap: 8px;
+      margin-top: 22px;
+      overflow-x: auto;
+    }
+    .step { min-width: 110px; padding: 14px 10px; border-top: 3px solid var(--blue); background: var(--blue-soft); font-size: 12px; }
+    .step strong { display: block; margin-bottom: 4px; color: var(--blue); }
+    .step.control { border-color: var(--green); background: var(--green-soft); }
+    .step.control strong { color: var(--green); }
+    .step.external { border-color: var(--orange); background: var(--orange-soft); }
+    .step.external strong { color: var(--orange); }
+
+    .contract {
+      padding: 18px;
+      color: #dce8e2;
+      background: #18231f;
+      border-radius: 5px;
+      overflow-x: auto;
+      font: 12px/1.7 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      white-space: pre;
+    }
+
+    .roadmap { counter-reset: phase; display: grid; gap: 0; margin-top: 26px; }
+    .phase { position: relative; padding: 0 0 28px 54px; border-left: 2px solid var(--line); }
+    .phase:last-child { border-left-color: transparent; }
+    .phase::before {
+      counter-increment: phase;
+      content: counter(phase);
+      position: absolute;
+      left: -17px;
+      top: 0;
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--green);
+      border-radius: 50%;
+      font-weight: 800;
+    }
+    .phase h3 { margin: 0 0 6px; }
+    .phase p { color: var(--muted); }
+
+    .risk-list { display: grid; gap: 10px; margin-top: 22px; }
+    .risk { display: grid; grid-template-columns: 140px 1fr; border-top: 1px solid var(--line); padding-top: 12px; }
+    .risk strong { color: var(--red); }
+
+    .sources { columns: 2; column-gap: 38px; }
+    .sources li { break-inside: avoid; margin: 0 0 10px; }
+
+    footer { padding: 26px clamp(22px, 5vw, 72px); color: #627069; background: #eef2ef; font-size: 12px; }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .side { position: static; height: auto; padding: 16px 20px; }
+      .side nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .side nav a { border-left: 0; border-bottom: 2px solid transparent; }
+      .side nav a.active { border-bottom-color: #58b38c; }
+      .verdict-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .verdict-strip > div { border-bottom: 1px solid #456056; }
+      .decision-grid, .three-col { grid-template-columns: 1fr; }
+      .two-col { grid-template-columns: 1fr; }
+      .ownership-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .admin-pages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .hero { min-height: 0; padding: 48px 22px 38px; }
+      h1 { font-size: 38px; }
+      .hero-lead { font-size: 17px; }
+      .verdict-strip { grid-template-columns: 1fr; }
+      .verdict-strip > div { border-right: 0; }
+      .content { padding-left: 18px; padding-right: 18px; }
+      section { padding: 44px 0; }
+      h2 { font-size: 25px; }
+      .side nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .risk { grid-template-columns: 1fr; }
+      .sources { columns: 1; }
+      .ownership-lane { grid-template-columns: 1fr; gap: 14px; padding: 18px; }
+      .ownership-items, .admin-pages { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .skip-link { transition: none; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .layout { display: block; }
+      .side, .segmented { display: none; }
+      .hero { min-height: 0; color: #111; background: #fff; border-bottom: 3px solid #111; }
+      .hero-lead, .eyebrow, .verdict-strip span { color: #444; }
+      .verdict-strip strong { color: #111; }
+      section { break-inside: avoid; }
+      a { color: #111; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#report-main">跳到报告正文</a>
+  <div class="layout">
+    <aside class="side">
+      <p class="side-brand">DeerFlow + n8n</p>
+      <p class="side-meta">控制面架构调研 · 2026-07-14</p>
+      <nav aria-label="报告目录">
+        <a href="#verdict">结论</a>
+        <a href="#decision">方案比较</a>
+        <a href="#architecture">目标架构</a>
+        <a href="#control-plane-scope">中间层清单</a>
+        <a href="#matrix">共用矩阵</a>
+        <a href="#models">模型</a>
+        <a href="#knowledge">知识库</a>
+        <a href="#permissions">权限</a>
+        <a href="#integration">双向调用</a>
+        <a href="#middleware">中间件</a>
+        <a href="#roadmap">落地路线</a>
+        <a href="#risks">风险</a>
+        <a href="#sources">证据</a>
+      </nav>
+    </aside>
+
+    <main id="report-main">
+      <header class="hero" id="verdict">
+        <p class="eyebrow">Architecture research / evidence-backed recommendation</p>
+        <h1>不要把 n8n 控制能力塞进 DeerFlow。建立独立控制面，让两者保持各自运行时边界。</h1>
+        <p class="hero-lead">推荐形态不是再造一个庞大的第三套平台，而是一个可独立部署的模块化控制面：统一身份、策略、模型目录、知识目录、密钥引用、审计与动作目录；DeerFlow 继续负责对话与 Agent，n8n 继续负责确定性工作流与连接器执行。</p>
+        <div class="verdict-strip" aria-label="核心结论摘要">
+          <div><strong>独立控制面 + 适配器</strong><span>推荐部署边界</span></div>
+          <div><strong>9 个核心模块</strong><span>中间层实施范围</span></div>
+          <div><strong>Webhook + MCP</strong><span>DeerFlow 调 n8n</span></div>
+          <div><strong>Run API</strong><span>n8n 调 DeerFlow</span></div>
+        </div>
+      </header>
+
+      <div class="content">
+        <section aria-labelledby="executive-title">
+          <h2 id="executive-title">执行摘要</h2>
+          <p class="section-lead">最终建议是逻辑与部署上独立、产品体验上统一。控制面可以放在同一个 monorepo、走同一个 Nginx 域名、复用同一个前端壳和 SSO，但不能让 DeerFlow Gateway 成为 n8n 的配置数据库或总控进程。</p>
+
+          <div class="callout">
+            <strong>核心判断：</strong> DeerFlow 与 n8n 是两个执行引擎，不是两个页面。中间层应当管理“谁能用什么能力、以什么成本和数据范围去执行”，而不是接管两边内部的线程、节点、队列、凭据表和迁移。
+          </div>
+
+          <div class="three-col">
+            <div class="flat-panel green">
+              <h3>统一能力</h3>
+              <p>身份与租户、跨系统权限策略、模型目录与预算、知识目录与 ACL、密钥引用、动作目录、审计与成本。</p>
+            </div>
+            <div class="flat-panel orange">
+              <h3>共享但隔离</h3>
+              <p>Postgres 集群、Redis 服务、对象存储、向量数据库、可观测平台。共用产品，隔离数据库、schema、账号、key 前缀与生命周期。</p>
+            </div>
+            <div class="flat-panel blue">
+              <h3>运行时独占</h3>
+              <p>DeerFlow 线程与 checkpoint、n8n workflow/execution/credential、n8n Bull 队列、DeerFlow sandbox 和 middleware state。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="decision" aria-labelledby="decision-title">
+          <h2 id="decision-title">三种方案比较</h2>
+          <p class="section-lead">在你已经明确“后期 DeerFlow 会调用 n8n、还要统一模型、知识库和权限”的前提下，独立控制面的长期收益明显高于初期多一个服务的成本。</p>
+          <div class="decision-grid">
+            <article class="decision">
+              <span class="tag">不推荐</span>
+              <h3>融入 DeerFlow Gateway</h3>
+              <div class="score">2.6 / 5</div>
+              <ul>
+                <li>短期页面和 API 开发最快。</li>
+                <li>让 Python Agent 运行时承担 n8n 管理职责。</li>
+                <li>扩大 Agent 工具执行面被攻破后的权限半径。</li>
+                <li>未来接入第三个执行引擎时再次拆分。</li>
+              </ul>
+            </article>
+            <article class="decision recommended">
+              <span class="tag">推荐</span>
+              <h3>独立控制面 + 双适配器</h3>
+              <div class="score">4.7 / 5</div>
+              <ul>
+                <li>控制面只保存策略、映射和目录，不保存两边内部状态。</li>
+                <li>DeerFlow 与 n8n 可独立升级、扩缩容和故障隔离。</li>
+                <li>可以统一入口和前端，不必做成三个割裂产品。</li>
+                <li>适合后续多租户、审计、预算和更多执行引擎。</li>
+              </ul>
+            </article>
+            <article class="decision">
+              <span class="tag">不推荐</span>
+              <h3>让 n8n 充当总控制面</h3>
+              <div class="score">2.4 / 5</div>
+              <ul>
+                <li>编排工作流很强，但不是企业权限或模型治理系统。</li>
+                <li>模型和知识配置绑定在 workflow node 与 credential。</li>
+                <li>把策略写进工作流会导致版本、审计与复用困难。</li>
+                <li>产品授权和 Enterprise 功能边界会反向约束架构。</li>
+              </ul>
+            </article>
+          </div>
+          <p class="caption">评分按边界清晰度 25%、安全与权限 25%、演进性 20%、运维隔离 15%、初期交付速度 15% 加权，属于架构判断，不是性能基准。</p>
+        </section>
+
+        <section id="architecture" aria-labelledby="architecture-title">
+          <h2 id="architecture-title">推荐目标架构</h2>
+          <p class="section-lead">采用控制面与数据面分离。控制面决定策略与映射；运行时执行请求；模型网关、知识服务和基础设施属于可共享数据面。高频运行请求不必全部穿过控制面，只需携带它签发的短期授权与策略快照。</p>
+
+          <div class="arch" role="img" aria-label="DeerFlow、n8n 与独立控制面的目标架构图">
+            <div class="arch-row">
+              <div class="arch-label">入口层</div>
+              <div class="arch-cells">
+                <div class="arch-box">统一 Web / Chat UI</div>
+                <div class="arch-box">外部业务系统</div>
+                <div class="arch-box">IM / Webhook / API 客户端</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓ 同一域名、同一 IdP、统一 trace / tenant 上下文</div>
+            <div class="arch-row">
+              <div class="arch-label">边界层</div>
+              <div class="arch-cells">
+                <div class="arch-box control">API Gateway / BFF<br>认证、限流、租户、幂等</div>
+                <div class="arch-box control">Control Plane API<br>目录、策略、映射、发布</div>
+                <div class="arch-box control">Action Broker<br>Webhook / MCP / callback</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓ 策略决策与短期凭证，不下发平台主密钥</div>
+            <div class="arch-row">
+              <div class="arch-label">执行引擎</div>
+              <div class="arch-cells">
+                <div class="arch-box runtime">DeerFlow Gateway + Harness<br>对话、Agent、工具、Sandbox</div>
+                <div class="arch-box runtime">n8n Main / Webhook / Worker<br>Workflow、连接器、重试</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓ 使用逻辑模型 ID、知识范围、动作 ID 与审计上下文</div>
+            <div class="arch-row">
+              <div class="arch-label">共享数据面</div>
+              <div class="arch-cells">
+                <div class="arch-box data">Model Gateway<br>路由、降级、预算、计量</div>
+                <div class="arch-box data">Knowledge Service<br>文档、ACL、检索、引用</div>
+                <div class="arch-box data">Secret Vault<br>分离 workload identity</div>
+                <div class="arch-box data">Audit / Metrics / Trace</div>
+              </div>
+            </div>
+            <div class="arch-arrow">↓ 同一基础设施产品，独立业务所有权</div>
+            <div class="arch-row">
+              <div class="arch-label">基础设施</div>
+              <div class="arch-cells">
+                <div class="arch-box">Postgres cluster<br>分库 / schema / role</div>
+                <div class="arch-box">Redis service<br>分 logical DB / ACL / prefix</div>
+                <div class="arch-box">Object storage<br>分 bucket / prefix / IAM</div>
+                <div class="arch-box">Vector store<br>分 tenant / KB namespace</div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <span class="l-control">控制面所有</span>
+            <span class="l-runtime">运行时所有</span>
+            <span class="l-data">共享数据面</span>
+          </div>
+
+          <div class="callout warning">
+            <strong>实现形态建议：</strong> 控制面先做“模块化单体”，一个 API 服务、一个管理库、一个管理 UI 即可。独立部署边界不等于立刻拆十个微服务；模型网关与知识服务只有在吞吐、团队所有权或安全边界需要时再独立扩展。
+          </div>
+        </section>
+
+        <section id="control-plane-scope" aria-labelledby="control-plane-scope-title">
+          <h2 id="control-plane-scope-title">中间层到底要放什么</h2>
+          <p class="section-lead">中间层只拥有跨 DeerFlow 与 n8n 的业务身份、策略、目录、映射和审计。判断标准很简单：凡是回答“谁可以用什么能力、用哪些数据、花多少预算、调用结果如何关联”的内容放中间层；凡是回答“Agent 或 Workflow 内部如何执行”的内容留在各自运行时。</p>
+
+          <div class="callout">
+            <strong>一句话边界：</strong> 中间层保存控制关系和执行索引，不复制 DeerFlow 的对话状态，也不接管 n8n 的 Workflow、Credential、Execution 和队列。
+          </div>
+
+          <div class="ownership-map" aria-label="中间层所有权分层">
+            <div class="ownership-lane must">
+              <div class="ownership-label">
+                <span>Control plane owns</span>
+                <strong>必须放进中间层</strong>
+              </div>
+              <div class="ownership-items">
+                <div class="ownership-item"><strong>身份与租户映射</strong><span>tenant、actor、membership、service identity</span></div>
+                <div class="ownership-item"><strong>权限与策略</strong><span>role、grant、resource scope、授权决策</span></div>
+                <div class="ownership-item"><strong>模型目录与策略</strong><span>logical model、能力、预算、回退策略</span></div>
+                <div class="ownership-item"><strong>知识目录与 ACL</strong><span>KB binding、可见范围、检索授权</span></div>
+                <div class="ownership-item"><strong>动作 / Workflow 目录</strong><span>capability、版本、Schema、n8n binding</span></div>
+                <div class="ownership-item"><strong>调用编排与幂等</strong><span>invoke、callback、deadline、idempotency key</span></div>
+                <div class="ownership-item"><strong>跨系统执行账本</strong><span>control execution、DeerFlow run、n8n execution 映射</span></div>
+                <div class="ownership-item"><strong>密钥引用与令牌交换</strong><span>secret reference、credential mapping、短期 token</span></div>
+                <div class="ownership-item"><strong>审计、用量与成本</strong><span>decision、model usage、workflow result、trace</span></div>
+              </div>
+            </div>
+
+            <div class="ownership-lane managed">
+              <div class="ownership-label">
+                <span>Governed, separately deployable</span>
+                <strong>中间层治理，可独立部署</strong>
+              </div>
+              <div class="ownership-items">
+                <div class="ownership-item"><strong>Model Gateway</strong><span>真实 provider、路由、熔断、计量；控制面下发策略</span></div>
+                <div class="ownership-item"><strong>Knowledge Service</strong><span>文件、ingestion、向量/图谱检索、引用；控制面提供 ACL</span></div>
+                <div class="ownership-item"><strong>Secret Vault</strong><span>保存真实密钥；中间层数据库只保存引用</span></div>
+                <div class="ownership-item"><strong>IdP / Auth Service</strong><span>负责认证；中间层维护 canonical subject 与租户关系</span></div>
+                <div class="ownership-item"><strong>Observability Pipeline</strong><span>收集日志、指标、trace；中间层定义跨系统关联字段</span></div>
+                <div class="ownership-item"><strong>Postgres / Redis / Object Store</strong><span>共享基础设施产品，但分库、账号、前缀和生命周期</span></div>
+              </div>
+            </div>
+
+            <div class="ownership-lane exclude">
+              <div class="ownership-label">
+                <span>Runtime owned</span>
+                <strong>绝不能塞进中间层</strong>
+              </div>
+              <div class="ownership-items">
+                <div class="ownership-item"><strong>DeerFlow 对话与 Agent 状态</strong><span>thread、message、checkpoint、memory、goal、subagent state</span></div>
+                <div class="ownership-item"><strong>DeerFlow 执行能力</strong><span>middleware、sandbox、skills、tool lifecycle、SSE stream</span></div>
+                <div class="ownership-item"><strong>n8n Workflow 定义</strong><span>节点图、表达式、激活状态、内部版本和迁移</span></div>
+                <div class="ownership-item"><strong>n8n Execution 与队列</strong><span>Bull queue、worker state、node retry、execution payload</span></div>
+                <div class="ownership-item"><strong>n8n Credential Store</strong><span>加密内容和 <code>N8N_ENCRYPTION_KEY</code> 由 n8n 独占</span></div>
+                <div class="ownership-item"><strong>运行时业务数据库表</strong><span>禁止中间层直接读写 DeerFlow/n8n 内部表</span></div>
+              </div>
+            </div>
+          </div>
+
+          <h3>中间层核心模块与 MVP 优先级</h3>
+          <div class="table-wrap">
+            <table class="scope-table">
+              <thead>
+                <tr><th>模块</th><th>中间层保存的数据</th><th>核心接口</th><th>优先级</th><th>明确不负责</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>身份与租户注册表</td><td><code>tenants</code>、<code>actors</code>、<code>memberships</code>、<code>service_identities</code></td><td><code>GET /v1/session/context</code><br><code>POST /v1/service-tokens</code></td><td><span class="priority">P0</span></td><td>密码、OIDC 登录流程和 DeerFlow Cookie</td></tr>
+                <tr><td>授权与 Grant</td><td><code>roles</code>、<code>resources</code>、<code>grants</code>、策略版本</td><td><code>POST /v1/authorize</code><br><code>GET /v1/grants</code></td><td><span class="priority">P0</span></td><td>替代 DeerFlow owner check 或 n8n project check</td></tr>
+                <tr><td>动作目录与 n8n Binding</td><td><code>capabilities</code>、版本、输入/输出 JSON Schema、workflow/webhook/MCP binding</td><td><code>GET /v1/actions</code><br><code>POST /v1/actions/{id}/invoke</code></td><td><span class="priority">P0</span></td><td>保存或编辑 n8n 节点图</td></tr>
+                <tr><td>调用编排与执行账本</td><td><code>orchestration_runs</code>、<code>runtime_bindings</code>、<code>idempotency_keys</code>、callback 状态</td><td><code>GET /v1/executions/{id}</code><br><code>POST /v1/callbacks/n8n</code></td><td><span class="priority">P0</span></td><td>复制完整 token stream、node event 或 checkpoint</td></tr>
+                <tr><td>模型目录与策略</td><td><code>model_catalog</code>、alias、能力标签、租户允许列表、预算和回退链</td><td><code>POST /v1/models/resolve</code><br><code>GET /v1/model-policies</code></td><td><span class="priority p1">P1</span></td><td>保存 provider 明文密钥或取代 Model Gateway</td></tr>
+                <tr><td>知识目录与 ACL</td><td><code>knowledge_bases</code>、外部 binding、owner/group grant、索引版本</td><td><code>POST /v1/knowledge/authorize</code><br><code>POST /v1/knowledge/query</code></td><td><span class="priority p1">P1</span></td><td>直接保存向量、chunk 或 LightRAG 内部任务状态</td></tr>
+                <tr><td>密钥引用与 Token Broker</td><td><code>secret_refs</code>、n8n credential ID、workload identity mapping</td><td><code>POST /v1/tokens/exchange</code></td><td><span class="priority p1">P1</span></td><td>返回 Vault 主凭据或共享 n8n encryption key</td></tr>
+                <tr><td>审计、用量与成本</td><td><code>audit_events</code>、授权 decision、模型 usage、跨系统结果摘要</td><td><code>POST /v1/events</code><br><code>GET /v1/audit</code></td><td><span class="priority p1">P1</span></td><td>默认记录敏感正文、模型完整 prompt 或凭据</td></tr>
+                <tr><td>配置发布与对账</td><td>desired state、adapter projection、版本、发布状态和 drift</td><td><code>POST /v1/releases</code><br><code>POST /v1/reconcile</code></td><td><span class="priority p2">P2</span></td><td>绕过官方 API 直接修改运行时数据库</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>中间层管理界面只做这些页面</h3>
+          <div class="admin-pages" aria-label="中间层管理页面清单">
+            <div class="admin-page"><code>/admin/overview</code><strong>系统总览</strong><span>运行时健康、待处理调用、失败率、模型成本。</span></div>
+            <div class="admin-page"><code>/admin/access</code><strong>租户与权限</strong><span>成员、角色、资源授权和 service identity。</span></div>
+            <div class="admin-page"><code>/admin/models</code><strong>模型策略</strong><span>逻辑模型、租户允许列表、预算、回退和 Gateway binding。</span></div>
+            <div class="admin-page"><code>/admin/knowledge</code><strong>知识目录</strong><span>知识库绑定、ACL、索引状态和检索测试入口。</span></div>
+            <div class="admin-page"><code>/admin/actions</code><strong>动作目录</strong><span>已发布能力、Schema、Workflow binding、授权和版本。</span></div>
+            <div class="admin-page"><code>/admin/executions</code><strong>跨系统执行</strong><span>control ID、DeerFlow run、n8n execution 与回调状态。</span></div>
+            <div class="admin-page"><code>/admin/audit</code><strong>审计与用量</strong><span>授权决策、调用链、Token/成本和错误摘要。</span></div>
+            <div class="admin-page"><code>Open in n8n</code><strong>Workflow 编辑入口</strong><span>深链跳转到 n8n；中间层不重做 Workflow 画布。</span></div>
+          </div>
+
+          <div class="callout warning">
+            <strong>MVP 收敛建议：</strong> 第一版只实现 P0：身份/租户映射、授权、动作目录、DeerFlow ↔ n8n 调用与执行账本。模型、知识、Vault 和完整审计按 P1 接入。先跑通一个端到端业务动作，再扩管理界面。
+          </div>
+        </section>
+
+        <section id="matrix" aria-labelledby="matrix-title">
+          <h2 id="matrix-title">哪些组件可以共用</h2>
+          <p class="section-lead">“共用”被严格拆成三种语义：同一业务能力、同一基础设施但逻辑隔离、完全不共用。用筛选器查看各类边界。</p>
+          <div class="segmented" role="group" aria-label="组件类型筛选">
+            <button type="button" data-filter="all" aria-pressed="true">全部</button>
+            <button type="button" data-filter="common" aria-pressed="false">统一能力</button>
+            <button type="button" data-filter="isolated" aria-pressed="false">共享但隔离</button>
+            <button type="button" data-filter="runtime" aria-pressed="false">运行时独占</button>
+          </div>
+          <div class="table-wrap">
+            <table id="component-matrix">
+              <thead>
+                <tr><th>组件</th><th>结论</th><th>建议所有者</th><th>DeerFlow 接入</th><th>n8n 接入</th><th>关键边界</th></tr>
+              </thead>
+              <tbody>
+                <tr data-kind="common"><td>身份提供方 / SSO</td><td><span class="pill common">统一能力</span></td><td>企业 IdP + 控制面映射</td><td>OIDC 登录与用户映射</td><td>按版本和许可接 SSO / 用户 / project</td><td>统一 subject，不直连用户表</td></tr>
+                <tr data-kind="common"><td>租户、角色与跨系统策略</td><td><span class="pill common">统一能力</span></td><td>控制面</td><td>转换成 thread / KB / tool 范围</td><td>转换成 project / workflow / credential 范围</td><td>控制面是源，运行时仍执行本地检查</td></tr>
+                <tr data-kind="common"><td>模型目录与预算</td><td><span class="pill common">统一能力</span></td><td>控制面 + Model Gateway</td><td><code>models[]</code> 允许列表和 <code>context.model_name</code></td><td>标准 workflow 模板 + credential / alias</td><td>统一逻辑 ID，不强行统一配置格式</td></tr>
+                <tr data-kind="common"><td>模型供应商密钥</td><td><span class="pill common">统一能力</span></td><td>Vault / Model Gateway</td><td>只持 gateway token 或 env 引用</td><td>只持 gateway credential 或外部 secret 引用</td><td>不要把明文 key 同步到两套数据库</td></tr>
+                <tr data-kind="common"><td>知识文档目录与 ACL</td><td><span class="pill common">统一能力</span></td><td>Knowledge Service</td><td>查询与引用 API</td><td>上传、查询、状态轮询节点</td><td>目录/ACL 是真源，向量库不是权限源</td></tr>
+                <tr data-kind="isolated"><td>向量数据库</td><td><span class="pill conditional">条件共享</span></td><td>Knowledge Service</td><td>通过检索 API，不直接拼 SQL</td><td>优先 HTTP；直连仅限受控 ingestion</td><td>锁定 embedding 版本、维度、metadata、删除协议</td></tr>
+                <tr data-kind="common"><td>动作 / 工作流目录</td><td><span class="pill common">统一能力</span></td><td>Action Broker</td><td>把允许动作呈现为 MCP / tool</td><td>映射已发布 workflow / webhook</td><td>版本化输入输出 schema 与 owner</td></tr>
+                <tr data-kind="common"><td>审计、用量与 trace</td><td><span class="pill common">统一能力</span></td><td>共享可观测平台</td><td>run/thread/model/tool 事件</td><td>execution/workflow/node 事件</td><td>统一 correlation ID，不默认记录敏感正文</td></tr>
+                <tr data-kind="isolated"><td>Postgres 服务</td><td><span class="pill isolated">共享但隔离</span></td><td>平台基础设施</td><td>DeerFlow DB / role / migration</td><td>n8n DB 或 schema / role / TypeORM migration</td><td>禁止跨库写表和跨系统外键</td></tr>
+                <tr data-kind="isolated"><td>Redis 服务</td><td><span class="pill isolated">共享但隔离</span></td><td>平台基础设施</td><td>Stream Bridge 自有 key 前缀</td><td>Bull queue 自有 DB / ACL / key</td><td>绝不直接写 n8n 队列；规模上来后拆实例</td></tr>
+                <tr data-kind="isolated"><td>对象存储</td><td><span class="pill isolated">共享但隔离</span></td><td>平台基础设施</td><td>知识原文件 / artifacts 前缀</td><td>binary / execution storage 前缀</td><td>分 bucket 或 IAM 前缀，独立保留策略</td></tr>
+                <tr data-kind="runtime"><td>DeerFlow thread / checkpoint / memory</td><td><span class="pill runtime">运行时独占</span></td><td>DeerFlow</td><td>本地原生</td><td>只保存外部 run 引用</td><td>n8n 不读 checkpoint 表</td></tr>
+                <tr data-kind="runtime"><td>n8n workflow / execution 表</td><td><span class="pill runtime">运行时独占</span></td><td>n8n</td><td>仅通过 Webhook / MCP / REST</td><td>本地原生</td><td>TypeORM 与 n8n 版本独占迁移权</td></tr>
+                <tr data-kind="runtime"><td>n8n credential store / encryption key</td><td><span class="pill runtime">运行时独占</span></td><td>n8n</td><td>只存 opaque credential mapping</td><td>本地加密与 worker 同步</td><td>不能作为平台通用密钥库</td></tr>
+                <tr data-kind="runtime"><td>DeerFlow middleware / sandbox</td><td><span class="pill runtime">运行时独占</span></td><td>DeerFlow Harness</td><td>本地原生</td><td>不复制进 workflow</td><td>保留工具、上下文和安全生命周期</td></tr>
+                <tr data-kind="runtime"><td>n8n worker / Bull queue / retry state</td><td><span class="pill runtime">运行时独占</span></td><td>n8n</td><td>只观察公开状态</td><td>本地原生</td><td>不要自制入队协议</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="models" aria-labelledby="models-title">
+          <h2 id="models-title">模型配置怎么统一</h2>
+          <p class="section-lead">统一的是“逻辑模型、路由策略、能力标签、预算和凭据来源”，不是把 DeerFlow 的 LangChain provider 配置和 n8n 的 node credential 强行压成一张表。</p>
+
+          <div class="two-col">
+            <div class="flat-panel green">
+              <h3>当前 DeerFlow 已具备的接口</h3>
+              <ul>
+                <li><code>config.yaml.models[]</code> 是系统模型允许列表，模型 provider 使用可解析的 Python class path。</li>
+                <li>Gateway 公开只读模型列表，敏感 provider 字段不会返回前端。</li>
+                <li>每次 run 可通过 <code>context.model_name</code> 选择模型，并在创建 run 前校验允许列表。</li>
+                <li>模型配置属于 request-time 热加载字段；数据库、stream bridge 等基础设施字段是 startup-only。</li>
+                <li>自定义 Agent 还可以保存一个 model override，但最终仍由全局允许列表解析。</li>
+              </ul>
+            </div>
+            <div class="flat-panel blue">
+              <h3>n8n 的本质差异</h3>
+              <ul>
+                <li>模型选择通常保存在 workflow 的 AI node 参数中。</li>
+                <li>供应商认证通过 n8n credential 对象引用；同一个 OpenAI credential 可复用到 Chat、Embeddings 等节点。</li>
+                <li>模型列表可从 provider 账号动态加载，因此不是一个独立的全局模型注册中心。</li>
+                <li>把所有 workflow 的 node JSON 当作模型治理入口会造成版本漂移和难以审计。</li>
+              </ul>
+            </div>
+          </div>
+
+          <h3>推荐模型控制面</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>层次</th><th>保存内容</th><th>不要保存</th></tr></thead>
+              <tbody>
+                <tr><td>Model Catalog</td><td>逻辑 ID、用途、能力、上下文长度、价格、地区、可用租户、默认预算</td><td>供应商明文 API key</td></tr>
+                <tr><td>Policy / Router</td><td>首选模型、回退链、并发限制、用户/项目配额、数据驻留策略</td><td>DeerFlow 或 n8n 的内部执行状态</td></tr>
+                <tr><td>Model Gateway</td><td>provider endpoint、密钥引用、路由、重试、计量、熔断</td><td>业务用户权限真源</td></tr>
+                <tr><td>Runtime adapter</td><td>DeerFlow model alias；n8n credential ID 与 node template mapping</td><td>另一运行时的原生对象</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout">
+            <strong>最稳妥的统一方式：</strong> 两边都只配置一个或少量 OpenAI-compatible Model Gateway 入口，使用 <code>chat-standard</code>、<code>chat-reasoning</code>、<code>embedding-default</code> 这样的逻辑别名。真正的 provider、key、限额、回退和成本统计留在网关与控制面。这样新增供应商时，不需要批量修改 n8n workflow，也不需要把 provider key 写入 DeerFlow 文件。
+          </div>
+        </section>
+
+        <section id="knowledge" aria-labelledby="knowledge-title">
+          <h2 id="knowledge-title">知识库怎么统一</h2>
+          <p class="section-lead">知识库最适合成为独立共享数据面，因为它天然跨对话与工作流。但要统一的是文档、ACL、索引版本和检索合同，不能只让两边连同一个 vector DB。</p>
+
+          <div class="callout warning">
+            <strong>当前 DeerFlow 的真实状态：</strong> 已经有单例 Knowledge Scope、文档目录、上传、可靠 ingestion worker、LightRAG 健康/上传/追踪/查询/删除客户端；但 <code>query_data()</code> 目前没有接入 lead-agent 对话运行链。现阶段知识能力主要是管理与摄取面，这正是抽出共享 Knowledge Service 的最佳时机。
+          </div>
+
+          <div class="three-col">
+            <div class="flat-panel green">
+              <h3>控制面所有</h3>
+              <ul>
+                <li>Knowledge Base / Scope 元数据</li>
+                <li>tenant、owner、group、document ACL</li>
+                <li>embedding 与 chunk schema 版本</li>
+                <li>数据源、保留、删除与重建策略</li>
+              </ul>
+            </div>
+            <div class="flat-panel orange">
+              <h3>Knowledge Service 所有</h3>
+              <ul>
+                <li>原文件持久化与 hash</li>
+                <li>ingestion job、重试、对账</li>
+                <li>向量 / 图谱 / keyword 检索</li>
+                <li>ACL 过滤、引用与证据封装</li>
+              </ul>
+            </div>
+            <div class="flat-panel blue">
+              <h3>运行时只消费</h3>
+              <ul>
+                <li>DeerFlow 按 run 注入授权后的证据</li>
+                <li>n8n 通过 HTTP/MCP 查询或发起摄取</li>
+                <li>workflow-local 临时向量库不得成为 canonical KB</li>
+                <li>双方不直接修改对方 ingestion 状态</li>
+              </ul>
+            </div>
+          </div>
+
+          <h3>共享向量库必须锁定的合同</h3>
+          <div class="contract">knowledge_query {
+  tenant_id, actor_id, knowledge_base_ids[], query,
+  retrieval_policy_id, top_k, token_budget, correlation_id
+}
+
+knowledge_evidence[] {
+  document_id, chunk_id, version, score, citation,
+  source_uri, acl_decision_id, content
+}</div>
+          <p class="caption">必须额外固定 embedding model/version、维度、chunker、metadata schema、tenant namespace、软删/硬删、重建与引用稳定性。否则“共用一个 PGVector/Qdrant”只是在共享技术债。</p>
+
+          <h3>关于当前 LightRAG 单例</h3>
+          <p>现有配置指向一个 operator-managed LightRAG 服务，Knowledge Scope 在数据库层是全局单例，且适配器不发送 workspace header。这适合单组织 MVP，不足以直接承担多租户平台知识面。多租户阶段应由 Knowledge Service 显式映射 <code>tenant + knowledge_base</code> 到隔离的 collection/workspace/deployment，并在检索前执行 ACL。</p>
+        </section>
+
+        <section id="permissions" aria-labelledby="permissions-title">
+          <h2 id="permissions-title">权限与密钥边界</h2>
+          <p class="section-lead">统一身份并不等于统一用户表。控制面维护跨系统 entitlement；DeerFlow 和 n8n 各自维护最小本地身份与资源所有权检查。</p>
+
+          <div class="two-col">
+            <div class="flat-panel green">
+              <h3>DeerFlow 当前能力</h3>
+              <ul>
+                <li>支持本地账号和 OIDC，角色模型主要是 <code>admin</code> / <code>user</code>。</li>
+                <li>已有 <code>resource:action</code> 权限常量与 decorator。</li>
+                <li>但当前所有已认证用户都会拿到全部权限常量，细粒度权限尚未持久化到用户记录。</li>
+                <li>线程使用 owner check；知识文档和 scope 使用 owner-filtered repository。</li>
+                <li>MCP 配置修改单独要求管理员。</li>
+              </ul>
+            </div>
+            <div class="flat-panel blue">
+              <h3>n8n 当前边界</h3>
+              <ul>
+                <li>用户、project、workflow、credential 和 API key 权限属于 n8n 自己。</li>
+                <li>Scoped API key、custom role、external secrets、source control 等能力受 Enterprise/版本约束。</li>
+                <li>非 Enterprise API key 可能拥有调用者完整能力，不适合下发给 Agent 或浏览器。</li>
+                <li>n8n credential 使用自身 encryption key，不应被当作通用 Vault。</li>
+              </ul>
+            </div>
+          </div>
+
+          <h3>推荐授权链</h3>
+          <div class="sequence" aria-label="授权链">
+            <div class="step"><strong>1. 登录</strong>IdP subject + tenant claim</div>
+            <div class="step control"><strong>2. 解析身份</strong>映射内部 actor / service identity</div>
+            <div class="step control"><strong>3. 策略决策</strong>resource + action + data scope</div>
+            <div class="step control"><strong>4. 签发授权</strong>短期 token / policy snapshot</div>
+            <div class="step"><strong>5. 适配</strong>映射 DeerFlow user 或 n8n project identity</div>
+            <div class="step external"><strong>6. 本地校验</strong>owner / workflow exposure / credential scope</div>
+            <div class="step external"><strong>7. 审计</strong>记录 decision、run、cost、result</div>
+          </div>
+
+          <div class="callout">
+            <strong>密钥原则：</strong> 控制面只存 secret reference，Vault 使用两套 workload identity。DeerFlow 获取它被允许的 gateway/MCP secret；n8n 获取它被允许的 credential secret。不要共享 n8n 的 <code>N8N_ENCRYPTION_KEY</code>，也不要让 DeerFlow Agent 读取 Vault 管理凭据。
+          </div>
+        </section>
+
+        <section id="integration" aria-labelledby="integration-title">
+          <h2 id="integration-title">DeerFlow 与 n8n 双向调用</h2>
+
+          <h3>DeerFlow 调 n8n</h3>
+          <p>已知、稳定、生产级工作流优先走带认证的 production Webhook；需要让 Agent 发现和选择工具时，使用 n8n instance-level MCP 或 workflow-scoped MCP Server Trigger，并在控制面再做一层 allow-list。</p>
+          <div class="sequence" aria-label="DeerFlow 调 n8n 流程">
+            <div class="step"><strong>1. Agent tool</strong>提交 logical action ID</div>
+            <div class="step control"><strong>2. Action Broker</strong>校验 tenant / actor / input schema</div>
+            <div class="step control"><strong>3. 解析绑定</strong>action version → webhook / MCP workflow</div>
+            <div class="step external"><strong>4. n8n</strong>创建 execution 并返回 ID</div>
+            <div class="step external"><strong>5. Worker</strong>执行连接器与业务流程</div>
+            <div class="step control"><strong>6. 回调 / 轮询</strong>归一化状态与结果</div>
+            <div class="step"><strong>7. Agent</strong>获取受控结果与引用</div>
+          </div>
+          <ul class="checklist">
+            <li>REST API 用于工作流的管理、发布、查询与执行状态，不把 n8n 数据库当 API。</li>
+            <li>MCP <code>execute_workflow</code> 会快速返回 execution ID，并存在 5 分钟 MCP timeout；长流程必须异步化。</li>
+            <li>workflow-scoped MCP 的 <code>/mcp*</code> 是 stateful 连接，多 webhook replica 时需按官方要求固定到单一专用 replica。</li>
+            <li>控制面记录 logical action 与 n8n workflow/version 的映射，避免 Agent 持有任意 workflow ID。</li>
+          </ul>
+
+          <h3>n8n 调 DeerFlow</h3>
+          <p>n8n 使用 HTTP Request node 调 DeerFlow Gateway 的 thread/run API。控制面签发 service token、模型策略与知识范围；长 Agent 任务采用 submit + poll/callback，不让 n8n worker 长时间阻塞 HTTP 连接。</p>
+          <div class="sequence" aria-label="n8n 调 DeerFlow 流程">
+            <div class="step external"><strong>1. Workflow</strong>准备 prompt、业务上下文</div>
+            <div class="step control"><strong>2. Control Plane</strong>校验 agent / model / KB 权限</div>
+            <div class="step control"><strong>3. 签发上下文</strong>actor、tenant、policy、idempotency</div>
+            <div class="step"><strong>4. DeerFlow Run API</strong>创建 thread/run</div>
+            <div class="step"><strong>5. Agent Runtime</strong>模型、工具、知识检索</div>
+            <div class="step control"><strong>6. 状态归一化</strong>running / succeeded / failed / cancelled</div>
+            <div class="step external"><strong>7. Workflow</strong>继续后续节点或补偿</div>
+          </div>
+
+          <h3>统一任务信封</h3>
+          <div class="contract">orchestration_request {
+  request_id, idempotency_key, correlation_id,
+  tenant_id, actor_id, service_identity,
+  target: { engine, capability_id, version },
+  policy: { model_policy_id, knowledge_scope_ids[], budget_id },
+  input, callback, deadline
+}</div>
+          <p class="caption">信封保存跨系统语义；DeerFlow run_id、thread_id 和 n8n execution_id 作为 adapter binding 保存，不互相替代。</p>
+        </section>
+
+        <section id="middleware" aria-labelledby="middleware-title">
+          <h2 id="middleware-title">哪些中间件适合整理到一起</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>中间件</th><th>统一位置</th><th>职责</th><th>仍需保留的本地能力</th></tr></thead>
+              <tbody>
+                <tr><td>认证与租户上下文</td><td>API Gateway / BFF</td><td>验证 token、注入 tenant/actor/correlation</td><td>DeerFlow owner check；n8n project/user check</td></tr>
+                <tr><td>授权与策略决策</td><td>Control Plane PDP</td><td>capability、model、KB、budget、data scope</td><td>运行时对签名 scope 做二次执行校验</td></tr>
+                <tr><td>模型路由</td><td>Model Gateway</td><td>provider、回退、限额、计量、熔断</td><td>DeerFlow thinking/vision；n8n node output 处理</td></tr>
+                <tr><td>知识检索</td><td>Knowledge Service</td><td>ACL、query rewrite、retrieval、citation</td><td>DeerFlow context 注入；n8n workflow 数据转换</td></tr>
+                <tr><td>动作调用</td><td>Action Broker</td><td>schema、idempotency、MCP/Webhook adapter、callback</td><td>n8n retry/execution；DeerFlow tool lifecycle</td></tr>
+                <tr><td>密钥代理</td><td>Vault / token broker</td><td>secret reference、短期 token、审计</td><td>n8n credential encryption；DeerFlow request-scoped skill secret binding</td></tr>
+                <tr><td>审计与成本</td><td>统一 event pipeline</td><td>决策、调用、模型、工作流、KB 证据链</td><td>各运行时原生 debug/event 详情</td></tr>
+                <tr><td>重试与补偿</td><td>不完全统一</td><td>跨系统任务状态机只负责边界重试</td><td>n8n node retry；DeerFlow tool/model retry</td></tr>
+                <tr><td>调度器</td><td>只统一目录，不新造第三个 scheduler</td><td>声明 schedule owner 和目标 capability</td><td>确定性业务 schedule 交给 n8n；纯 Agent 定时任务可留 DeerFlow</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="roadmap" aria-labelledby="roadmap-title">
+          <h2 id="roadmap-title">建议落地路线</h2>
+          <p class="section-lead">先统一合同和入口，再统一数据面。第一阶段不要动 n8n 内部表，也不要立刻重写 DeerFlow 的知识 ingestion。</p>
+          <div class="roadmap">
+            <article class="phase">
+              <h3>阶段 1：边界与调用合同</h3>
+              <p>建立独立 control-plane 服务、tenant/actor/service identity、action registry、idempotency 与 correlation ID。实现 DeerFlow → n8n production Webhook，以及 n8n → DeerFlow Run API 两个最小适配器。</p>
+            </article>
+            <article class="phase">
+              <h3>阶段 2：模型控制面</h3>
+              <p>定义逻辑模型 ID、能力与预算；引入 Model Gateway。DeerFlow 配置 alias 与 run allow-list；n8n 提供受控 workflow 模板和 gateway credential，避免散落 provider key。</p>
+            </article>
+            <article class="phase">
+              <h3>阶段 3：知识服务化</h3>
+              <p>在现有 DeerFlow LightRAG adapter 和 ingestion worker 外形成稳定 Knowledge API，补齐 KB ACL、query endpoint 与 agent retrieval 注入。n8n 只调用 ingestion/query API。</p>
+            </article>
+            <article class="phase">
+              <h3>阶段 4：细粒度权限与审计</h3>
+              <p>将 DeerFlow 当前 admin/user + all-permissions 模型升级为持久化 entitlement；与 n8n project/workflow binding 对齐。打通 decision、model cost、KB citation 和 workflow execution 审计。</p>
+            </article>
+            <article class="phase">
+              <h3>阶段 5：多租户与规模化</h3>
+              <p>按租户隔离 LightRAG/vector namespace、对象存储、Redis 与 DB 角色；根据吞吐拆分 Redis 和 Postgres failure domain。固定 n8n 版本、许可与 MCP feature gate。</p>
+            </article>
+          </div>
+
+          <h3>MVP 可以暂缓的内容</h3>
+          <ul class="checklist">
+            <li>自定义 n8n node：先用 HTTP Request / Webhook / MCP，只有编辑器体验和强类型 credential 真正需要时再开发。</li>
+            <li>复杂事件总线：先用数据库 outbox + callback，吞吐和多订阅者出现后再引入 Kafka/NATS。</li>
+            <li>拆分多个控制面微服务：先保持一个 deployable，模块边界明确即可。</li>
+            <li>让控制面代理所有实时 token stream：直接数据路径更稳，控制面只签发授权与记录 binding。</li>
+          </ul>
+        </section>
+
+        <section id="risks" aria-labelledby="risks-title">
+          <h2 id="risks-title">高风险反模式与开放问题</h2>
+          <div class="risk-list">
+            <div class="risk"><strong>不要共享业务表</strong><span>n8n 使用 TypeORM 和自有迁移；DeerFlow 使用 SQLAlchemy/Alembic。跨表读取会在任一方升级时静默失效。</span></div>
+            <div class="risk"><strong>不要共享队列协议</strong><span>n8n Redis/Bull 只接收 n8n main 入队的 execution ID。DeerFlow 不应直接写 key 或伪造执行。</span></div>
+            <div class="risk"><strong>不要复制明文密钥</strong><span>n8n credential、DeerFlow env、MCP config 和平台 Vault 各有不同生命周期。统一 reference 与 broker，不统一明文存储。</span></div>
+            <div class="risk"><strong>不要让 Agent 任意执行 workflow</strong><span>instance MCP 的 workflow 可见性与搜索能力不等于你的业务授权。必须再做 logical action allow-list。</span></div>
+            <div class="risk"><strong>不要把 vector namespace 当 ACL</strong><span>collection 名称隔离不是授权。检索必须使用可信 tenant/actor 上下文和 metadata filter，并记录 decision。</span></div>
+            <div class="risk"><strong>不要双重调度同一任务</strong><span>同一个 schedule 只能有一个 owner。否则会重复执行、难以幂等和补偿。</span></div>
+            <div class="risk"><strong>不要忽略 n8n 许可</strong><span>内部业务使用与向客户提供白标/托管工作流的许可边界不同。客户自带 credential 或核心价值来自 n8n 时需单独评估。</span></div>
+          </div>
+
+          <h3>实施前必须确认的 6 个问题</h3>
+          <ol>
+            <li>这是内部平台，还是客户可直接创建 workflow、提供第三方 credential 的商业产品？</li>
+            <li>首期是单组织，还是从第一天就需要 tenant / department / project 隔离？</li>
+            <li>n8n 使用 Community、Business、Enterprise 还是 Cloud，准备固定到哪个版本？</li>
+            <li>知识库是全局一个、每租户一个，还是每项目多个？文档 ACL 是否需要到用户/组？</li>
+            <li>模型策略是用户自由选择、管理员允许列表，还是按任务自动路由？预算阻断发生在哪一层？</li>
+            <li>长任务的 SLA、取消、回调、重试和人工介入由哪个系统负责？</li>
+          </ol>
+        </section>
+
+        <section id="sources" aria-labelledby="sources-title">
+          <h2 id="sources-title">证据、置信度与来源</h2>
+          <p class="section-lead">DeerFlow 结论来自当前工作区代码；n8n 结论只使用官方文档与官方 GitHub。n8n 文档快照对应 <code>n8n-io/n8n-docs</code> commit <code>27272a7</code>，日期 2026-07-13。</p>
+
+          <h3>关键 DeerFlow 证据</h3>
+          <ul class="sources">
+            <li><a href="../../backend/packages/harness/deerflow/config/app_config.py">AppConfig</a>：模型、知识库、auth、database、stream bridge 等配置归属。</li>
+            <li><a href="../../backend/packages/harness/deerflow/config/reload_boundary.py">reload_boundary.py</a>：request-time 热加载与 startup-only 边界。</li>
+            <li><a href="../../backend/packages/harness/deerflow/models/factory.py">models/factory.py</a>：provider class、逻辑名称和运行时模型构造。</li>
+            <li><a href="../../backend/app/gateway/services.py">gateway/services.py</a>：<code>context.model_name</code> 允许列表、身份注入、run 创建。</li>
+            <li><a href="../../backend/app/gateway/authz.py">authz.py</a>：权限常量、当前 all-permissions 行为、owner check。</li>
+            <li><a href="../../backend/packages/harness/deerflow/config/extensions_config.py">extensions_config.py</a>：MCP transport、OAuth、routing 和技能状态。</li>
+            <li><a href="../../backend/app/gateway/routers/mcp.py">routers/mcp.py</a>：MCP 管理 API、管理员限制和 secret mask。</li>
+            <li><a href="../../backend/app/knowledge/lightrag.py">knowledge/lightrag.py</a>：LightRAG upload、track、query、delete 适配器。</li>
+            <li><a href="../../backend/app/knowledge/ingestion.py">knowledge/ingestion.py</a>：SQL-backed lease worker、重试与对账。</li>
+            <li><a href="../../backend/packages/harness/deerflow/config/database_config.py">database_config.py</a>：SQLite/Postgres 与 DeerFlow 内部共享边界。</li>
+            <li><a href="../../backend/packages/harness/deerflow/config/stream_bridge_config.py">stream_bridge_config.py</a>：memory/Redis stream bridge。</li>
+            <li><a href="../../backend/packages/harness/deerflow/runtime/secret_context.py">secret_context.py</a>：run-scoped skill secret carrier 与持久化脱敏。</li>
+          </ul>
+
+          <h3>关键 n8n 官方来源</h3>
+          <ul class="sources">
+            <li><a href="https://docs.n8n.io/connect/">Public REST API</a> 与 <a href="https://docs.n8n.io/connect/n8n-api/authentication/">API key / scopes</a></li>
+            <li><a href="https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/">Webhook node</a></li>
+            <li><a href="https://docs.n8n.io/connect/connect-to-n8n-mcp-server/">Instance-level MCP</a> 与 <a href="https://docs.n8n.io/connect/connect-to-n8n-mcp-server/mcp-server-tools-reference/">tools reference</a></li>
+            <li><a href="https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-langchain.mcptrigger/">MCP Server Trigger</a></li>
+            <li><a href="https://docs.n8n.io/deploy/host-n8n/configure-n8n/scaling/enable-queue-mode/">Queue mode</a></li>
+            <li><a href="https://docs.n8n.io/deploy/host-n8n/configure-n8n/choose-n8ns-database/">Supported databases</a> 与 <a href="https://docs.n8n.io/deploy/host-n8n/understand-the-architecture/understand-the-database/">database ownership</a></li>
+            <li><a href="https://docs.n8n.io/administer/manage-credentials/use-external-secret-stores/">External secrets</a> 与 <a href="https://docs.n8n.io/deploy/host-n8n/configure-n8n/basic-configuration/configuration-examples/set-a-custom-encryption-key/">credential encryption key</a></li>
+            <li><a href="https://docs.n8n.io/integrations/builtin/credentials/openai/">OpenAI credential</a> 与 <a href="https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.lmchatopenai/">OpenAI Chat Model node</a></li>
+            <li><a href="https://docs.n8n.io/build/integrate-ai/understand-ai-components/store-and-search-data-with-vectors/">Vector/RAG concepts</a> 与 <a href="https://docs.n8n.io/integrations/builtin/cluster-nodes/root-nodes/n8n-nodes-langchain.vectorstorepgvector/">PGVector node</a></li>
+            <li><a href="https://docs.n8n.io/privacy-and-security/sustainable-use-license/">Sustainable Use License FAQ</a></li>
+          </ul>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>判断</th><th>置信度</th><th>原因</th></tr></thead>
+              <tbody>
+                <tr><td>控制面应独立于 DeerFlow 与 n8n</td><td>高</td><td>两边的状态、迁移、执行与密钥生命周期均为独立系统合同。</td></tr>
+                <tr><td>模型目录可统一，原生配置不可直接统一</td><td>高</td><td>DeerFlow 是 provider config + run override；n8n 是 workflow node + credential。</td></tr>
+                <tr><td>知识服务适合共享</td><td>高</td><td>DeerFlow 已有外部 LightRAG adapter；n8n 官方支持 HTTP、MCP 和多种向量节点。</td></tr>
+                <tr><td>当前 LightRAG 可直接多租户复用</td><td>低</td><td>现有实现是单例 Scope、单 operator-managed workspace，没有 tenant workspace contract。</td></tr>
+                <tr><td>instance-level MCP 可作为主要 Agent 动作入口</td><td>中</td><td>官方能力完整，但有版本、可见性、5 分钟 timeout 与部署路由约束。</td></tr>
+                <tr><td>n8n Enterprise 能力可用</td><td>未知</td><td>取决于你的许可、部署方式和固定版本，必须在实现前验证。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="caption">完整 n8n 一手资料摘录见 <a href="../research/n8n-integration-primary-sources.md">n8n-integration-primary-sources.md</a>。</p>
+        </section>
+      </div>
+
+      <footer>
+        本报告是当前工作区的架构研究产物，不修改 DeerFlow 或 n8n 运行时代码。版本、许可与多租户假设变化时，应重新验证 MCP、RBAC、external secrets 和 storage feature gate。
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const filterButtons = document.querySelectorAll('[data-filter]');
+    const matrixRows = document.querySelectorAll('#component-matrix tbody tr');
+
+    filterButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const filter = button.dataset.filter;
+        filterButtons.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        matrixRows.forEach((row) => {
+          row.hidden = filter !== 'all' && row.dataset.kind !== filter;
+        });
+      });
+    });
+
+    const navLinks = [...document.querySelectorAll('.side nav a')];
+    const observed = navLinks
+      .map((link) => document.querySelector(link.getAttribute('href')))
+      .filter(Boolean);
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      navLinks.forEach((link) => {
+        link.classList.toggle('active', link.getAttribute('href') === `#${visible.target.id}`);
+      });
+    }, { rootMargin: '-15% 0px -70% 0px', threshold: [0.01, 0.2] });
+
+    observed.forEach((section) => observer.observe(section));
+  </script>
+</body>
+</html>

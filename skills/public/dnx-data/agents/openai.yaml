@@ -1,0 +1,4 @@
+interface:
+  display_name: "DNX Data"
+  short_description: "DNX station and operations data with safe DB fallback"
+  default_prompt: "Use $dnx-data to answer this DNX data question through governed APIs first and a read-only database fallback only when necessary."

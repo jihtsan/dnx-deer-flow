@@ -1,0 +1,6340 @@
+{
+  "schema_version": 3,
+  "generated_from": [
+    "数据服务接口明细.docx",
+    "数据服务接口通用结构.docx"
+  ],
+  "classification": {
+    "aggregate": "汇总类且请求中没有通用 group 字段",
+    "group_by": "请求中出现通用 group 字段；是否必填以 group_required 为准",
+    "detail_query": "明细、最终值、价格或基础信息等非通用聚合查询"
+  },
+  "protocol": {
+    "environment": {
+      "test_host": "dmp-gateway.data-platform-dev.svc.swdnk8s.local",
+      "production_host": null
+    },
+    "url": {
+      "declared_template": "https://{host}/api/api_platform/openapi/{path}",
+      "example_urls": [
+        "https://{host}/api/api_platform/openapi/{path}",
+        "https://{host}/api_platform/openapi/order/orders/list?orderId=10001",
+        "https://{host}/api_platform/openapi/order/orders/query"
+      ],
+      "conflict": false,
+      "source_conflict": true,
+      "resolved_base_path": "/api/api_platform/openapi",
+      "resolution_source": "user_confirmation"
+    },
+    "request_headers": [
+      {
+        "name": "X-App-Key",
+        "type": null,
+        "required": null,
+        "description": "调用方应用 AccessKey"
+      },
+      {
+        "name": "X-App-Secret",
+        "type": null,
+        "required": null,
+        "description": "调用方应用 AccessSecret"
+      }
+    ],
+    "example_only_request_headers": [
+      "X-App-Nonce",
+      "X-App-Timestamp"
+    ],
+    "pagination_parameters": [
+      {
+        "name": "_pageNum",
+        "type": null,
+        "required": null,
+        "description": "页码，不传默认不分页"
+      },
+      {
+        "name": "_pageSize",
+        "type": null,
+        "required": null,
+        "description": "分页大小，如不传默认每页20条"
+      }
+    ],
+    "response_headers": [
+      {
+        "name": "X-Request-Id",
+        "type": null,
+        "required": null,
+        "description": "本次调用链路ID（用于后续日志诊断）"
+      }
+    ],
+    "response_envelope": [
+      {
+        "name": "code",
+        "type": null,
+        "required": null,
+        "description": "返回code"
+      },
+      {
+        "name": "msg",
+        "type": null,
+        "required": null,
+        "description": "返回信息"
+      },
+      {
+        "name": "data",
+        "type": null,
+        "required": null,
+        "description": "返回数据"
+      }
+    ],
+    "page_structure": [
+      {
+        "name": "total",
+        "type": null,
+        "required": null,
+        "description": "总条数"
+      },
+      {
+        "name": "current",
+        "type": null,
+        "required": null,
+        "description": "当前页数"
+      },
+      {
+        "name": "pages",
+        "type": null,
+        "required": null,
+        "description": "总页数"
+      },
+      {
+        "name": "size",
+        "type": null,
+        "required": null,
+        "description": "页大小"
+      },
+      {
+        "name": "records",
+        "type": null,
+        "required": null,
+        "description": "返回数据"
+      }
+    ],
+    "success_code_example": 0,
+    "failure_code_example": 42202,
+    "http": {
+      "method": "POST",
+      "request_location": "json_body",
+      "content_type": "application/json"
+    },
+    "authentication": {
+      "timestamp": {
+        "header": "X-App-Timestamp",
+        "required": true,
+        "format": "Unix epoch milliseconds",
+        "example": "1760000000000"
+      },
+      "nonce": {
+        "header": "X-App-Nonce",
+        "required": true,
+        "format": "12 lowercase hexadecimal characters",
+        "unique_per_request": true,
+        "example": "4f8e5a9c8b71"
+      }
+    },
+    "group": {
+      "multiple_values_allowed": false,
+      "syntax": "strftime",
+      "allowed_formats": [
+        "%Y-%m",
+        "%Y-%m-%d",
+        "%Y-%m-%d %H",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S"
+      ],
+      "default": null,
+      "sorting": null,
+      "null_handling": null
+    }
+  },
+  "endpoints": [
+    {
+      "name": "场站收入电量汇总服务",
+      "path": "/indicators/stationRevenueSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID(如果有从收益模型查)"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(如果有从收益模型查)"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)(如果只有这个ID从订单模型查)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "totalAmount",
+          "type": "Decimal",
+          "required": null,
+          "description": "总收入（总电费收入 + 总服务费收入）"
+        },
+        {
+          "name": "totalElectricityQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "总电量"
+        },
+        {
+          "name": "totalElectricityFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "总电费收入"
+        },
+        {
+          "name": "totalService",
+          "type": "Decimal",
+          "required": null,
+          "description": "总服务费收入"
+        },
+        {
+          "name": "totalLoadInc",
+          "type": "Decimal",
+          "required": null,
+          "description": "总负荷收入"
+        }
+      ],
+      "id": 1,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站收入电量明细服务",
+      "path": "/indicators/stationRevenueDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID(如果有从收益模型查)"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(如果有从收益模型查)"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)(如果只有这个ID从订单模型查)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "收入项名称"
+        },
+        {
+          "name": "code",
+          "type": "String",
+          "required": null,
+          "description": "收入项代号"
+        },
+        {
+          "name": "electricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "收入项电量"
+        },
+        {
+          "name": "electricityFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "收入项电费"
+        },
+        {
+          "name": "service",
+          "type": "Decimal",
+          "required": null,
+          "description": "收入项服务费"
+        }
+      ],
+      "id": 2,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站损耗汇总服务",
+      "path": "/indicators/stationLossSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "allIn",
+          "type": "Decimal",
+          "required": null,
+          "description": "总进电量"
+        },
+        {
+          "name": "allOut",
+          "type": "Decimal",
+          "required": null,
+          "description": "总出电量"
+        },
+        {
+          "name": "loss",
+          "type": "Decimal",
+          "required": null,
+          "description": "损耗"
+        },
+        {
+          "name": "rate",
+          "type": "Decimal",
+          "required": null,
+          "description": "效率"
+        },
+        {
+          "name": "startSocEnergy",
+          "type": "Decimal",
+          "required": null,
+          "description": "开始时间SOC电量，时间跨度第一天0点SOC"
+        },
+        {
+          "name": "endSocEnergy",
+          "type": "Decimal",
+          "required": null,
+          "description": "结束时间SOC电量，时间跨度最后一天最终SOC"
+        },
+        {
+          "name": "startSocPer",
+          "type": "Decimal",
+          "required": null,
+          "description": "0点SOC百分比"
+        },
+        {
+          "name": "endSocPer",
+          "type": "Decimal",
+          "required": null,
+          "description": "当前SOC百分比"
+        }
+      ],
+      "id": 3,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站进出电明细服务",
+      "path": "/indicators/stationEnergyInOutDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "excludeST",
+          "type": "Boolean",
+          "required": "否",
+          "description": "默认不传时，会排除ST,STOUT，传了该参数时，会放开ST,STOUT"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "type",
+          "type": "Int",
+          "required": null,
+          "description": "0-进电，1-出电"
+        },
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "code",
+          "type": "String",
+          "required": null,
+          "description": "代号"
+        },
+        {
+          "name": "devType",
+          "type": "String",
+          "required": null,
+          "description": "设备类型"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "名称"
+        },
+        {
+          "name": "electricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "电量"
+        }
+      ],
+      "id": 4,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站电量电费汇总服务",
+      "path": "/indicators/stationEnergySummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "是",
+          "description": "分组字段"
+        },
+        {
+          "name": "siteSummary",
+          "type": "Boolean",
+          "required": "否",
+          "description": "默认不传时，为true,按场站分组，传false则不按场站分组"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值"
+        },
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "code",
+          "type": "String",
+          "required": null,
+          "description": "代号"
+        },
+        {
+          "name": "devType",
+          "type": "String",
+          "required": null,
+          "description": "设备类型"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "名称"
+        },
+        {
+          "name": "electricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "电量"
+        },
+        {
+          "name": "electricFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        },
+        {
+          "name": "serviceFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        }
+      ],
+      "id": 5,
+      "category": "group_by",
+      "group_required": true,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "required",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站毛利汇总服务",
+      "path": "/indicators/stationProfitSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "totalProfit",
+          "type": "Decimal",
+          "required": null,
+          "description": "总毛利(电费收益+服务费)"
+        },
+        {
+          "name": "totalElectricityProfit",
+          "type": "Decimal",
+          "required": null,
+          "description": "总电费收益"
+        },
+        {
+          "name": "totalService",
+          "type": "Decimal",
+          "required": null,
+          "description": "总服务费"
+        },
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值"
+        }
+      ],
+      "id": 6,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "profit_scope": "order-inclusive",
+        "profit_note": "默认的场站总毛利口径，包含订单侧电费收益和服务费；totalProfit = totalElectricityProfit + totalService",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站毛利项汇总服务",
+      "path": "/indicators/stationProfitItemSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "供给项名称"
+        },
+        {
+          "name": "code",
+          "type": "String",
+          "required": null,
+          "description": "供给项编码(GRIDOUT,PV,STDOUT)"
+        },
+        {
+          "name": "electricityProfit",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费收益"
+        },
+        {
+          "name": "electricityFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        },
+        {
+          "name": "service",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        },
+        {
+          "name": "expenseElectricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "支出电量"
+        },
+        {
+          "name": "expenseAmount",
+          "type": "Decimal",
+          "required": null,
+          "description": "支出金额"
+        },
+        {
+          "name": "revenueElectricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "收入电量"
+        },
+        {
+          "name": "revenueAmount",
+          "type": "Decimal",
+          "required": null,
+          "description": "收入金额"
+        },
+        {
+          "name": "chargeElectricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "储能充电电量"
+        },
+        {
+          "name": "dischargeElectricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "储能放电电量"
+        },
+        {
+          "name": "pvElectricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "光伏发电量"
+        }
+      ],
+      "id": 7,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "profit_scope": "profit-items",
+        "profit_note": "按供给项汇总电费收益、服务费和相关电量，不支持 group 分组",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站毛利项明细服务",
+      "path": "/indicators/stationProfitItemDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "code",
+          "type": "String",
+          "required": null,
+          "description": "名称"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "编码"
+        },
+        {
+          "name": "supplyName",
+          "type": "String",
+          "required": null,
+          "description": "供给项名称"
+        },
+        {
+          "name": "supplyCode",
+          "type": "String",
+          "required": null,
+          "description": "供给项编码(GRIDOUT,PV,STDOUT)"
+        },
+        {
+          "name": "type",
+          "type": "String",
+          "required": null,
+          "description": "0-支出，1-收入"
+        },
+        {
+          "name": "consumeCode",
+          "type": "String",
+          "required": null,
+          "description": "负荷名称"
+        },
+        {
+          "name": "consumeName",
+          "type": "String",
+          "required": null,
+          "description": "负荷代号"
+        },
+        {
+          "name": "electricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "电量"
+        },
+        {
+          "name": "electricityFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        },
+        {
+          "name": "service",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        },
+        {
+          "name": "priceType",
+          "type": "String",
+          "required": null,
+          "description": "电价类型(0归0,1挂牌价,2网供价,3光伏上网价)"
+        }
+      ],
+      "id": 8,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "profit_scope": "profit-items",
+        "profit_note": "按供给项和负荷查询毛利明细，包含服务费字段，不支持 group 分组",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站光伏上网电价服务",
+      "path": "/indicators/stationPvPrice",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "pvPrice",
+          "type": "Decimal",
+          "required": null,
+          "description": "光伏上网单价"
+        }
+      ],
+      "id": 9,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "snapshot",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站供给到消费分时明细服务(规划中)",
+      "path": "/indicators/stationSupplyToConsumeHourSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "supplyCode",
+          "type": "String",
+          "required": "是",
+          "description": "生产者编码"
+        },
+        {
+          "name": "consumeCode",
+          "type": "String",
+          "required": "是",
+          "description": "消费者编码"
+        },
+        {
+          "name": "interval",
+          "type": "Int",
+          "required": "否",
+          "description": "采样间隔分钟(默认60) (已用)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "supplyName",
+          "type": "String",
+          "required": null,
+          "description": "供给项名称"
+        },
+        {
+          "name": "supplyCode",
+          "type": "String",
+          "required": null,
+          "description": "供给项编码(GRIDOUT,PV,STDOUT)"
+        },
+        {
+          "name": "type",
+          "type": "String",
+          "required": null,
+          "description": "0-支出，1-收入"
+        },
+        {
+          "name": "consumeCode",
+          "type": "String",
+          "required": null,
+          "description": "负荷名称"
+        },
+        {
+          "name": "consumeName",
+          "type": "String",
+          "required": null,
+          "description": "负荷代号"
+        },
+        {
+          "name": "electricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "电量"
+        },
+        {
+          "name": "gridPrice",
+          "type": "Decimal",
+          "required": null,
+          "description": "网供电价"
+        },
+        {
+          "name": "electricityFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        }
+      ],
+      "id": 10,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": true,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "planned",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站最新成本价格数据服务",
+      "path": "/indicators/stationCurrentExpensePrice",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "cnPrice",
+          "type": "String",
+          "required": null,
+          "description": "储能成本(放空，没用到)"
+        },
+        {
+          "name": "ddPrice",
+          "type": "String",
+          "required": null,
+          "description": "度电成本(实时度电成本)(可能暂时缺)"
+        },
+        {
+          "name": "cityPrice",
+          "type": "String",
+          "required": null,
+          "description": "市电(网供)电价"
+        }
+      ],
+      "id": 11,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "snapshot",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站成本价格数据服务",
+      "path": "/indicators/stationExpensePrice",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": null,
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": null,
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "cityCost",
+          "type": "Decimal",
+          "required": null,
+          "description": "市电电价(元/kWh)"
+        },
+        {
+          "name": "ddCost",
+          "type": "Decimal",
+          "required": null,
+          "description": "度电平均成本(元/kWh)"
+        }
+      ],
+      "id": 12,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站设备测点明细服务",
+      "path": "/indicators/stationMeasureDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "date",
+          "type": "String",
+          "required": "是",
+          "description": "查询日期(yyyy-MM-dd) (已用)"
+        },
+        {
+          "name": "interval",
+          "type": "Int",
+          "required": "否",
+          "description": "采样间隔分钟(默认15) (已用)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "time",
+          "type": "String",
+          "required": null,
+          "description": "时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "value",
+          "type": "Decimal",
+          "required": null,
+          "description": "曲线值"
+        }
+      ],
+      "id": 13,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "special",
+        "time_mode": "instant",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "special_instant",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站毛利分钟汇总数据服务",
+      "path": "/indicators/stationProfitMinuteSummay",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "是",
+          "description": "分组字段"
+        },
+        {
+          "name": "interval",
+          "type": "Int",
+          "required": "否",
+          "description": "采样间隔分钟(默认15) (已用)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组key(与 group 表达式对应)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": null,
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(分组到分钟才有)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": null,
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(分组到分钟才有)"
+        },
+        {
+          "name": "gridProfit",
+          "type": "Decimal",
+          "required": null,
+          "description": "网供毛利"
+        },
+        {
+          "name": "pvProfit",
+          "type": "Decimal",
+          "required": null,
+          "description": "光伏毛利"
+        },
+        {
+          "name": "stProfit",
+          "type": "Decimal",
+          "required": null,
+          "description": "储能毛利"
+        },
+        {
+          "name": "profit",
+          "type": "Decimal",
+          "required": null,
+          "description": "总毛利"
+        }
+      ],
+      "id": 14,
+      "category": "group_by",
+      "group_required": true,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "required",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "profit_scope": "base-equipment",
+        "profit_note": "基础设备或供给侧电费毛利；profit = gridProfit + pvProfit + stProfit，不含订单侧服务费，不是订单口径的总毛利",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站储能充放电次数数据服务",
+      "path": "/indicators/stationStorageChargeSummay",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "fill",
+          "type": "Int",
+          "required": null,
+          "description": "充电次数"
+        },
+        {
+          "name": "free",
+          "type": "Int",
+          "required": null,
+          "description": "放电次数"
+        }
+      ],
+      "id": 15,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站实时充电枪汇总服务",
+      "path": "/indicators/stationRealTimeGunStateSummay",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "total",
+          "type": "Int",
+          "required": null,
+          "description": "总枪数"
+        },
+        {
+          "name": "charging",
+          "type": "Int",
+          "required": null,
+          "description": "充电中数量"
+        },
+        {
+          "name": "inst",
+          "type": "Int",
+          "required": null,
+          "description": "插枪中数量"
+        },
+        {
+          "name": "idle",
+          "type": "Int",
+          "required": null,
+          "description": "空闲"
+        },
+        {
+          "name": "fault",
+          "type": "Int",
+          "required": null,
+          "description": "故障"
+        },
+        {
+          "name": "offline",
+          "type": "Int",
+          "required": null,
+          "description": "离线"
+        },
+        {
+          "name": "jerk",
+          "type": "Int",
+          "required": null,
+          "description": "急停"
+        },
+        {
+          "name": "dcCount",
+          "type": "Int",
+          "required": null,
+          "description": "直流总数"
+        },
+        {
+          "name": "acCount",
+          "type": "Int",
+          "required": null,
+          "description": "交流总数"
+        },
+        {
+          "name": "dcIdle",
+          "type": "Int",
+          "required": null,
+          "description": "直流空闲数"
+        },
+        {
+          "name": "acIdle",
+          "type": "Int",
+          "required": null,
+          "description": "交流空闲数"
+        },
+        {
+          "name": "acCharging",
+          "type": "Int",
+          "required": null,
+          "description": "慢枪个数"
+        },
+        {
+          "name": "dcCharging",
+          "type": "Int",
+          "required": null,
+          "description": "快枪个数"
+        }
+      ],
+      "id": 16,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站充电时长汇总服务",
+      "path": "/indicators/stationChargeTimeSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "totalTime",
+          "type": "Decimal",
+          "required": null,
+          "description": "充电总时长"
+        }
+      ],
+      "id": 17,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站充电时长明细服务",
+      "path": "/indicators/stationChargeTimeDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "是",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值"
+        },
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "totalTime",
+          "type": "Decimal",
+          "required": null,
+          "description": "充电时长"
+        }
+      ],
+      "id": 18,
+      "category": "group_by",
+      "group_required": true,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "required",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站充电单汇总服务",
+      "path": "/indicators/stationChargeOrderSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "cnt",
+          "type": "Decimal",
+          "required": null,
+          "description": "充电单数"
+        },
+        {
+          "name": "aop",
+          "type": "Decimal",
+          "required": null,
+          "description": "订单均价"
+        },
+        {
+          "name": "aov",
+          "type": "Decimal",
+          "required": null,
+          "description": "订单均量"
+        }
+      ],
+      "id": 19,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站单枪日均汇总服务",
+      "path": "/indicators/stationSingleGunDayAvgSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "stationGroup",
+          "type": "Boolean",
+          "required": "否",
+          "description": "是否按场站分组，默认否"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID(stationGroup=true)"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(stationGroup=true)"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)(stationGroup=true)"
+        },
+        {
+          "name": "gunChargeElectricity",
+          "type": "Decimal",
+          "required": null,
+          "description": "总充电量"
+        },
+        {
+          "name": "gunChargeTime",
+          "type": "Decimal",
+          "required": null,
+          "description": "总充时间(分钟)"
+        },
+        {
+          "name": "gunDayChargeElectricity",
+          "type": "Decimal",
+          "required": null,
+          "description": "单枪日均充电量"
+        },
+        {
+          "name": "gunDayChargeTime",
+          "type": "Decimal",
+          "required": null,
+          "description": "单枪日均充时间(分钟)"
+        },
+        {
+          "name": "gunDayAvgPercent",
+          "type": "Decimal",
+          "required": null,
+          "description": "单枪日均功率"
+        }
+      ],
+      "id": 20,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站单枪利用率汇总服务",
+      "path": "/indicators/stationSingleGunUsePercentSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "type",
+          "type": "Int",
+          "required": null,
+          "description": "类型：1慢充 2快充"
+        },
+        {
+          "name": "avg",
+          "type": "Decimal",
+          "required": null,
+          "description": "单枪利用率(平均)"
+        },
+        {
+          "name": "max",
+          "type": "Decimal",
+          "required": null,
+          "description": "单枪利用率(最大)"
+        },
+        {
+          "name": "min",
+          "type": "Decimal",
+          "required": null,
+          "description": "单枪利用率(最小)"
+        }
+      ],
+      "id": 21,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站单枪利用率明细服务",
+      "path": "/indicators/stationSingleGunUsePercentDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "type",
+          "type": "Int",
+          "required": null,
+          "description": "类型：1慢充 2快充"
+        },
+        {
+          "name": "pileCode",
+          "type": "String",
+          "required": null,
+          "description": "桩号"
+        },
+        {
+          "name": "pileName",
+          "type": "String",
+          "required": null,
+          "description": "桩名称"
+        },
+        {
+          "name": "gun",
+          "type": "Int",
+          "required": null,
+          "description": "枪号"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "设备名称"
+        },
+        {
+          "name": "use",
+          "type": "Decimal",
+          "required": null,
+          "description": "利用率"
+        }
+      ],
+      "id": 22,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站新会员汇总服务",
+      "path": "/indicators/stationNewMemberSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "否",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(不传为全部会员)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "日期分组字段(和groupDay互斥优先级高)"
+        },
+        {
+          "name": "groupDay",
+          "type": "Int",
+          "required": "否",
+          "description": "天分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(依赖入参group或groupDay)"
+        },
+        {
+          "name": "count",
+          "type": "Int",
+          "required": null,
+          "description": "会员数"
+        }
+      ],
+      "id": 23,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": [
+          [
+            "group",
+            "groupDay"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "场站活跃会员汇总服务",
+      "path": "/indicators/stationActiveMemberSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "否",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(不传为全部会员)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "threshold",
+          "type": "Int",
+          "required": "否",
+          "description": "活跃阈值 默认1"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "日期分组字段(和groupDay互斥优先级高)"
+        },
+        {
+          "name": "groupDay",
+          "type": "Int",
+          "required": "否",
+          "description": "天分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(依赖入参group或groupDay)"
+        },
+        {
+          "name": "active",
+          "type": "Int",
+          "required": null,
+          "description": "活跃会员"
+        }
+      ],
+      "id": 24,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": [
+          [
+            "group",
+            "groupDay"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "场站挂牌价数据服务",
+      "path": "/indicators/stationListPrice",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "time",
+          "type": "String",
+          "required": "是",
+          "description": "时间 格式：yyyy-MM-dd HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "price",
+          "type": "Decimal",
+          "required": null,
+          "description": "价格"
+        },
+        {
+          "name": "service",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        }
+      ],
+      "id": 25,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "snapshot",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "instant",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_instant",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站收入渠道汇总服务",
+      "path": "/indicators/stationIncomeChannelSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "channel",
+          "type": "Int",
+          "required": null,
+          "description": "渠道"
+        },
+        {
+          "name": "amount",
+          "type": "String",
+          "required": null,
+          "description": "金额"
+        },
+        {
+          "name": "electricityQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "电量"
+        },
+        {
+          "name": "actualFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "实际结算金额"
+        },
+        {
+          "name": "electricityFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        },
+        {
+          "name": "serviceFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        },
+        {
+          "name": "percent",
+          "type": "Decimal",
+          "required": null,
+          "description": "百分比"
+        }
+      ],
+      "id": 26,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站会员充电明细服务",
+      "path": "/indicators/stationMemberChargeDetial",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "key",
+          "type": "String",
+          "required": "是",
+          "description": "关键字(手机号或车牌)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "osn",
+          "type": "String",
+          "required": null,
+          "description": "订单编号"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "stationName",
+          "type": "String",
+          "required": null,
+          "description": "场站名称(充电平台)"
+        },
+        {
+          "name": "tel",
+          "type": "String",
+          "required": null,
+          "description": "手机号"
+        },
+        {
+          "name": "plate",
+          "type": "String",
+          "required": null,
+          "description": "车牌号"
+        },
+        {
+          "name": "origin",
+          "type": "Int",
+          "required": null,
+          "description": "订单来源"
+        },
+        {
+          "name": "socStart",
+          "type": "Int",
+          "required": null,
+          "description": "soc开始"
+        },
+        {
+          "name": "socEnd",
+          "type": "Int",
+          "required": null,
+          "description": "soc开始"
+        },
+        {
+          "name": "duration",
+          "type": "Int",
+          "required": null,
+          "description": "充电时长"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": null,
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(分组到分钟才有)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": null,
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(分组到分钟才有)"
+        },
+        {
+          "name": "reason",
+          "type": "String",
+          "required": null,
+          "description": "结束原因"
+        },
+        {
+          "name": "electricityFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        },
+        {
+          "name": "serviceFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        },
+        {
+          "name": "discountFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "优惠"
+        },
+        {
+          "name": "refundFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "退款"
+        },
+        {
+          "name": "actualFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "结算金额"
+        }
+      ],
+      "id": 27,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "special",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "special_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站设备测点明细服务(V2)",
+      "path": "/indicatorsV2/stationMeasureDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "interval",
+          "type": "Int",
+          "required": "否",
+          "description": "采样间隔分钟(默认15) (已用)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "time",
+          "type": "String",
+          "required": null,
+          "description": "时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "value",
+          "type": "Decimal",
+          "required": null,
+          "description": "曲线值"
+        }
+      ],
+      "id": 28,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站设备测点最终值服务(V2)",
+      "path": "/indicatorsV2/stationMeasureLast",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "time",
+          "type": "String",
+          "required": null,
+          "description": "时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "value",
+          "type": "Decimal",
+          "required": null,
+          "description": "曲线值"
+        }
+      ],
+      "id": 29,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "snapshot",
+        "group_mode": "forbidden",
+        "entity_kind": "measures",
+        "time_mode": "none",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站活跃会员滑动汇总服务",
+      "path": "/indicators/stationActiveMemberSlidingSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "否",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "threshold",
+          "type": "Int",
+          "required": "否",
+          "description": "活跃阈值 默认1"
+        },
+        {
+          "name": "groupDay",
+          "type": "Int",
+          "required": "是",
+          "description": "天分组字段,范围限制[2,10000)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "startDate",
+          "type": "String",
+          "required": null,
+          "description": "开始日期"
+        },
+        {
+          "name": "endDate",
+          "type": "String",
+          "required": null,
+          "description": "结束日期"
+        },
+        {
+          "name": "active",
+          "type": "Int",
+          "required": null,
+          "description": "活跃会员"
+        }
+      ],
+      "id": 30,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站实时充电桩枪汇总服务",
+      "path": "/indicators/stationRealTimePileGunStateSummay",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "stationGroup",
+          "type": "Boolean",
+          "required": "否",
+          "description": "是否按场站分组，默认否"
+        },
+        {
+          "name": "manufacturer",
+          "type": "String",
+          "required": "否",
+          "description": "品牌"
+        },
+        {
+          "name": "brand",
+          "type": "String",
+          "required": "否",
+          "description": "厂商"
+        },
+        {
+          "name": "pileCode",
+          "type": "String",
+          "required": "否",
+          "description": "桩编码"
+        },
+        {
+          "name": "pileType",
+          "type": "Int",
+          "required": "否",
+          "description": "桩类型"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID(stationGroup=true)"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(stationGroup=true)"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)(stationGroup=true)"
+        },
+        {
+          "name": "gunCount",
+          "type": "Int",
+          "required": null,
+          "description": "枪总数"
+        },
+        {
+          "name": "gunCharging",
+          "type": "Int",
+          "required": null,
+          "description": "枪充电中数量"
+        },
+        {
+          "name": "gunInst",
+          "type": "Int",
+          "required": null,
+          "description": "枪插枪中数量"
+        },
+        {
+          "name": "gunIdle",
+          "type": "Int",
+          "required": null,
+          "description": "枪空闲"
+        },
+        {
+          "name": "gunFault",
+          "type": "Int",
+          "required": null,
+          "description": "枪故障"
+        },
+        {
+          "name": "gunOffline",
+          "type": "Int",
+          "required": null,
+          "description": "枪离线"
+        },
+        {
+          "name": "gunJerk",
+          "type": "Int",
+          "required": null,
+          "description": "枪急停"
+        },
+        {
+          "name": "gunDcCount",
+          "type": "Int",
+          "required": null,
+          "description": "枪直流总数"
+        },
+        {
+          "name": "gunAcCount",
+          "type": "Int",
+          "required": null,
+          "description": "枪交流总数"
+        },
+        {
+          "name": "gunDcIdle",
+          "type": "Int",
+          "required": null,
+          "description": "枪直流空闲数"
+        },
+        {
+          "name": "gunAcIdle",
+          "type": "Int",
+          "required": null,
+          "description": "枪交流空闲数"
+        },
+        {
+          "name": "gunDcCharging",
+          "type": "Int",
+          "required": null,
+          "description": "枪直流充电数"
+        },
+        {
+          "name": "gunAcCharging",
+          "type": "Int",
+          "required": null,
+          "description": "枪交流充电数"
+        },
+        {
+          "name": "gunSuperCount",
+          "type": "Int",
+          "required": null,
+          "description": "枪超充总数"
+        },
+        {
+          "name": "gunFastCount",
+          "type": "Int",
+          "required": null,
+          "description": "枪快充总数"
+        },
+        {
+          "name": "gunSlowCount",
+          "type": "Int",
+          "required": null,
+          "description": "枪慢充总数"
+        },
+        {
+          "name": "gunSuperIdle",
+          "type": "Int",
+          "required": null,
+          "description": "枪超充空闲数"
+        },
+        {
+          "name": "gunFastIdle",
+          "type": "Int",
+          "required": null,
+          "description": "枪快充空闲数"
+        },
+        {
+          "name": "gunSlowIdle",
+          "type": "Int",
+          "required": null,
+          "description": "枪慢充空闲数"
+        },
+        {
+          "name": "gunSuperInst",
+          "type": "Int",
+          "required": null,
+          "description": "枪超充插枪数"
+        },
+        {
+          "name": "gunFastInst",
+          "type": "Int",
+          "required": null,
+          "description": "枪快充插枪数"
+        },
+        {
+          "name": "gunSlowInst",
+          "type": "Int",
+          "required": null,
+          "description": "枪慢充插枪数"
+        },
+        {
+          "name": "gunSuperCharging",
+          "type": "Int",
+          "required": null,
+          "description": "枪超充充电数"
+        },
+        {
+          "name": "gunFastCharging",
+          "type": "Int",
+          "required": null,
+          "description": "枪快充充电数"
+        },
+        {
+          "name": "gunSlowCharging",
+          "type": "Int",
+          "required": null,
+          "description": "枪慢充充电数"
+        },
+        {
+          "name": "gunSuperOffline",
+          "type": "Int",
+          "required": null,
+          "description": "枪超充离线数"
+        },
+        {
+          "name": "gunFastOffline",
+          "type": "Int",
+          "required": null,
+          "description": "枪快充离线数"
+        },
+        {
+          "name": "gunSlowOffline",
+          "type": "Int",
+          "required": null,
+          "description": "枪慢充离线数"
+        },
+        {
+          "name": "gunSuperFault",
+          "type": "Int",
+          "required": null,
+          "description": "枪超充故障数"
+        },
+        {
+          "name": "gunFastFault",
+          "type": "Int",
+          "required": null,
+          "description": "枪快充故障数"
+        },
+        {
+          "name": "gunSlowFault",
+          "type": "Int",
+          "required": null,
+          "description": "枪慢充故障数"
+        },
+        {
+          "name": "gunSuperUnknown",
+          "type": "Int",
+          "required": null,
+          "description": "枪超充未知数"
+        },
+        {
+          "name": "gunFastUnknown",
+          "type": "Int",
+          "required": null,
+          "description": "枪快充未知数"
+        },
+        {
+          "name": "gunSlowUnknown",
+          "type": "Int",
+          "required": null,
+          "description": "枪慢充未知数"
+        },
+        {
+          "name": "pileCount",
+          "type": "Int",
+          "required": null,
+          "description": "桩总数"
+        },
+        {
+          "name": "pileSuperCount",
+          "type": "Int",
+          "required": null,
+          "description": "桩超充总数"
+        },
+        {
+          "name": "pileFastCount",
+          "type": "Int",
+          "required": null,
+          "description": "桩快充总数"
+        },
+        {
+          "name": "pileSlowCount",
+          "type": "Int",
+          "required": null,
+          "description": "桩慢充总数"
+        }
+      ],
+      "id": 31,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站(订单)电量电费汇总服务",
+      "path": "/indicators/stationOrderEnergySummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "是",
+          "description": "分组字段"
+        },
+        {
+          "name": "siteSummary",
+          "type": "Boolean",
+          "required": "否",
+          "description": "默认不传时，为true,按场站分组，传false则不按场站分组"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值"
+        },
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "code",
+          "type": "String",
+          "required": null,
+          "description": "代号"
+        },
+        {
+          "name": "devType",
+          "type": "String",
+          "required": null,
+          "description": "设备类型"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "名称"
+        },
+        {
+          "name": "electricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "电量"
+        },
+        {
+          "name": "electricFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        },
+        {
+          "name": "serviceFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        }
+      ],
+      "id": 32,
+      "category": "group_by",
+      "group_required": true,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "required",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站电量电费汇总服务(适配)",
+      "path": "/indicators/adaptStationEnergySummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID(如果有从收益模型查)"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(如果有从收益模型查)"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)(如果只有这个ID从订单模型查)"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "是",
+          "description": "分组字段"
+        },
+        {
+          "name": "siteSummary",
+          "type": "Boolean",
+          "required": "否",
+          "description": "默认不传时，为true,按场站分组，传false则不按场站分组"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值"
+        },
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "code",
+          "type": "String",
+          "required": null,
+          "description": "代号"
+        },
+        {
+          "name": "devType",
+          "type": "String",
+          "required": null,
+          "description": "设备类型"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "required": null,
+          "description": "名称"
+        },
+        {
+          "name": "electricQuantity",
+          "type": "Decimal",
+          "required": null,
+          "description": "电量"
+        },
+        {
+          "name": "electricFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "电费"
+        },
+        {
+          "name": "serviceFee",
+          "type": "Decimal",
+          "required": null,
+          "description": "服务费"
+        }
+      ],
+      "id": 33,
+      "category": "group_by",
+      "group_required": true,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "required",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站时间段动态汇总",
+      "path": "/indicators/stationTimeRangeDynamicSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "mode",
+          "type": "String",
+          "required": "是",
+          "description": "统计模式: sum/avg/max/min/var (已用, 条件；为空或其他值默认 sum)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "timeRange",
+          "type": "String",
+          "required": null,
+          "description": "时间段"
+        },
+        {
+          "name": "days",
+          "type": "Int",
+          "required": null,
+          "description": "天数"
+        },
+        {
+          "name": "load",
+          "type": "Decimal",
+          "required": null,
+          "description": "汇总负载"
+        },
+        {
+          "name": "pv",
+          "type": "Decimal",
+          "required": null,
+          "description": "汇总光伏"
+        }
+      ],
+      "id": 34,
+      "category": "aggregate",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站设备测点最终值服务",
+      "path": "/indicators/stationMeasureLast",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "measures.tenantId",
+          "type": "String",
+          "required": "是",
+          "description": "租户ID"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "time",
+          "type": "String",
+          "required": null,
+          "description": "时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "value",
+          "type": "Decimal",
+          "required": null,
+          "description": "曲线值"
+        }
+      ],
+      "id": 35,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "snapshot",
+        "group_mode": "forbidden",
+        "entity_kind": "measures",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "measures_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "设备基础信息查询",
+      "path": "/indicators/stationBaseInfo",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "transformerCapacity",
+          "type": "String",
+          "required": null,
+          "description": "变压器容量"
+        },
+        {
+          "name": "ratedPower",
+          "type": "String",
+          "required": null,
+          "description": "额定功率"
+        }
+      ],
+      "id": 36,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "snapshot",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站充电桩明细数据服务",
+      "path": "/indicators/stationPileDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "pileCode",
+          "type": "String",
+          "required": "否",
+          "description": "终端编号"
+        },
+        {
+          "name": "interconnectionDeviceId",
+          "type": "String",
+          "required": "否",
+          "description": "互联互通桩号"
+        },
+        {
+          "name": "pileType",
+          "type": "String",
+          "required": "否",
+          "description": "终端类型"
+        },
+        {
+          "name": "brand",
+          "type": "String",
+          "required": "否",
+          "description": "充电桩品牌"
+        },
+        {
+          "name": "isOnline",
+          "type": "Boolean",
+          "required": "否",
+          "description": "是否在线"
+        },
+        {
+          "name": "gunState",
+          "type": "Int",
+          "required": "否",
+          "description": "枪状态"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "pileCode",
+          "type": "String",
+          "required": null,
+          "description": "充电桩编号"
+        },
+        {
+          "name": "pileName",
+          "type": "String",
+          "required": null,
+          "description": "充电桩名称"
+        },
+        {
+          "name": "pileState",
+          "type": "Int",
+          "required": null,
+          "description": "01-故障 02-待机 03-工作"
+        },
+        {
+          "name": "pileType",
+          "type": "Int",
+          "required": null,
+          "description": "充电桩类型：1->交流桩；2->直流桩"
+        },
+        {
+          "name": "pileMode",
+          "type": "Int",
+          "required": null,
+          "description": "充电模式：1->单充；2->均充；3->轮充；4->混充；5->合充"
+        },
+        {
+          "name": "pileOnline",
+          "type": "Int",
+          "required": null,
+          "description": "0->不在线；1->在线"
+        },
+        {
+          "name": "pileAreaCode",
+          "type": "String",
+          "required": null,
+          "description": "区域编码"
+        },
+        {
+          "name": "pileMaxVoltage",
+          "type": "Decimal",
+          "required": null,
+          "description": "最高电压"
+        },
+        {
+          "name": "pileMinVoltage",
+          "type": "Decimal",
+          "required": null,
+          "description": "最小电压"
+        },
+        {
+          "name": "pileEle",
+          "type": "Decimal",
+          "required": null,
+          "description": "额定电流"
+        },
+        {
+          "name": "pileProtocolStandard",
+          "type": "String",
+          "required": null,
+          "description": "支持协议标准"
+        },
+        {
+          "name": "pilePower",
+          "type": "Decimal",
+          "required": null,
+          "description": "功率"
+        },
+        {
+          "name": "pileSupportCharge",
+          "type": "Int",
+          "required": null,
+          "description": "是否支持辅助电源12-24V切换：0->12V ；1->24V； 2->12/24v"
+        },
+        {
+          "name": "pileSupportReserve",
+          "type": "Int",
+          "required": null,
+          "description": "是否支持预约：0->不可以；1->可预约"
+        },
+        {
+          "name": "pileGunNumber",
+          "type": "Int",
+          "required": null,
+          "description": "枪数"
+        },
+        {
+          "name": "pileProtocolId",
+          "type": "Int",
+          "required": null,
+          "description": "协议 ID"
+        },
+        {
+          "name": "pileProtocolName",
+          "type": "String",
+          "required": null,
+          "description": "协议名称"
+        },
+        {
+          "name": "pileManuId",
+          "type": "String",
+          "required": null,
+          "description": "桩厂商id"
+        },
+        {
+          "name": "pileSimCard",
+          "type": "String",
+          "required": null,
+          "description": "4G卡号"
+        },
+        {
+          "name": "pileSimBelong",
+          "type": "String",
+          "required": null,
+          "description": "4G卡归属"
+        },
+        {
+          "name": "pileEsn",
+          "type": "String",
+          "required": null,
+          "description": "充电主机esn"
+        },
+        {
+          "name": "pileProtocolType",
+          "type": "Int",
+          "required": null,
+          "description": "连接协议类型，0->tcp 1->http"
+        },
+        {
+          "name": "pileThirdOperator",
+          "type": "Int",
+          "required": null,
+          "description": "第三方运营商,二进制存储，0->无，1->中电联，2->华为，4->常畅冲"
+        },
+        {
+          "name": "pileProtocol",
+          "type": "Int",
+          "required": null,
+          "description": "协议版本"
+        },
+        {
+          "name": "pileBrand",
+          "type": "String",
+          "required": null,
+          "description": "品牌-字典，已调整为协议，由IOT更新"
+        },
+        {
+          "name": "pilePp",
+          "type": "Int",
+          "required": null,
+          "description": "品牌，仅做展示，字典维护"
+        },
+        {
+          "name": "pileVer",
+          "type": "String",
+          "required": null,
+          "description": "程序版本"
+        },
+        {
+          "name": "pileCcuVer",
+          "type": "String",
+          "required": null,
+          "description": "ccu版本号"
+        },
+        {
+          "name": "pileTcuVer",
+          "type": "String",
+          "required": null,
+          "description": "tcu版本号"
+        },
+        {
+          "name": "pileSerialNo",
+          "type": "String",
+          "required": null,
+          "description": "tcu版本号"
+        },
+        {
+          "name": "pileNet",
+          "type": "Int",
+          "required": null,
+          "description": "网络连接类型"
+        },
+        {
+          "name": "pileSim",
+          "type": "String",
+          "required": null,
+          "description": "sim卡"
+        },
+        {
+          "name": "pileOperator",
+          "type": "Int",
+          "required": null,
+          "description": "网络运营商"
+        }
+      ],
+      "id": 37,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站充电枪明细数据服务",
+      "path": "/indicators/stationGunDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "stations",
+          "type": "List",
+          "required": "是",
+          "description": "场站信息集合"
+        },
+        {
+          "name": "stations.tenantId",
+          "type": "String",
+          "required": "否",
+          "description": "租户ID"
+        },
+        {
+          "name": "stations.siteIdentify",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码"
+        },
+        {
+          "name": "stations.stationId",
+          "type": "String",
+          "required": "否",
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "pileCode",
+          "type": "String",
+          "required": "否",
+          "description": "终端编号"
+        },
+        {
+          "name": "interconnectionDeviceId",
+          "type": "String",
+          "required": "否",
+          "description": "互联互通桩号"
+        },
+        {
+          "name": "pileType",
+          "type": "String",
+          "required": "否",
+          "description": "终端类型"
+        },
+        {
+          "name": "brand",
+          "type": "String",
+          "required": "否",
+          "description": "充电桩品牌"
+        },
+        {
+          "name": "isOnline",
+          "type": "Boolean",
+          "required": "否",
+          "description": "是否在线"
+        },
+        {
+          "name": "gunState",
+          "type": "Int",
+          "required": "否",
+          "description": "枪状态"
+        },
+        {
+          "name": "gun",
+          "type": "Int",
+          "required": "否",
+          "description": "枪号"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tenantId",
+          "type": "String",
+          "required": null,
+          "description": "租户ID"
+        },
+        {
+          "name": "siteIdentify",
+          "type": "String",
+          "required": null,
+          "description": "场站编码"
+        },
+        {
+          "name": "stationId",
+          "type": "String",
+          "required": null,
+          "description": "场站编码(充电平台)"
+        },
+        {
+          "name": "pileCode",
+          "type": "String",
+          "required": null,
+          "description": "充电桩编号"
+        },
+        {
+          "name": "pileName",
+          "type": "String",
+          "required": null,
+          "description": "充电桩名称"
+        },
+        {
+          "name": "pileState",
+          "type": "Int",
+          "required": null,
+          "description": "01-故障 02-待机 03-工作"
+        },
+        {
+          "name": "pileType",
+          "type": "Int",
+          "required": null,
+          "description": "充电桩类型：1->交流桩；2->直流桩"
+        },
+        {
+          "name": "pileMode",
+          "type": "Int",
+          "required": null,
+          "description": "充电模式：1->单充；2->均充；3->轮充；4->混充；5->合充"
+        },
+        {
+          "name": "pileOnline",
+          "type": "Int",
+          "required": null,
+          "description": "0->不在线；1->在线"
+        },
+        {
+          "name": "pileAreaCode",
+          "type": "String",
+          "required": null,
+          "description": "区域编码"
+        },
+        {
+          "name": "pileMaxVoltage",
+          "type": "Decimal",
+          "required": null,
+          "description": "最高电压"
+        },
+        {
+          "name": "pileMinVoltage",
+          "type": "Decimal",
+          "required": null,
+          "description": "最小电压"
+        },
+        {
+          "name": "pileEle",
+          "type": "Decimal",
+          "required": null,
+          "description": "额定电流"
+        },
+        {
+          "name": "pileProtocolStandard",
+          "type": "String",
+          "required": null,
+          "description": "支持协议标准"
+        },
+        {
+          "name": "pilePower",
+          "type": "Decimal",
+          "required": null,
+          "description": "功率"
+        },
+        {
+          "name": "pileSupportCharge",
+          "type": "Int",
+          "required": null,
+          "description": "是否支持辅助电源12-24V切换：0->12V ；1->24V； 2->12/24v"
+        },
+        {
+          "name": "pileSupportReserve",
+          "type": "Int",
+          "required": null,
+          "description": "是否支持预约：0->不可以；1->可预约"
+        },
+        {
+          "name": "pileGunNumber",
+          "type": "Int",
+          "required": null,
+          "description": "枪数"
+        },
+        {
+          "name": "pileProtocolId",
+          "type": "Int",
+          "required": null,
+          "description": "协议 ID"
+        },
+        {
+          "name": "pileProtocolName",
+          "type": "String",
+          "required": null,
+          "description": "协议名称"
+        },
+        {
+          "name": "pileManuId",
+          "type": "String",
+          "required": null,
+          "description": "桩厂商id"
+        },
+        {
+          "name": "pileSimCard",
+          "type": "String",
+          "required": null,
+          "description": "4G卡号"
+        },
+        {
+          "name": "pileSimBelong",
+          "type": "String",
+          "required": null,
+          "description": "4G卡归属"
+        },
+        {
+          "name": "pileEsn",
+          "type": "String",
+          "required": null,
+          "description": "充电主机esn"
+        },
+        {
+          "name": "pileProtocolType",
+          "type": "Int",
+          "required": null,
+          "description": "连接协议类型，0->tcp 1->http"
+        },
+        {
+          "name": "pileThirdOperator",
+          "type": "Int",
+          "required": null,
+          "description": "第三方运营商,二进制存储，0->无，1->中电联，2->华为，4->常畅冲"
+        },
+        {
+          "name": "pileProtocol",
+          "type": "Int",
+          "required": null,
+          "description": "协议版本"
+        },
+        {
+          "name": "pileBrand",
+          "type": "String",
+          "required": null,
+          "description": "品牌-字典，已调整为协议，由IOT更新"
+        },
+        {
+          "name": "pilePp",
+          "type": "Int",
+          "required": null,
+          "description": "品牌，仅做展示，字典维护"
+        },
+        {
+          "name": "pileVer",
+          "type": "String",
+          "required": null,
+          "description": "程序版本"
+        },
+        {
+          "name": "pileCcuVer",
+          "type": "String",
+          "required": null,
+          "description": "ccu版本号"
+        },
+        {
+          "name": "pileTcuVer",
+          "type": "String",
+          "required": null,
+          "description": "tcu版本号"
+        },
+        {
+          "name": "pileSerialNo",
+          "type": "String",
+          "required": null,
+          "description": "tcu版本号"
+        },
+        {
+          "name": "pileNet",
+          "type": "Int",
+          "required": null,
+          "description": "网络连接类型"
+        },
+        {
+          "name": "pileSim",
+          "type": "String",
+          "required": null,
+          "description": "sim卡"
+        },
+        {
+          "name": "pileOperator",
+          "type": "Int",
+          "required": null,
+          "description": "网络运营商"
+        },
+        {
+          "name": "gunLetter",
+          "type": "String",
+          "required": null,
+          "description": "充电枪编号:如A枪、B枪"
+        },
+        {
+          "name": "gunState",
+          "type": "Int",
+          "required": null,
+          "description": "状态，0->无； 01->空闲； 2->充电中； 3->故障； 4->待机； 5->排队中； 6->维护中；7->已预约；"
+        },
+        {
+          "name": "gunMachineState",
+          "type": "Int",
+          "required": null,
+          "description": "充电机状态：01-故障 02-待机 03-工作"
+        },
+        {
+          "name": "gunEle",
+          "type": "Decimal",
+          "required": null,
+          "description": "电流"
+        },
+        {
+          "name": "gunPower",
+          "type": "Decimal",
+          "required": null,
+          "description": "功率"
+        },
+        {
+          "name": "gunMinVoltage",
+          "type": "Decimal",
+          "required": null,
+          "description": "最小电压"
+        },
+        {
+          "name": "gunMaxVoltage",
+          "type": "Decimal",
+          "required": null,
+          "description": "最大电压"
+        },
+        {
+          "name": "gun",
+          "type": "Int",
+          "required": null,
+          "description": "枪号"
+        },
+        {
+          "name": "gunEnabled",
+          "type": "Int",
+          "required": null,
+          "description": "可用状态：0->可用；1->禁用"
+        },
+        {
+          "name": "gunCsFailure",
+          "type": "String",
+          "required": null,
+          "description": "故障原因"
+        },
+        {
+          "name": "interconnectionDeviceId",
+          "type": "String",
+          "required": null,
+          "description": "互联互通桩号"
+        }
+      ],
+      "id": 38,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "stations",
+        "time_mode": "none",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "stations_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站设备测点明细服务(户储)",
+      "path": "/hems/stationMeasureDetail",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "interval",
+          "type": "Int",
+          "required": "否",
+          "description": "采样间隔分钟(默认15) (已用)"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "time",
+          "type": "String",
+          "required": null,
+          "description": "时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "value",
+          "type": "Decimal",
+          "required": null,
+          "description": "曲线值"
+        }
+      ],
+      "id": 39,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "detail",
+        "group_mode": "forbidden",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "hems",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站设备测点最终值服务(户储)",
+      "path": "/hems/stationMeasureLast",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "time",
+          "type": "String",
+          "required": null,
+          "description": "时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "value",
+          "type": "Decimal",
+          "required": null,
+          "description": "曲线值"
+        }
+      ],
+      "id": 40,
+      "category": "detail_query",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "snapshot",
+        "group_mode": "forbidden",
+        "entity_kind": "measures",
+        "time_mode": "none",
+        "namespace": "hems",
+        "stability": "stable",
+        "input_profile": "measures_none",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥脉汇总服务(V2)",
+      "path": "/indicatorsV2/stationYMSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "lower",
+          "type": "Decimal",
+          "required": "否",
+          "description": "上界(闭区间)"
+        },
+        {
+          "name": "upper",
+          "type": "Decimal",
+          "required": "否",
+          "description": "下界(闭区间)"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "summary",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥脉汇总值"
+        }
+      ],
+      "id": 41,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥测汇总服务(V2)",
+      "path": "/indicatorsV2/stationYCSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "min",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最小值"
+        },
+        {
+          "name": "max",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最大值"
+        }
+      ],
+      "id": 42,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥脉汇总服务(户储)",
+      "path": "/hems/stationYMSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "lower",
+          "type": "Decimal",
+          "required": "否",
+          "description": "上界(闭区间)"
+        },
+        {
+          "name": "upper",
+          "type": "Decimal",
+          "required": "否",
+          "description": "下界(闭区间)"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "summary",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥脉汇总值"
+        }
+      ],
+      "id": 43,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "hems",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥脉汇总服务(小时)(V2)",
+      "path": "/indicatorsV2/stationYMHourSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔3个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔3个月)"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "summary",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥脉汇总值"
+        }
+      ],
+      "id": 44,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥测汇总服务(小时)(V2)",
+      "path": "/indicatorsV2/stationYCHourSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "min",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最小值"
+        },
+        {
+          "name": "max",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最大值"
+        }
+      ],
+      "id": 45,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥脉汇总服务(天)(V2)",
+      "path": "/indicatorsV2/stationYMDaySummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "summary",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥脉汇总值"
+        }
+      ],
+      "id": 46,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥测汇总服务(天)(V2)",
+      "path": "/indicatorsV2/stationYCDaySummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "min",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最小值"
+        },
+        {
+          "name": "max",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最大值"
+        }
+      ],
+      "id": 47,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicatorsV2",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥脉汇总服务",
+      "path": "/indicators/stationYMSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "lower",
+          "type": "Decimal",
+          "required": "否",
+          "description": "上界(闭区间)"
+        },
+        {
+          "name": "upper",
+          "type": "Decimal",
+          "required": "否",
+          "description": "下界(闭区间)"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "summary",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥脉汇总值"
+        }
+      ],
+      "id": 48,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥测汇总服务",
+      "path": "/indicators/stationYCSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "timeRanges",
+          "type": "List",
+          "required": "否",
+          "description": "汇总时间区间集合"
+        },
+        {
+          "name": "timeRanges.start",
+          "type": "String",
+          "required": "否",
+          "description": "区间开始时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "timeRanges.end",
+          "type": "String",
+          "required": "否",
+          "description": "区间结束时间 格式：HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "min",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最小值"
+        },
+        {
+          "name": "max",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最大值"
+        }
+      ],
+      "id": 49,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥脉汇总服务(小时)",
+      "path": "/indicators/stationYMHourSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔3个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔3个月)"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "summary",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥脉汇总值"
+        }
+      ],
+      "id": 50,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥测汇总服务(小时)",
+      "path": "/indicators/stationYCHourSummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss(最大间隔1个月)"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "min",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最小值"
+        },
+        {
+          "name": "max",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最大值"
+        }
+      ],
+      "id": 51,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥脉汇总服务(天)",
+      "path": "/indicators/stationYMDaySummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "summary",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥脉汇总值"
+        }
+      ],
+      "id": 52,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    },
+    {
+      "name": "场站遥测汇总服务(天)",
+      "path": "/indicators/stationYCDaySummary",
+      "http_method": "POST",
+      "request_location": "json_body",
+      "request_fields": [
+        {
+          "name": "measures",
+          "type": "List",
+          "required": "是",
+          "description": "设备测点集合"
+        },
+        {
+          "name": "measures.deviceIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "设备编码"
+        },
+        {
+          "name": "measures.propertyIdentify",
+          "type": "String",
+          "required": "是",
+          "description": "测点编码"
+        },
+        {
+          "name": "startTime",
+          "type": "String",
+          "required": "是",
+          "description": "开始时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "endTime",
+          "type": "String",
+          "required": "是",
+          "description": "结束时间 格式：yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "group",
+          "type": "String",
+          "required": "否",
+          "description": "分组字段"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "groupKey",
+          "type": "String",
+          "required": null,
+          "description": "分组值(如有group)"
+        },
+        {
+          "name": "deviceIdentify",
+          "type": "String",
+          "required": null,
+          "description": "设备编码"
+        },
+        {
+          "name": "propertyIdentify",
+          "type": "String",
+          "required": null,
+          "description": "测点编码"
+        },
+        {
+          "name": "min",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最小值"
+        },
+        {
+          "name": "max",
+          "type": "Decimal",
+          "required": null,
+          "description": "遥测最大值"
+        }
+      ],
+      "id": 53,
+      "category": "group_by",
+      "group_required": false,
+      "planned": false,
+      "capabilities": {
+        "result_kind": "summary",
+        "group_mode": "optional",
+        "entity_kind": "measures",
+        "time_mode": "range",
+        "namespace": "indicators",
+        "stability": "stable",
+        "input_profile": "measures_range",
+        "parameter_conflicts": []
+      }
+    }
+  ]
+}
