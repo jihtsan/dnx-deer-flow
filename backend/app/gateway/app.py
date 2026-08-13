@@ -353,6 +353,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception:
             logger.exception("Failed to initialize MCP task service")
 
+        from app.gateway.nexus_receiver.release import start_receiver_release_wiring
+        from deerflow.config.nexus_receiver_config import NexusReceiverConfig
+
+        await start_receiver_release_wiring(
+            app.state,
+            getattr(startup_config, "nexus_receiver", NexusReceiverConfig()),
+        )
+
         yield
 
         try:
@@ -387,6 +395,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await app.state.mcp_task_service.stop()
             except Exception:
                 logger.exception("Failed to stop MCP task service")
+
+        if getattr(app.state, "nexus_receiver_recovery_service", None) is not None:
+            try:
+                await app.state.nexus_receiver_recovery_service.stop()
+            except Exception:
+                logger.exception("Failed to stop Nexus receiver recovery service")
 
         try:
             from deerflow.community.browser_automation import get_browser_session_manager

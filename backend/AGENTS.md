@@ -565,7 +565,7 @@ Localhost persistence deliberately reads the direct request `Host` and ignores `
 | **Console** (`/api/console`) | Read-only cross-thread observability for the current user (the data layer for an operations dashboard or external monitoring): `GET /stats` - headline counters (runs/threads/agents/tokens/cost); `GET /runs` - paginated run history joined with thread titles (per-run cost); `GET /usage` - zero-filled daily token series + per-model breakdown with spend. Queries `runs`/`threads_meta` directly as a reporting layer (no new `RunStore` methods); requires a SQL database backend — returns 503 on `database.backend: memory`. Real-cost estimation reads optional `models[*].pricing` (`currency`, `input_per_million`, `output_per_million`, `input_cache_hit_per_million`; `ModelConfig` is `extra="allow"`, so no schema change) and prices each run from its `token_usage_by_model` input/output split. Pricing is **cache-aware**: `RunJournal` accumulates prompt-cache hits from `usage_metadata.input_token_details.cache_read` into a sparse `cache_read_tokens` bucket key (also threaded through `SubagentTokenCollector` → `record_external_llm_usage_records`), and cache-hit input tokens are billed at `input_cache_hit_per_million` (omitted → billed at the miss price, a conservative upper bound). All priced models must use one currency; mixed currencies disable cost reporting and leave cost/currency fields null instead of producing invalid aggregates. Legacy rows fall back to run-level totals at `model_name`; unpriced models yield `cost: null` and cost fields are null when no pricing is configured |
 | **MCP** (`/api/mcp`) | `GET /config` - get config; `PUT /config` - replace the full config with whole-payload stdio validation; `PATCH /config` - toggle one server while preserving the raw extensions config and validating only an enabled target; both writes reload config and reset the process-local MCP cache |
 | **Skills** (`/api/skills`) | `GET /` - list skills; `GET /{name}` - details; `PUT /{name}` - update enabled; `POST /install` - install from .skill archive (accepts standard optional frontmatter like `version`, `author`, `compatibility`); `POST /reload` - admin-only process-local prompt-cache invalidation after trusted external filesystem changes |
-| **Nexus Skill Receiver** (`/api/v1/nexus/skill-receiver`) | Hidden service-to-service routes for capabilities, controlled users, durable `USER` first-install operations, operation polling, and exact Observed state. HTTP and the exact `nexus-skill-receiver-v1` forced-command actions delegate to one handler. Production injects no service authenticator/runtime, so writes remain `RECEIVER_NOT_READY`; `GLOBAL`, browser authority, generic internal tokens, and `/api/skills` fallback are forbidden. |
+| **Nexus Skill Receiver** (`/api/v1/nexus/skill-receiver`) | Hidden service-to-service routes for capabilities, controlled users, durable `USER` first-install operations, operation polling, and exact Observed state. HTTP and the exact `nexus-skill-receiver-v1` forced-command actions delegate to one handler. `nexus_receiver` is startup-only and default-disabled; a complete deployment bootstrap must atomically inject auth/runtime/principal mapping before supervised startup, submit-triggered, and periodic recovery starts. The repository injects no bootstrap, so writes remain `RECEIVER_NOT_READY`; `GLOBAL`, browser authority, generic internal tokens, and `/api/skills` fallback are forbidden. |
 | **Integrations** (`/api/integrations`) | `GET /lark/status` - inspect managed Lark/Feishu CLI integration state, including `sandbox_runtime_mode` / `sandbox_runtime_ready` (whether `lark-cli` will actually be present in the sandbox at chat time); `POST /lark/install` - admin-only install of the official `lark-*` managed skill pack; `POST /lark/config/start` and `/lark/config/complete` - internal first-time Lark connection setup; `POST /lark/config/credentials` - atomically switch the caller's per-user Lark app after validating the new `app_id`/`app_secret` through the official CLI's live tenant-token probe, revoke/remove the previous OAuth tokens, and restore the prior credential tree if the switch fails; `POST /lark/auth/start` and `/lark/auth/complete` - browser device-flow user authorization without terminal access, with optional `domains` / exact `scope` for incremental permission grants. Config and auth flows carry a server-issued, per-user generation persisted under the credential lock; a rejected direct switch leaves the current generation unchanged, stale completions return 409, and browser re-registration uses the same token-clearing/revocation transaction as direct credential switches. |
 | **Memory** (`/api/memory`) | `GET /` - memory data; `POST /reload` - force reload; `GET /config` - config; `GET /status` - config + data |
 | **Uploads** (`/api/threads/{id}/uploads`) | `POST /` - upload files (auto-converts PDF/PPT/Excel/Word); `GET /list` - list; `DELETE /{filename}` - delete |
@@ -1406,15 +1406,36 @@ commits redacted receiver identity with a disabled Skill tree, then activates an
 requires exact current loaded observation. Every recovery write attempt revalidates
 the exact controlled USER identity and eligibility, while post-commit failures keep
 the tree explicitly disabled. Its service authenticator, directory,
-runtime, package store, and recovery runner are deployment Ports with no production
-provider or environment enable switch. Browser sessions and internal tokens are
+runtime, package store, Secret resolver, transport-principal mapper, and recovery
+composition are deployment Ports with no production provider. The startup-only
+config gate is insufficient by itself: missing bootstrap components leave auth,
+runtime, mapping, and recovery unset together. Browser sessions and internal tokens are
 not authority. Missing auth fails `401`, missing directory support fails `409`,
 all capability dimensions stay default-deny, and the forced-command entry point
-has no production principal/runtime wiring.
+has no production principal/runtime wiring. The opt-in restricted sshd Compose
+profile is loopback-bound, mounts host-key/principal-map Secrets, and generates
+exact forced-command authorized keys for a dedicated account; it is not part of
+the base stack. Its private shared Unix datagram socket wakes Gateway recovery
+after an SSH submit without carrying authority or operation data; periodic
+recovery remains the durable fallback. A stable multi-process ownership policy
+is still required before enabling more than the default single Gateway worker.
 Run runtime conformance with
 `PYTHONPATH=. uv run pytest tests/test_nexus_receiver_provider.py tests/test_nexus_receiver_runtime.py -q`.
 Do not generate or maintain a second receiver OpenAPI in Nexus, and do not adapt
 the existing `/api/skills` current-user routes as a fallback.
+
+The acceptance-only receiver composition lives in
+`app/gateway/nexus_receiver/acceptance*.py` and is selected only by the explicit
+`docker/docker-compose.nexus-receiver-acceptance.yaml` overlay. It pins the
+frozen joint-rehearsal manifest, isolated PostgreSQL identity, synthetic
+three-user directory and principal map, real SQL operation store, native USER
+installer/activation, and one-shot fault files. Its HTTP authenticator remains
+closed. Never import this bootstrap from the production Gateway app or ordinary
+forced-command entry point, and do not extend it to production credentials,
+`GLOBAL`, upgrade, delete, or joint E2E orchestration. Run focused coverage with
+`PYTHONPATH=. uv run pytest tests/test_nexus_receiver_acceptance.py -q` and the
+read-only revision/default-deny check documented in
+`docs/NEXUS_RECEIVER_ACCEPTANCE.md`.
 
 ## Development Workflow
 
