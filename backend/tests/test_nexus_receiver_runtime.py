@@ -196,7 +196,7 @@ def _ssh_principal(*actions: str) -> ReceiverTransportPrincipal:
     )
 
 
-def _handler(*, store=None, package_store=None, directory=None, installer=None, user_directory=None, execution_owner=None, pending_recovery_notifier=None) -> ReceiverRuntimeHandler:
+def _handler(*, store=None, package_store=None, directory=None, installer=None, user_directory=None, execution_owner=None, pending_recovery_notifier=None, package_policy=None) -> ReceiverRuntimeHandler:
     return ReceiverRuntimeHandler(
         store=store or InMemoryReceiverOperationStore(),
         package_store=package_store or InMemoryReceiverPackageStore(),
@@ -207,6 +207,7 @@ def _handler(*, store=None, package_store=None, directory=None, installer=None, 
         clock=lambda: datetime(2026, 8, 11, 6, 0, tzinfo=UTC),
         execution_owner=execution_owner,
         pending_recovery_notifier=pending_recovery_notifier,
+        package_policy=package_policy,
     )
 
 
@@ -240,6 +241,38 @@ async def test_user_install_closes_durable_operation_with_exact_observed_state()
         "freshness": "current",
         "observedAt": "2026-08-11T06:00:00Z",
     }
+
+
+@pytest.mark.asyncio
+async def test_transient_package_policy_failure_remains_recoverable() -> None:
+    class _Policy:
+        def __init__(self) -> None:
+            self.available = True
+
+        async def validate(self, **kwargs) -> None:
+            del kwargs
+            if not self.available:
+                raise RuntimeError("private trust backend detail")
+
+    package = _archive()
+    command = _command(package)
+    policy = _Policy()
+    handler = _handler(package_policy=policy)
+    await handler.submit_install(
+        principal=_principal("receiver:install:user"),
+        idempotency_key="install-policy-recovery-0001",
+        request_sha256=handler.canonical_command_digest(command),
+        command_payload=command,
+        package=package,
+    )
+
+    policy.available = False
+    pending = (await handler.recover_pending())[0]
+    policy.available = True
+    succeeded = (await handler.recover_pending())[0]
+
+    assert pending.phase == "accepted"
+    assert succeeded.phase == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -882,6 +915,64 @@ async def test_forced_install_validates_raw_package_bytes_before_shared_handler(
 
     assert result.exit_code == 10
     assert json.loads(result.stdout)["code"] == "PACKAGE_INVALID"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "principal_action", "frame_field"),
+    [
+        ("install.submit", "receiver:install:user", "command"),
+        ("observations.query", "receiver:observe:user", "query"),
+    ],
+)
+async def test_forced_global_actions_require_explicit_scope_authority_before_readiness(
+    action: str,
+    principal_action: str,
+    frame_field: str,
+) -> None:
+    package = _archive()
+    command = _command(package)
+    command.update(
+        target={"scope": "GLOBAL"},
+        actorAudit={**command["actorAudit"], "action": "skill:install_global"},
+    )
+    if action == "install.submit":
+        payload = command
+        frame = {
+            "contractVersion": "1.0.0",
+            "correlationId": "receiver-ssh-global-rbac",
+            "idempotencyKey": "install-global-ssh-rbac-0001",
+            "requestSha256": _handler().canonical_command_digest(command),
+            frame_field: payload,
+        }
+        stdin = json.dumps(frame, sort_keys=True, separators=(",", ":")).encode() + b"\n" + package
+        global_action = "receiver:install:global"
+    else:
+        payload = {"target": {"scope": "GLOBAL"}, "runtimeSkillName": "research-assistant"}
+        frame = {
+            "contractVersion": "1.0.0",
+            "correlationId": "receiver-ssh-global-rbac",
+            frame_field: payload,
+        }
+        stdin = json.dumps(frame, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        global_action = "receiver:observe:global"
+
+    forbidden = await dispatch_forced_command(
+        f"nexus-skill-receiver-v1 {action}",
+        stdin,
+        handler=_handler(),
+        principal=_ssh_principal(principal_action),
+    )
+    readiness_blocked = await dispatch_forced_command(
+        f"nexus-skill-receiver-v1 {action}",
+        stdin,
+        handler=_handler(),
+        principal=_ssh_principal(global_action),
+    )
+
+    assert forbidden.exit_code == readiness_blocked.exit_code == 10
+    assert json.loads(forbidden.stdout)["code"] == "FORBIDDEN"
+    assert json.loads(readiness_blocked.stdout)["code"] == "GLOBAL_INSTALL_UNSUPPORTED"
 
 
 @pytest.mark.asyncio

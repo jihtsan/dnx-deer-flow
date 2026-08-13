@@ -1106,8 +1106,11 @@ with provider fixtures in the adjacent `.conformance.json` file.
 The same artifact defines the `http_v1` binding and the P0 `ssh_v1` forced-command
 binding. SSH accepts only six allowlisted actions, reuses the canonical
 component schemas, and supports controlled directory reads, USER-only
-`skills.list`, plus exact `USER` first installation; it does not publish a
-separate CLI schema or enable production `GLOBAL` support.
+`skills.list`, plus exact `USER` or `GLOBAL` first installation and observation.
+The principal map grants USER and GLOBAL actions independently; listing a
+GLOBAL action does not bypass runtime readiness or publish GLOBAL capability.
+SSH does not publish a separate CLI schema or enable production `GLOBAL`
+support by itself.
 
 The Gateway mounts the canonical capability, controlled-directory, operation,
 operation-poll, and Observed paths behind dedicated service-auth and runtime
@@ -1135,17 +1138,21 @@ part of lead-agent cache and sandbox projection signatures, so a later run
 converges without changing a run already in progress. Capability advertisement
 is guarded by explicit scope-RBAC, storage, load-probe, revision-consumer,
 recovery, auth, directory, trust, compatibility, and shared-volume readiness;
-missing any gate remains fail-closed. The repository has no complete production
-provider composition, so production and acceptance wiring continue to report
-`GLOBAL` as unsupported.
+missing any gate remains fail-closed. The opt-in production composition loads
+an operator-supplied provider bundle and publishes support only after every
+production provider and shared-volume probe succeeds; the default and
+acceptance compositions continue to report `GLOBAL` as unsupported.
 
-This implementation is not production enablement. `config.yaml` exposes a
+Production assembly and conformance requirements are documented in
+[`backend/docs/NEXUS_RECEIVER_PRODUCTION.md`](backend/docs/NEXUS_RECEIVER_PRODUCTION.md).
+`config.yaml` exposes a
 startup-only `nexus_receiver` release gate that defaults to `enabled: false` and
-contains only opaque host-key/principal-map Secret references and reviewed
+contains only opaque Secret references, a provider factory path, storage paths, and reviewed
 policy revision IDs, never Secret values. A deployment-owned bootstrap must
 atomically inject the authenticator, install-target resolver, durable operation
 and package stores, USER installer, and closed transport-principal mapper; the
-repository supplies no such production bootstrap, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
+repository production bootstrap accepts only a complete operator-owned
+provider bundle, so missing inputs remain default-deny (`401 AUTHENTICATION_REQUIRED`,
 `409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
 capabilities remain `read_only`/`unsupported`. The
 forced-command module entry accepts only the six exact `nexus-skill-receiver-v1`
@@ -1155,8 +1162,8 @@ dedicated-account sshd image whose principal-map Secret generates only
 `restrict,command=...` keys and whose host key is copied from a mounted Secret;
 it is absent from the base stack and also requires explicit environment and
 config gates. Its repository entry point intentionally has no runtime context
-provider and returns one redacted Problem with exit `10` until the deployment
-bootstrap is approved. When a complete Gateway bootstrap is injected, one
+provider and returns one redacted Problem with exit `10` unless the production
+profile and provider bundle are complete. When a complete Gateway bootstrap is injected, one
 supervised recovery service runs `recover_pending` at startup, after durable
 submit notifications, and periodically. The opt-in overlay shares a private
 Unix datagram socket between Gateway and the one-shot SSH process; the datagram

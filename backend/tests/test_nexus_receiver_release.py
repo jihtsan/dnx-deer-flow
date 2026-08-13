@@ -121,6 +121,41 @@ async def test_secret_backed_principal_mapper_maps_only_exact_key_ids_and_action
 
 
 @pytest.mark.asyncio
+async def test_secret_backed_principal_mapper_keeps_user_and_global_actions_independent() -> None:
+    mapper = SecretBackedReceiverPrincipalMapper(
+        resolver=_SecretResolver(
+            _principal_map(
+                principals=[
+                    {
+                        "keyId": "user-only-key",
+                        "subject": "nexus.release.user",
+                        "actions": ["receiver:install:user", "receiver:observe:user"],
+                        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIUserOnlyKey nexus-user",
+                    },
+                    {
+                        "keyId": "global-only-key",
+                        "subject": "nexus.release.global",
+                        "actions": ["receiver:install:global", "receiver:observe:global"],
+                        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlobalOnlyKey nexus-global",
+                    },
+                ]
+            )
+        ),
+        reference=ReceiverSecretReference(name="principals", key="map"),
+    )
+
+    user = await mapper.map_principal("user-only-key")
+    global_principal = await mapper.map_principal("global-only-key")
+
+    assert user.actions == frozenset({"receiver:install:user", "receiver:observe:user"})
+    assert "receiver:install:global" not in user.actions
+    assert "receiver:observe:global" not in user.actions
+    assert global_principal.actions == frozenset({"receiver:install:global", "receiver:observe:global"})
+    assert "receiver:install:user" not in global_principal.actions
+    assert "receiver:observe:user" not in global_principal.actions
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "principals",
     [
@@ -518,3 +553,31 @@ async def test_release_wiring_rejects_coordinator_without_catalog_revision_provi
 
     assert service is None
     assert not hasattr(state, "nexus_receiver_runtime_handler")
+
+
+@pytest.mark.asyncio
+async def test_production_release_bootstrap_failure_aborts_startup(caplog) -> None:
+    class _FailingBootstrap:
+        async def build(self, config):
+            del config
+            raise ValueError("external provider unavailable")
+
+    values = dict(_COMPLETE_CONFIG)
+    values.update(
+        production=True,
+        cursor_signing_key_secret_ref={"name": "receiver/runtime", "key": "cursor-key"},
+        provider_factory="enterprise.receiver:build_providers",
+        package_stage_path="/var/lib/deer-flow/nexus-receiver/packages",
+        global_storage_path="/app/backend/.deer-flow/integrations/skills",
+        audit_policy_revision="audit-v1",
+        rate_limit_policy_revision="rate-v1",
+    )
+    state = SimpleNamespace(nexus_receiver_release_bootstrap=_FailingBootstrap())
+
+    with pytest.raises(RuntimeError, match="production bootstrap failed"):
+        await start_receiver_release_wiring(state, NexusReceiverConfig.model_validate(values))
+
+    assert not hasattr(state, "nexus_receiver_runtime_handler")
+    assert not hasattr(state, "nexus_receiver_service_authenticator")
+    assert not hasattr(state, "nexus_receiver_principal_mapper")
+    assert "external provider unavailable" not in caplog.text
