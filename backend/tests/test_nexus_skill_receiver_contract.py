@@ -12,10 +12,13 @@ from jsonschema import Draft202012Validator, FormatChecker
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = REPO_ROOT / "contracts" / "openapi" / "nexus-skill-receiver-v1.yaml"
 FIXTURE_PATH = REPO_ROOT / "contracts" / "openapi" / "nexus-skill-receiver-v1.conformance.json"
+ADR_PATH = REPO_ROOT / "docs" / "adr" / "001-nexus-skill-receiver-global-and-recovery.md"
+ERROR_TABLE_PATH = REPO_ROOT / "contracts" / "openapi" / "nexus-skill-receiver-v1-errors.md"
 
 EXPECTED_PATHS = {
     "/api/v1/nexus/skill-receiver/capabilities",
     "/api/v1/nexus/skill-receiver/users",
+    "/api/v1/nexus/skill-receiver/skills/query",
     "/api/v1/nexus/skill-receiver/operations",
     "/api/v1/nexus/skill-receiver/operations/{operationId}",
     "/api/v1/nexus/skill-receiver/observations/query",
@@ -60,6 +63,13 @@ EXPECTED_SSH_ACTIONS = {
         "requiredFrameFields": {"contractVersion", "correlationId", "limit"},
         "optionalFrameFields": {"query", "cursor"},
         "successSchema": "ReceiverUserPage",
+    },
+    "skills.list": {
+        "httpOperationId": "listNexusSkillReceiverSkills",
+        "serviceActions": {"receiver:skills:list:user"},
+        "requiredFrameFields": {"contractVersion", "correlationId", "target", "limit"},
+        "optionalFrameFields": {"query", "cursor"},
+        "successSchema": "ReceiverSkillPage",
     },
     "install.submit": {
         "httpOperationId": "createNexusSkillReceiverOperation",
@@ -117,6 +127,9 @@ EXPECTED_PROVIDER_ERROR_CODES = {
     "SKILL_NAME_CONFLICT",
     "OBSERVED_STATE_CONFLICT",
     "IDEMPOTENCY_KEY_REUSED",
+    "CURSOR_INVALID",
+    "CURSOR_EXPIRED",
+    "OBSERVATION_UNAVAILABLE",
     "ACTIVATION_FAILED",
     "UPSTREAM_TIMEOUT",
     "INTERNAL_ERROR",
@@ -230,7 +243,7 @@ def test_contract_is_the_versioned_receiver_source_of_truth() -> None:
     fixtures = _load_fixtures()
 
     assert contract["openapi"] == "3.1.0"
-    assert contract["info"]["version"] == fixtures["contractVersion"] == "1.0.0"
+    assert contract["info"]["version"] == fixtures["contractVersion"] == "1.1.0"
     assert contract["x-receiver-contract"]["canonical"] is True
     assert contract["x-receiver-contract"]["compatibleMajor"] == 1
     assert contract["x-receiver-contract"]["legacyFallback"] == "forbidden"
@@ -294,6 +307,92 @@ def test_directory_is_bounded_cursor_search_without_exact_user_lookup() -> None:
     assert parameters["limit"]["schema"] == {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
 
 
+def test_skill_list_is_user_scoped_minimal_and_revision_stable() -> None:
+    contract = _load_contract()
+    operation = contract["paths"]["/api/v1/nexus/skill-receiver/skills/query"]["post"]
+    schemas = contract["components"]["schemas"]
+
+    assert operation["operationId"] == "listNexusSkillReceiverSkills"
+    assert operation["x-required-service-actions"] == ["receiver:skills:list:user"]
+    assert operation["x-authorization-order"] == [
+        "authenticate_principal",
+        "authorize_action",
+        "authorize_target_entitlement",
+        "resolve_target_user",
+        "read_skill_catalog",
+    ]
+    assert operation["x-non-enumeration"] == {
+        "unauthorizedExistingTarget": "FORBIDDEN",
+        "unauthorizedMissingTarget": "FORBIDDEN",
+    }
+
+    request = schemas["ReceiverSkillListRequest"]
+    assert request["additionalProperties"] is False
+    assert set(request["required"]) == {"contractVersion", "correlationId", "target", "limit"}
+    assert set(request["properties"]) == {"contractVersion", "correlationId", "target", "limit", "cursor", "query"}
+    assert request["properties"]["target"] == {"$ref": "#/components/schemas/UserInstallationTarget"}
+    assert request["properties"]["limit"] == {"type": "integer", "minimum": 1, "maximum": 100}
+
+    item = schemas["ReceiverSkillListItem"]
+    minimal_fields = {
+        "runtimeSkillName",
+        "skillVersionId",
+        "version",
+        "packageDigest",
+        "enabled",
+        "loadState",
+        "freshness",
+        "observedAt",
+    }
+    assert item["additionalProperties"] is False
+    assert set(item["required"]) == minimal_fields
+    assert set(item["properties"]) == minimal_fields
+
+    page = schemas["ReceiverSkillPage"]
+    pagination = page["x-pagination"]
+    assert pagination["sort"] == "normalized runtimeSkillName ASC"
+    assert pagination["cursorIntegrity"] == "authenticated"
+    assert set(pagination["cursorBindings"]) == {
+        "principalSubject",
+        "target",
+        "normalizedQuery",
+        "catalogRevision",
+        "lastSortKey",
+        "expiresAt",
+    }
+    assert pagination["sameCursorChainRevision"] is True
+    assert pagination["refreshRequiresNoCursor"] is True
+    assert pagination["unavailableRevisionProblemCode"] == "CURSOR_EXPIRED"
+
+
+def test_service_action_registry_separates_user_and_global_authority() -> None:
+    contract = _load_contract()
+    actions = set(contract["components"]["schemas"]["ReceiverServiceAction"]["enum"])
+
+    assert "receiver:skills:list:user" in actions
+    assert "receiver:install:user" in actions
+    assert "receiver:install:global" in actions
+    assert "receiver:observe:user" in actions
+    assert "receiver:observe:global" in actions
+    assert "receiver:skills:list:global" not in actions
+
+    matrix = contract["x-receiver-contract"]["actionAuthorization"]
+    assert matrix["skills.list"] == {"USER": ["receiver:skills:list:user"]}
+    assert matrix["install.submit"] == {
+        "USER": ["receiver:install:user"],
+        "GLOBAL": ["receiver:install:global"],
+    }
+    assert matrix["observations.query"] == {
+        "USER": ["receiver:observe:user"],
+        "GLOBAL": ["receiver:observe:global"],
+    }
+    assert matrix["operations.get"] == {
+        "base": ["receiver:operations:read"],
+        "USER": ["receiver:observe:user"],
+        "GLOBAL": ["receiver:observe:global"],
+    }
+
+
 def test_closed_enums_and_state_machine_are_exhaustive() -> None:
     contract = _load_contract()
     schemas = contract["components"]["schemas"]
@@ -311,6 +410,9 @@ def test_closed_enums_and_state_machine_are_exhaustive() -> None:
     assert version_policy["optionalResponseFieldsAreAdditive"] is True
     assert version_policy["additiveErrorCodesRequireMinor"] is True
     assert version_policy["authorityOrHashChangesRequireMajor"] is True
+    assert version_policy["acceptedVersions"] == ["1.0.0", "1.1.0"]
+    assert version_policy["highestSupportedVersion"] == "1.1.0"
+    assert version_policy["negotiateThrough"] == "capabilities.get"
 
 
 def test_ssh_binding_reuses_canonical_components_and_has_closed_wire_rules() -> None:
@@ -326,7 +428,7 @@ def test_ssh_binding_reuses_canonical_components_and_has_closed_wire_rules() -> 
     assert ssh["authenticationProfile"] == "ssh_forced_command"
     assert ssh["targetScopes"] == ["USER"]
     assert ssh["forcedCommand"] == "nexus-skill-receiver-v1"
-    assert ssh["argvGrammar"] == "^nexus-skill-receiver-v1 (capabilities\\.get|users\\.list|install\\.submit|operations\\.get|observations\\.query)$"
+    assert ssh["argvGrammar"] == "^nexus-skill-receiver-v1 (capabilities\\.get|users\\.list|skills\\.list|install\\.submit|operations\\.get|observations\\.query)$"
     assert set(ssh["forbiddenFeatures"]) == {
         "interactive_shell",
         "pty",
@@ -398,7 +500,9 @@ def test_ssh_action_conformance_frames_reuse_http_parameter_and_component_rules(
 
         assert case["argv"] == f"{ssh['forcedCommand']} {action}"
         assert required <= set(frame) <= allowed
-        assert frame["contractVersion"] == fixtures["contractVersion"]
+        minimum_version = mapping["minimumContractVersion"]
+        assert frame["contractVersion"] in {"1.0.0", "1.1.0"}
+        assert tuple(map(int, frame["contractVersion"].split("."))) >= tuple(map(int, minimum_version.split(".")))
         assert not _validation_errors(contract, "SemVer", frame["contractVersion"])
         correlation_schema = contract["components"]["parameters"]["CorrelationId"]["schema"]
         assert not list(Draft202012Validator(correlation_schema).iter_errors(frame["correlationId"]))
@@ -408,6 +512,8 @@ def test_ssh_action_conformance_frames_reuse_http_parameter_and_component_rules(
                 if field in frame:
                     schema = contract["components"]["parameters"][parameter_name]["schema"]
                     assert not list(Draft202012Validator(schema).iter_errors(frame[field]))
+        elif action == "skills.list":
+            assert not _validation_errors(contract, "ReceiverSkillListRequest", frame)
         elif action == "install.submit":
             assert not _validation_errors(contract, "ReceiverInstallCommand", frame["command"])
             for field, parameter_name in (("idempotencyKey", "IdempotencyKey"), ("requestSha256", "RequestSha256")):
@@ -424,6 +530,11 @@ def test_ssh_action_conformance_frames_reuse_http_parameter_and_component_rules(
         if action != "install.submit":
             assert "packageByteCount" not in case
 
+    assert next(case for case in cases if case["action"] == "skills.list")["frame"]["contractVersion"] == "1.1.0"
+    for case in cases:
+        if case["action"] != "skills.list":
+            assert case["frame"]["contractVersion"] == "1.0.0"
+
 
 def test_ssh_binding_rejects_global_without_changing_the_shared_command_schema() -> None:
     contract = _load_contract()
@@ -438,6 +549,51 @@ def test_ssh_binding_rejects_global_without_changing_the_shared_command_schema()
     assert case["problem"]["code"] == "GLOBAL_INSTALL_UNSUPPORTED"
 
 
+def test_skill_list_conformance_fixtures_pin_isolation_pagination_and_four_states() -> None:
+    contract = _load_contract()
+    fixtures = _load_fixtures()
+
+    cases = fixtures["skillListCases"]
+    names = {case["name"] for case in cases}
+    assert {
+        "first-user-first-page",
+        "first-user-second-page-same-revision",
+        "second-user-isolated",
+        "refresh-without-cursor-new-revision",
+        "same-version-installed",
+        "other-version-conflict",
+        "not-installed",
+        "observation-unavailable",
+    } <= names
+    for case in cases:
+        assert not _validation_errors(contract, "ReceiverSkillListRequest", case["request"]), case["name"]
+        assert not _validation_errors(contract, "ReceiverSkillPage", case["response"]), case["name"]
+
+    errors = fixtures["skillListProblemCases"]
+    by_name = {case["name"]: case for case in errors}
+    assert by_name["unauthorized-existing-user"]["problem"]["code"] == "FORBIDDEN"
+    assert by_name["unauthorized-missing-user"]["problem"]["code"] == "FORBIDDEN"
+    assert by_name["tampered-cursor"]["problem"]["code"] == "CURSOR_INVALID"
+    assert by_name["cross-user-cursor-replay"]["problem"]["code"] == "CURSOR_INVALID"
+    assert by_name["cross-query-cursor-replay"]["problem"]["code"] == "CURSOR_INVALID"
+    assert by_name["catalog-revision-unavailable"]["problem"]["code"] == "CURSOR_EXPIRED"
+    for case in errors:
+        assert not _validation_errors(contract, "ReceiverProblem", case["problem"]), case["name"]
+
+
+def test_global_capability_stays_default_deny_in_1_1_fixtures() -> None:
+    contract = _load_contract()
+    fixtures = _load_fixtures()
+    capability = next(case for case in fixtures["schemaCases"] if case["name"] == "default-deny-capabilities")["value"]
+
+    assert capability["contractVersion"] == "1.1.0"
+    assert capability["capabilities"]["globalInstall"] == "unsupported"
+    assert capability["capabilities"]["observation"] != "global_and_user"
+    assert capability["capabilities"]["activation"] != "global_and_user"
+    assert "GLOBAL_INSTALL_UNSUPPORTED" in capability["blockedBy"]
+    assert not _validation_errors(contract, "ReceiverCapabilitySnapshot", capability)
+
+
 def test_error_code_is_open_but_known_provider_codes_are_unique() -> None:
     contract = _load_contract()
     error_schema = contract["components"]["schemas"]["ReceiverErrorCode"]
@@ -447,6 +603,35 @@ def test_error_code_is_open_but_known_provider_codes_are_unique() -> None:
     assert "enum" not in error_schema
     assert len(known) == len(set(known))
     assert set(known) == EXPECTED_PROVIDER_ERROR_CODES
+
+
+def test_error_table_covers_every_stable_provider_code_and_non_enumeration() -> None:
+    table = ERROR_TABLE_PATH.read_text(encoding="utf-8")
+
+    for code in EXPECTED_PROVIDER_ERROR_CODES:
+        assert f"`{code}`" in table
+    assert "authorization before target resolution" in table
+    assert "existing or missing USER target" in table
+    assert "`FORBIDDEN`" in table
+    assert "`OBSERVATION_UNAVAILABLE`" in table
+
+
+def test_adr_pins_global_visibility_and_single_recovery_owner_without_enabling_capability() -> None:
+    adr = ADR_PATH.read_text(encoding="utf-8")
+
+    for invariant in (
+        "integrations/skills/nexus",
+        "existing users",
+        "future users",
+        "running run",
+        "next run",
+        "catalog revision",
+        "PostgreSQL singleton lease",
+        "execution lease",
+        "fencing token",
+        "GLOBAL remains unsupported",
+    ):
+        assert invariant in adr
 
 
 def test_schema_conformance_fixtures_cover_positive_and_negative_cases() -> None:
