@@ -1123,18 +1123,47 @@ Each resumed write attempt revalidates the exact controlled USER identity and
 eligibility; failures after the atomic tree commit retain an explicit disabled
 state rather than falling back to the normal enabled-by-default behavior.
 
-This implementation is not production enablement. The production Gateway does
-not inject a receiver authenticator, install-target resolver, durable operation
-or package store, recovery runner, or USER installer, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
+This implementation is not production enablement. `config.yaml` exposes a
+startup-only `nexus_receiver` release gate that defaults to `enabled: false` and
+contains only opaque host-key/principal-map Secret references and reviewed
+policy revision IDs, never Secret values. A deployment-owned bootstrap must
+atomically inject the authenticator, install-target resolver, durable operation
+and package stores, USER installer, and closed transport-principal mapper; the
+repository supplies no such production bootstrap, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
 `409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
 capabilities remain `read_only`/`unsupported`. The
 forced-command module entry accepts only the five exact `nexus-skill-receiver-v1`
-commands and canonical bounded frames, but it has no runtime wiring and returns
-one redacted Problem with exit `10`. Real service-auth/directory policy,
-trust/compatibility decisions, Secret and SSH host-key distribution, SSH account
-provisioning, and native `GLOBAL` support remain required release gates. Nexus
+commands and canonical bounded frames. The opt-in
+`docker/docker-compose.nexus-receiver-ssh.yaml` profile adds a loopback-bound,
+dedicated-account sshd image whose principal-map Secret generates only
+`restrict,command=...` keys and whose host key is copied from a mounted Secret;
+it is absent from the base stack and also requires explicit environment and
+config gates. Its repository entry point intentionally has no runtime context
+provider and returns one redacted Problem with exit `10` until the deployment
+bootstrap is approved. When a complete Gateway bootstrap is injected, one
+supervised recovery service runs `recover_pending` at startup, after durable
+submit notifications, and periodically. The opt-in overlay shares a private
+Unix datagram socket between Gateway and the one-shot SSH process; the datagram
+carries only a fixed wake token and merely triggers a fenced durable-store scan.
+Periodic recovery remains the fail-safe if notification is unavailable. Real credentials and rotation,
+service-auth/directory privacy policy, stable RBAC principal ownership,
+trust/compatibility decisions, a stable single-worker/process ownership policy,
+and native `GLOBAL` support remain release gates. Nexus
 must not fall back to `/api/skills`, and browser clients must continue to call
 the Nexus public API instead of this service-to-service boundary.
+
+An independent acceptance-only profile is available for the frozen Skill Hub
+P0 USER rehearsal fixture. It must be layered explicitly with
+`docker/docker-compose.nexus-receiver-acceptance.yaml`, pins the reviewed Nexus
+preparation manifest and DeerFlow receiver revisions, and requires an isolated
+PostgreSQL database plus synthetic three-user directory and principal-map
+Secret. The profile uses the real SQL operation store, durable package staging,
+native USER installer/activation, and one-shot deterministic fault controls.
+It is disabled unless `DEER_FLOW_NEXUS_RECEIVER_ACCEPTANCE_ENABLED=true`; its
+HTTP authenticator always denies, and it neither enables production writes nor
+adds `GLOBAL`, upgrade, or delete behavior. See
+[`backend/docs/NEXUS_RECEIVER_ACCEPTANCE.md`](backend/docs/NEXUS_RECEIVER_ACCEPTANCE.md)
+for readiness-only validation.
 
 ## Embedded Python Client
 

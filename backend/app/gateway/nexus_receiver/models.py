@@ -30,13 +30,13 @@ class ReceiverAuthorizationSnapshot(_ReceiverModel):
 
 
 class ReceiverCapabilities(_ReceiverModel):
-    user_directory: Literal["unsupported"] = "unsupported"
-    global_install: Literal["unsupported"] = "unsupported"
-    user_install: Literal["unsupported"] = "unsupported"
-    observation: Literal["unsupported"] = "unsupported"
-    activation: Literal["unsupported"] = "unsupported"
-    durable_operations: Literal["unsupported"] = "unsupported"
-    observed_package_digest: Literal["unsupported"] = "unsupported"
+    user_directory: Literal["supported", "unsupported"] = "unsupported"
+    global_install: Literal["supported", "unsupported"] = "unsupported"
+    user_install: Literal["supported", "unsupported"] = "unsupported"
+    observation: Literal["global_and_user", "global_only", "user_only", "unsupported"] = "unsupported"
+    activation: Literal["global_and_user", "global_only", "user_only", "unsupported"] = "unsupported"
+    durable_operations: Literal["supported", "unsupported"] = "unsupported"
+    observed_package_digest: Literal["supported", "unsupported"] = "unsupported"
 
 
 class ReceiverCapabilitySnapshot(_ReceiverModel):
@@ -44,7 +44,7 @@ class ReceiverCapabilitySnapshot(_ReceiverModel):
     transport_profile: Literal["http_v1", "ssh_v1"] = "http_v1"
     runtime_version: str | None = Field(min_length=1, max_length=100)
     connection: Literal["healthy"] = "healthy"
-    access_mode: Literal["read_only"] = "read_only"
+    access_mode: Literal["read_write", "read_only", "unsupported"] = "read_only"
     freshness: Literal["current"] = "current"
     authorization: ReceiverAuthorizationSnapshot
     capabilities: ReceiverCapabilities

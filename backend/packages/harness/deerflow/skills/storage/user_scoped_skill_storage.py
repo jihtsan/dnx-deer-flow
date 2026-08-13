@@ -36,7 +36,7 @@ import logging
 import os
 import shutil
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 
 from deerflow.constants import DEFAULT_SKILLS_CONTAINER_PATH
@@ -331,11 +331,13 @@ class UserScopedSkillStorage(LocalSkillStorage):
         archive_path: str | Path,
         *,
         receiver_metadata: dict,
+        precommit_scan: Callable[[Path, str], Awaitable[None]] | None = None,
     ) -> dict:
         """Commit receiver identity in the same atomic Skill tree install."""
         return await self._ainstall_skill_from_archive(
             archive_path,
             receiver_metadata=receiver_metadata,
+            precommit_scan=precommit_scan,
         )
 
     async def _ainstall_skill_from_archive(
@@ -343,6 +345,7 @@ class UserScopedSkillStorage(LocalSkillStorage):
         archive_path: str | Path,
         *,
         receiver_metadata: dict | None,
+        precommit_scan: Callable[[Path, str], Awaitable[None]] | None = None,
     ) -> dict:
         from deerflow.skills.installer import _scan_skill_archive_contents_or_raise
 
@@ -359,7 +362,10 @@ class UserScopedSkillStorage(LocalSkillStorage):
         try:
             skill_dir, skill_name, target = await asyncio.to_thread(self._prepare_skill_archive, path, Path(tmp), custom_dir, archive_path)
 
-            await _scan_skill_archive_contents_or_raise(skill_dir, skill_name)
+            if precommit_scan is None:
+                await _scan_skill_archive_contents_or_raise(skill_dir, skill_name)
+            else:
+                await precommit_scan(skill_dir, skill_name)
 
             if receiver_metadata is not None:
                 await asyncio.to_thread(
