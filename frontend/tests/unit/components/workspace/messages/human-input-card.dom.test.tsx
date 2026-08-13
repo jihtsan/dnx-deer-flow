@@ -55,7 +55,10 @@ describe("HumanInputCard form validation (DOM)", () => {
     expect(category.getAttribute("aria-invalid")).toBe("true");
     const describedBy = category.getAttribute("aria-describedby");
     expect(describedBy).not.toBeNull();
-    expect(document.getElementById(describedBy!)).not.toBeNull();
+    if (describedBy === null) {
+      throw new Error("Expected category to reference the validation error");
+    }
+    expect(document.getElementById(describedBy)).not.toBeNull();
 
     // Fixing the last invalid field clears the error entirely.
     fireEvent.change(category, { target: { value: "travel" } });

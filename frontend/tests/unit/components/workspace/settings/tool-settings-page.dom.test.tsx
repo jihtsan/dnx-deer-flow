@@ -70,9 +70,12 @@ describe("ToolSettingsPage MCP switches", () => {
     const switches = screen.getAllByRole("switch");
     const githubSwitch = switches[0];
     expect(githubSwitch).toBeDefined();
+    if (githubSwitch === undefined) {
+      throw new Error("Expected the GitHub MCP switch");
+    }
     expect((githubSwitch as HTMLButtonElement).disabled).toBe(false);
 
-    fireEvent.click(githubSwitch!);
+    fireEvent.click(githubSwitch);
 
     expect(mcpMockState.mutate).toHaveBeenCalledWith({
       serverName: "github",

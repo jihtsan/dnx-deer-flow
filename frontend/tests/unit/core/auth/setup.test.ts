@@ -145,27 +145,50 @@ describe("auth setup helpers", () => {
     );
   });
 
-  test("regular sign-up is disabled only when admin setup is explicitly required", () => {
-    expect(canCreateRegularAccount(null)).toBe(true);
-    expect(canCreateRegularAccount({ needs_setup: true })).toBe(false);
-    expect(canCreateRegularAccount({ needs_setup: false })).toBe(true);
+  test("regular sign-up stays disabled until setup status is confirmed", () => {
+    expect(canCreateRegularAccount({ checked: false, status: null })).toBe(
+      false,
+    );
+    expect(
+      canCreateRegularAccount({
+        checked: true,
+        status: { needs_setup: true },
+      }),
+    ).toBe(false);
+    expect(
+      canCreateRegularAccount({
+        checked: true,
+        status: { needs_setup: false },
+      }),
+    ).toBe(true);
   });
 
   test("regular sign-up follows the gateway's registration_enabled flag", () => {
     expect(
       canCreateRegularAccount({
-        needs_setup: false,
-        registration_enabled: false,
+        checked: true,
+        status: {
+          needs_setup: false,
+          registration_enabled: false,
+        },
       }),
     ).toBe(false);
     expect(
       canCreateRegularAccount({
-        needs_setup: false,
-        registration_enabled: true,
+        checked: true,
+        status: {
+          needs_setup: false,
+          registration_enabled: true,
+        },
       }),
     ).toBe(true);
     // Older Gateways omit the field; absent must not hide the signup entry.
-    expect(canCreateRegularAccount({ needs_setup: false })).toBe(true);
+    expect(
+      canCreateRegularAccount({
+        checked: true,
+        status: { needs_setup: false },
+      }),
+    ).toBe(true);
   });
 
   test("detects already-initialized setup conflicts", () => {

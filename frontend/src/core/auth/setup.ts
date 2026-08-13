@@ -6,6 +6,11 @@ export type SetupStatusResponse = {
   registration_enabled?: boolean;
 };
 
+export type SetupStatusCheck = {
+  checked: boolean;
+  status: SetupStatusResponse | null;
+};
+
 export const setupStatusFetchInit = {
   cache: "no-store",
   credentials: "include",
@@ -33,10 +38,12 @@ export function isSystemAlreadyInitializedError(data: unknown): boolean {
   return parseAuthError(data).code === "system_already_initialized";
 }
 
-export function canCreateRegularAccount(
-  status: SetupStatusResponse | null,
-): boolean {
+export function canCreateRegularAccount(check: SetupStatusCheck): boolean {
   // registration_enabled is absent on older Gateways; treat that as allowed so
   // the signup entry only disappears when the backend actively closes it.
-  return status?.needs_setup !== true && status?.registration_enabled !== false;
+  return (
+    check.checked &&
+    check.status?.needs_setup !== true &&
+    check.status?.registration_enabled !== false
+  );
 }
