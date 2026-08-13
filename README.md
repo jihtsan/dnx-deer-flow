@@ -1104,9 +1104,10 @@ and read scope-specific Observed state. The OpenAPI source is
 with provider fixtures in the adjacent `.conformance.json` file.
 
 The same artifact defines the `http_v1` binding and the P0 `ssh_v1` forced-command
-binding. SSH accepts only the five allowlisted actions, reuses the canonical
-component schemas, and supports controlled directory reads plus exact `USER`
-first installation; it does not publish a separate CLI schema or enable `GLOBAL`.
+binding. SSH accepts only six allowlisted actions, reuses the canonical
+component schemas, and supports controlled directory reads, USER-only
+`skills.list`, plus exact `USER` first installation; it does not publish a
+separate CLI schema or enable production `GLOBAL` support.
 
 The Gateway mounts the canonical capability, controlled-directory, operation,
 operation-poll, and Observed paths behind dedicated service-auth and runtime
@@ -1123,14 +1124,20 @@ Each resumed write attempt revalidates the exact controlled USER identity and
 eligibility; failures after the atomic tree commit retain an explicit disabled
 state rather than falling back to the normal enabled-by-default behavior.
 
-The backend also contains the disabled-by-default persistence foundation for a
-later native `GLOBAL` receiver path: atomic same-filesystem managed storage at
+The backend also contains the disabled-by-default persistence and runtime
+foundation for a native `GLOBAL` receiver path: atomic same-filesystem managed storage at
 `integrations/skills/nexus`, a PostgreSQL global identity catalog and monotonic
 catalog revision, successful runtime-parser load probes, and a singleton
-recovery coordinator lease with takeover fencing. These are internal primitives
-only. No `GLOBAL` install/observe action is wired and capabilities continue to
-report GLOBAL support as unavailable until the remaining runtime and production
-readiness stages are complete.
+recovery coordinator lease with takeover fencing. A native GLOBAL
+installer/observer can drive the durable operation state machine, and each run
+freezes the current catalog revision before agent construction. The revision is
+part of lead-agent cache and sandbox projection signatures, so a later run
+converges without changing a run already in progress. Capability advertisement
+is guarded by explicit scope-RBAC, storage, load-probe, revision-consumer,
+recovery, auth, directory, trust, compatibility, and shared-volume readiness;
+missing any gate remains fail-closed. The repository has no complete production
+provider composition, so production and acceptance wiring continue to report
+`GLOBAL` as unsupported.
 
 This implementation is not production enablement. `config.yaml` exposes a
 startup-only `nexus_receiver` release gate that defaults to `enabled: false` and
@@ -1141,7 +1148,7 @@ and package stores, USER installer, and closed transport-principal mapper; the
 repository supplies no such production bootstrap, so it remains default-deny (`401 AUTHENTICATION_REQUIRED`,
 `409 USER_DIRECTORY_UNSUPPORTED`, or `503 RECEIVER_NOT_READY`). Authenticated
 capabilities remain `read_only`/`unsupported`. The
-forced-command module entry accepts only the five exact `nexus-skill-receiver-v1`
+forced-command module entry accepts only the six exact `nexus-skill-receiver-v1`
 commands and canonical bounded frames. The opt-in
 `docker/docker-compose.nexus-receiver-ssh.yaml` profile adds a loopback-bound,
 dedicated-account sshd image whose principal-map Secret generates only
@@ -1156,8 +1163,8 @@ Unix datagram socket between Gateway and the one-shot SSH process; the datagram
 carries only a fixed wake token and merely triggers a fenced durable-store scan.
 Periodic recovery remains the fail-safe if notification is unavailable. Real credentials and rotation,
 service-auth/directory privacy policy, stable RBAC principal ownership,
-trust/compatibility decisions, a stable single-worker/process ownership policy,
-and native `GLOBAL` support remain release gates. Nexus
+trust/compatibility decisions, audit/rate limiting, shared-volume deployment
+topology, and production `GLOBAL` support remain release gates. Nexus
 must not fall back to `/api/skills`, and browser clients must continue to call
 the Nexus public API instead of this service-to-service boundary.
 

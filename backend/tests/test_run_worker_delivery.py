@@ -30,6 +30,75 @@ async def _delivery_events(store: MemoryRunEventStore, thread_id: str, run_id: s
     return [e for e in events if e["event_type"] == "run.delivery"]
 
 
+class _CatalogRevisionProvider:
+    def __init__(self, revisions: list[int | Exception]) -> None:
+        self.revisions = revisions
+
+    async def get_catalog_revision(self) -> int:
+        value = self.revisions.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+@pytest.mark.anyio
+async def test_catalog_revision_is_frozen_before_agent_build_and_refreshes_next_run():
+    run_manager = RunManager()
+    provider = _CatalogRevisionProvider([17, 18])
+    seen: list[str] = []
+
+    class DummyAgent:
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            assert config["context"]["global_skill_catalog_revision"] == seen[-1]
+            yield {"messages": []}
+
+    def factory(*, config):
+        seen.append(config["context"]["global_skill_catalog_revision"])
+        return DummyAgent()
+
+    for thread_id in ("revision-thread-1", "revision-thread-2"):
+        record = await run_manager.create(thread_id)
+        await run_agent(
+            _make_bridge(),
+            run_manager,
+            record,
+            ctx=RunContext(
+                checkpointer=None,
+                event_store=MemoryRunEventStore(),
+                global_skill_catalog_revision_provider=provider,
+            ),
+            agent_factory=factory,
+            graph_input={},
+            config={},
+        )
+
+    assert seen == ["17", "18"]
+
+
+@pytest.mark.anyio
+async def test_catalog_revision_provider_failure_prevents_agent_build():
+    run_manager = RunManager()
+    record = await run_manager.create("revision-provider-failure")
+    factory = MagicMock(side_effect=AssertionError("agent must not be built"))
+
+    await run_agent(
+        _make_bridge(),
+        run_manager,
+        record,
+        ctx=RunContext(
+            checkpointer=None,
+            event_store=MemoryRunEventStore(),
+            global_skill_catalog_revision_provider=_CatalogRevisionProvider([RuntimeError("catalog unavailable")]),
+        ),
+        agent_factory=factory,
+        graph_input={},
+        config={},
+    )
+
+    factory.assert_not_called()
+    assert record.status == RunStatus.error
+
+
 def test_delivery_verification_treats_presented_directory_as_covering_produced_files():
     content = {
         "presented": 1,

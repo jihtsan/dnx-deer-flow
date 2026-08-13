@@ -30,6 +30,7 @@ _SSH_ACTIONS = frozenset(
     {
         "receiver:capabilities:read",
         "receiver:user-directory:read",
+        "receiver:skills:list:user",
         "receiver:install:user",
         "receiver:observe:user",
         "receiver:operations:read",
@@ -161,6 +162,8 @@ class _Recoverer(Protocol):
 
 
 class ReceiverRecoveryCoordinator(Protocol):
+    async def get_catalog_revision(self) -> int: ...
+
     async def try_acquire_recovery_lease(
         self,
         *,
@@ -481,6 +484,7 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
         "nexus_receiver_service_authenticator",
         "nexus_receiver_principal_mapper",
         "nexus_receiver_recovery_service",
+        "nexus_receiver_catalog_revision_provider",
     ):
         if hasattr(app_state, attribute):
             delattr(app_state, attribute)
@@ -492,6 +496,8 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
         return None
     try:
         components = await bootstrap.build(config)
+        if not callable(getattr(components.recovery_coordinator, "get_catalog_revision", None)):
+            raise RuntimeError("receiver recovery coordinator does not provide the GLOBAL catalog revision")
         if not callable(getattr(components.runtime_handler, "recover_pending", None)):
             raise TypeError("receiver runtime handler is incomplete")
         if not callable(getattr(components.service_authenticator, "authenticate", None)):
@@ -516,4 +522,5 @@ async def start_receiver_release_wiring(app_state: object, config: NexusReceiver
     setattr(app_state, "nexus_receiver_service_authenticator", components.service_authenticator)
     setattr(app_state, "nexus_receiver_principal_mapper", components.principal_mapper)
     setattr(app_state, "nexus_receiver_recovery_service", recovery)
+    setattr(app_state, "nexus_receiver_catalog_revision_provider", components.recovery_coordinator)
     return recovery

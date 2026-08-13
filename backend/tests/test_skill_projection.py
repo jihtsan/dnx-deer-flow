@@ -16,6 +16,7 @@ import pytest
 from deerflow.config.extensions_config import ExtensionsConfig, SkillStateConfig
 from deerflow.config.paths import Paths
 from deerflow.skills.projection import ensure_public_skill_projection, ensure_skill_projections, rebuild_skill_projections, skill_projection_mutation
+from deerflow.skills.revision import bind_global_skill_catalog_revision
 from deerflow.skills.storage.user_scoped_skill_storage import UserScopedSkillStorage
 
 
@@ -72,6 +73,33 @@ def test_projection_contains_only_enabled_skills(projection_env) -> None:
     enabled_view = projected.public / "enabled-skill" / "SKILL.md"
     assert enabled_view.read_text(encoding="utf-8") == enabled.read_text(encoding="utf-8")
     assert not (projected.public / "disabled-skill").exists()
+
+
+def test_catalog_revision_change_invalidates_unchanged_projection(projection_env, monkeypatch) -> None:
+    env = projection_env
+    _write_skill(env.skills_root / "public", "demo-skill")
+    from deerflow.skills import projection as projection_module
+
+    real_stage_skill = projection_module._stage_skill
+    staged: list[Path] = []
+
+    def recording_stage_skill(*args, **kwargs):
+        staged.append(args[0])
+        return real_stage_skill(*args, **kwargs)
+
+    monkeypatch.setattr(projection_module, "_stage_skill", recording_stage_skill)
+
+    with bind_global_skill_catalog_revision("17"):
+        projected = rebuild_skill_projections(env.storage)
+        first_manifest = (projected.public.parent / ".projection-manifest.json").read_text(encoding="utf-8")
+    staged.clear()
+
+    with bind_global_skill_catalog_revision("18"):
+        ensure_skill_projections(env.storage)
+        second_manifest = (projected.public.parent / ".projection-manifest.json").read_text(encoding="utf-8")
+
+    assert staged
+    assert second_manifest != first_manifest
 
 
 def test_projection_rebuild_removes_newly_disabled_skill(projection_env) -> None:

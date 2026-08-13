@@ -20,6 +20,7 @@ ReceiverAuthorizationProfile = Literal[
 ReceiverServiceAction = Literal[
     "receiver:capabilities:read",
     "receiver:user-directory:read",
+    "receiver:skills:list:user",
     "receiver:install:global",
     "receiver:install:user",
     "receiver:observe:global",
@@ -32,6 +33,7 @@ _KNOWN_ACTIONS = frozenset(
     {
         "receiver:capabilities:read",
         "receiver:user-directory:read",
+        "receiver:skills:list:user",
         "receiver:install:global",
         "receiver:install:user",
         "receiver:observe:global",

@@ -33,16 +33,25 @@ from app.gateway.nexus_receiver.models import (
     ReceiverAuthorizationSnapshot,
     ReceiverCapabilities,
     ReceiverCapabilitySnapshot,
+    ReceiverCursorPage,
     ReceiverInstallCommand,
     ReceiverObservationQuery,
     ReceiverObservedSkill,
     ReceiverOperation,
     ReceiverOperationError,
     ReceiverOperationPhase,
+    ReceiverSkillListRequest,
+    ReceiverSkillPage,
     ReceiverUserPage,
     ReceiverUserTarget,
 )
 from app.gateway.nexus_receiver.package_store import ReceiverPackageConflict, ReceiverPackageStore
+from app.gateway.nexus_receiver.skill_inventory import (
+    HmacReceiverSkillCursorCodec,
+    ReceiverSkillCursor,
+    ReceiverSkillCursorExpired,
+    ReceiverSkillCursorInvalid,
+)
 
 _TRANSITIONS: dict[str, frozenset[str]] = {
     "accepted": frozenset({"validating", "rejected"}),
@@ -70,6 +79,21 @@ _DEFAULT_DENY_BLOCKERS = [
 _EXECUTION_LEASE = timedelta(minutes=5)
 _EXECUTION_HEARTBEAT_SECONDS = _EXECUTION_LEASE.total_seconds() / 3
 logger = logging.getLogger(__name__)
+
+
+def _observed_identity_matches(observed: dict[str, Any] | None, command: ReceiverInstallCommand, version: str) -> bool:
+    return observed is not None and observed.get("skillVersionId") == command.skill_version_id and observed.get("version") == version and observed.get("packageDigest") == command.package_digest
+
+
+def _raise_if_observation_unavailable(observed: dict[str, Any] | None) -> None:
+    if observed is not None and observed.get("freshness") == "unavailable":
+        raise ReceiverRuntimeError(
+            code="OBSERVATION_UNAVAILABLE",
+            title="Observation unavailable",
+            detail="The receiver cannot determine the installed Skill state.",
+            status_code=503,
+            retryable=True,
+        )
 
 
 class ReceiverRuntimeError(ReceiverProviderError):
@@ -111,6 +135,41 @@ class ReceiverTargetUser:
 
 
 @dataclass(frozen=True, slots=True)
+class ReceiverCapabilityReadiness:
+    """Explicit release-gate evidence; support is never inferred from wiring."""
+
+    scope_rbac: bool = False
+    durable_operations: bool = False
+    native_global_storage: bool = False
+    load_probe: bool = False
+    runtime_revision_consumer: bool = False
+    recovery_fencing: bool = False
+    service_authentication: bool = False
+    directory_privacy: bool = False
+    package_trust: bool = False
+    compatibility: bool = False
+    shared_volume_topology: bool = False
+
+    @property
+    def global_install_supported(self) -> bool:
+        return all(
+            (
+                self.scope_rbac,
+                self.durable_operations,
+                self.native_global_storage,
+                self.load_probe,
+                self.runtime_revision_consumer,
+                self.recovery_fencing,
+                self.service_authentication,
+                self.directory_privacy,
+                self.package_trust,
+                self.compatibility,
+                self.shared_volume_topology,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReceiverTransportPrincipal:
     """Transport-authenticated authority projected into the shared handler."""
 
@@ -126,6 +185,7 @@ class ReceiverTransportPrincipal:
         known_actions = {
             "receiver:capabilities:read",
             "receiver:user-directory:read",
+            "receiver:skills:list:user",
             "receiver:install:global",
             "receiver:install:user",
             "receiver:observe:global",
@@ -171,6 +231,37 @@ class ReceiverUserSkillInstaller(Protocol):
         user_id: str,
         runtime_skill_name: str,
     ) -> dict[str, Any] | None: ...
+
+
+class ReceiverGlobalSkillInstaller(Protocol):
+    async def install_global_skill(
+        self,
+        *,
+        command: ReceiverInstallCommand,
+        manifest_version: str,
+        package: bytes,
+    ) -> None: ...
+
+    async def activate_global_skill(self, *, runtime_skill_name: str) -> None: ...
+
+    async def observe_global_skill(self, *, runtime_skill_name: str) -> dict[str, Any] | None: ...
+
+
+class ReceiverSkillInventory(Protocol):
+    async def list_user_skills(self, *, user_id: str) -> list: ...
+
+    async def catalog_revision(self, *, user_id: str) -> str: ...
+
+    async def snapshot(self, *, user_id: str) -> tuple[str, list]: ...
+
+
+class ReceiverTargetAuthorizer(Protocol):
+    async def authorize_user_target(
+        self,
+        *,
+        principal: ReceiverServicePrincipal | ReceiverTransportPrincipal,
+        user_id: str,
+    ) -> bool: ...
 
 
 @dataclass(slots=True)
@@ -445,6 +536,12 @@ class ReceiverRuntimeHandler:
         execution_owner: str | None = None,
         pending_recovery_notifier: Callable[[], None] | None = None,
         user_install_ready: bool = False,
+        skill_inventory: ReceiverSkillInventory | None = None,
+        target_authorizer: ReceiverTargetAuthorizer | None = None,
+        catalog_revision_provider: Callable[[], Any] | None = None,
+        skill_cursor_codec: HmacReceiverSkillCursorCodec | None = None,
+        global_installer: ReceiverGlobalSkillInstaller | None = None,
+        capability_readiness: ReceiverCapabilityReadiness | None = None,
     ) -> None:
         self.store = store
         self.package_store = package_store
@@ -456,6 +553,15 @@ class ReceiverRuntimeHandler:
         self._execution_owner_prefix = execution_owner or f"receiver-{uuid4().hex}"
         self._pending_recovery_notifier = pending_recovery_notifier
         self._user_install_ready = user_install_ready
+        self.skill_inventory = skill_inventory
+        self.target_authorizer = target_authorizer
+        self._catalog_revision_provider = catalog_revision_provider
+        self._skill_cursor_codec = skill_cursor_codec
+        self.global_installer = global_installer
+        self._capability_readiness = capability_readiness or ReceiverCapabilityReadiness()
+        self._global_install_ready = self._capability_readiness.global_install_supported
+        if self._global_install_ready and (global_installer is None or catalog_revision_provider is None):
+            raise ValueError("GLOBAL receiver readiness requires installer, observer, and catalog revision providers")
 
     def set_pending_recovery_notifier(self, notifier: Callable[[], None] | None) -> None:
         """Register the supervised recovery wake-up owned by Gateway lifespan."""
@@ -496,7 +602,27 @@ class ReceiverRuntimeHandler:
     ) -> ReceiverCapabilitySnapshot:
         self._require(principal, "receiver:capabilities:read")
         transport_profile = "ssh_v1" if isinstance(principal, ReceiverTransportPrincipal) else "http_v1"
-        can_install = self._user_install_ready and "receiver:install:user" in principal.actions
+        can_install_user = self._user_install_ready and "receiver:install:user" in principal.actions
+        can_install_global = self._global_install_ready and "receiver:install:global" in principal.actions
+        can_install = can_install_user or can_install_global
+        if self._user_install_ready or self._global_install_ready:
+            if self._user_install_ready and self._global_install_ready:
+                observation = activation = "global_and_user"
+            elif self._global_install_ready:
+                observation = activation = "global_only"
+            else:
+                observation = activation = "user_only"
+            capabilities = ReceiverCapabilities(
+                user_directory="supported" if self.user_directory is not None else "unsupported",
+                global_install="supported" if self._global_install_ready else "unsupported",
+                user_install="supported" if self._user_install_ready else "unsupported",
+                observation=observation,
+                activation=activation,
+                durable_operations="supported",
+                observed_package_digest="supported",
+            )
+        else:
+            capabilities = ReceiverCapabilities()
         return ReceiverCapabilitySnapshot(
             transport_profile=transport_profile,
             runtime_version=self.runtime_version,
@@ -505,20 +631,8 @@ class ReceiverRuntimeHandler:
                 profile=principal.profile,
                 granted_actions=sorted(principal.actions),
             ),
-            capabilities=(
-                ReceiverCapabilities(
-                    user_directory="supported",
-                    global_install="unsupported",
-                    user_install="supported",
-                    observation="user_only",
-                    activation="user_only",
-                    durable_operations="supported",
-                    observed_package_digest="supported",
-                )
-                if self._user_install_ready
-                else ReceiverCapabilities()
-            ),
-            blocked_by=[] if can_install else (["FORBIDDEN"] if self._user_install_ready else _DEFAULT_DENY_BLOCKERS),
+            capabilities=capabilities,
+            blocked_by=[] if can_install else (["FORBIDDEN"] if self._user_install_ready or self._global_install_ready else _DEFAULT_DENY_BLOCKERS),
             observed_at=self._clock(),
         )
 
@@ -554,6 +668,83 @@ class ReceiverRuntimeHandler:
             raise ReceiverUserDirectoryUnavailable() from exc
         return ReceiverUserPage.model_validate(page)
 
+    async def list_skills(
+        self,
+        *,
+        principal: ReceiverServicePrincipal | ReceiverTransportPrincipal,
+        request_payload: dict[str, Any],
+    ) -> ReceiverSkillPage:
+        self._require(principal, "receiver:skills:list:user")
+        try:
+            request = ReceiverSkillListRequest.model_validate(request_payload)
+        except ValidationError:
+            raise ReceiverRuntimeError(code="INVALID_INSTALLATION_TARGET", detail="The Skill inventory request is invalid.", status_code=422) from None
+        if self.skill_inventory is None or self.target_authorizer is None or self._skill_cursor_codec is None:
+            raise ReceiverRuntimeError(code="RECEIVER_NOT_READY", detail="The receiver Skill inventory is not configured.", status_code=503, retryable=True)
+        user_id = request.target.deer_flow_user_id
+        try:
+            entitled = await self.target_authorizer.authorize_user_target(principal=principal, user_id=user_id)
+        except Exception:
+            entitled = False
+        if not entitled:
+            raise ReceiverServiceActionForbidden()
+        user = await self.directory.resolve_install_target(user_id)
+        if user is None or user.user_id != user_id:
+            raise ReceiverRuntimeError(code="TARGET_USER_NOT_FOUND", detail="The selected DeerFlow user does not exist.", status_code=404)
+
+        normalized_query = (request.query or "").strip().casefold()
+        try:
+            provider_revision, items = await self.skill_inventory.snapshot(user_id=user_id)
+            global_revision = self._catalog_revision_provider() if self._catalog_revision_provider is not None else None
+            if asyncio.iscoroutine(global_revision):
+                global_revision = await global_revision
+            revision = f"{global_revision or '0'}:{provider_revision}"
+            last_sort_key = ""
+            if request.cursor is not None:
+                decoded = self._skill_cursor_codec.decode(request.cursor)
+                if not self._skill_cursor_codec.matches_request(
+                    decoded,
+                    principal_subject=principal.subject,
+                    user_id=user_id,
+                    normalized_query=normalized_query,
+                ):
+                    raise ReceiverSkillCursorInvalid()
+                if not self._skill_cursor_codec.matches_revision(decoded, revision):
+                    raise ReceiverSkillCursorExpired()
+                last_sort_key = decoded.last_sort_key
+        except ReceiverSkillCursorExpired:
+            raise ReceiverRuntimeError(code="CURSOR_EXPIRED", title="Cursor expired", detail="The cursor catalog revision is no longer available; restart without a cursor.") from None
+        except ReceiverSkillCursorInvalid:
+            raise ReceiverRuntimeError(code="CURSOR_INVALID", title="Cursor invalid", detail="The supplied cursor is invalid for this request.", status_code=422) from None
+        except ReceiverProviderError:
+            raise
+        except Exception:
+            raise ReceiverRuntimeError(code="OBSERVATION_UNAVAILABLE", title="Observation unavailable", detail="The receiver Skill inventory is temporarily unavailable.", status_code=503, retryable=True) from None
+
+        ordered = sorted(items, key=lambda item: item.runtime_skill_name.casefold())
+        if normalized_query:
+            ordered = [item for item in ordered if normalized_query in item.runtime_skill_name.casefold()]
+        if last_sort_key:
+            ordered = [item for item in ordered if item.runtime_skill_name.casefold() > last_sort_key]
+        page_items = ordered[: request.limit]
+        has_more = len(ordered) > len(page_items)
+        next_cursor = None
+        if has_more and page_items:
+            next_cursor = self._skill_cursor_codec.encode(
+                ReceiverSkillCursor(
+                    principal_subject=principal.subject,
+                    user_id=user_id,
+                    normalized_query=normalized_query,
+                    catalog_revision=revision,
+                    last_sort_key=page_items[-1].runtime_skill_name.casefold(),
+                )
+            )
+        return ReceiverSkillPage(
+            items=page_items,
+            page=ReceiverCursorPage(has_more=has_more, next_cursor=next_cursor),
+            observed_at=self._clock(),
+        )
+
     async def submit_install(
         self,
         *,
@@ -578,12 +769,14 @@ class ReceiverRuntimeHandler:
             )
         if command.target.scope == "GLOBAL":
             self._require(principal, "receiver:install:global")
-            raise ReceiverRuntimeError(
-                code="GLOBAL_INSTALL_UNSUPPORTED",
-                title="Global installation is unsupported",
-                detail="The receiver runtime supports USER installation only.",
-            )
-        self._require(principal, "receiver:install:user")
+            if not self._global_install_ready or self.global_installer is None:
+                raise ReceiverRuntimeError(
+                    code="GLOBAL_INSTALL_UNSUPPORTED",
+                    title="Global installation is unsupported",
+                    detail="The receiver GLOBAL release gates are not ready.",
+                )
+        else:
+            self._require(principal, "receiver:install:user")
         if request_sha256 != self.canonical_command_digest(command_payload):
             raise ReceiverRuntimeError(code="DIGEST_MISMATCH", detail="The canonical command digest does not match.", status_code=422)
         if len(package) != command.package_size_bytes:
@@ -807,6 +1000,8 @@ class ReceiverRuntimeHandler:
     async def _continue_install(self, entry: ReceiverOperationEntry, package: bytes, *, owner: str, token: str) -> ReceiverOperation:
         command = entry.command
         operation_id = str(command.receiver_operation_id)
+        if command.target.scope == "GLOBAL":
+            return await self._continue_global_install(entry, package, owner=owner, token=token)
         assert isinstance(command.target, ReceiverUserTarget)
         try:
             manifest_name, manifest_version = await asyncio.to_thread(_inspect_package, package)
@@ -825,7 +1020,8 @@ class ReceiverRuntimeHandler:
                     runtime_skill_name=command.runtime_skill_name,
                 )
                 if existing is not None:
-                    if existing.get("skillVersionId") == command.skill_version_id and existing.get("packageDigest") == command.package_digest:
+                    _raise_if_observation_unavailable(existing)
+                    if _observed_identity_matches(existing, command, manifest_version):
                         raise ReceiverRuntimeError(code="SKILL_ALREADY_INSTALLED", detail="The exact Skill version is already installed.")
                     raise ReceiverRuntimeError(code="SKILL_NAME_CONFLICT", detail="A different Skill already uses runtimeSkillName.")
                 entry = await self.store.transition(operation_id, phase="installing", now=self._clock(), owner=owner, token=token)
@@ -838,7 +1034,8 @@ class ReceiverRuntimeHandler:
                     user_id=user.user_id,
                     runtime_skill_name=command.runtime_skill_name,
                 )
-                exact = installed is not None and installed.get("skillVersionId") == command.skill_version_id and installed.get("packageDigest") == command.package_digest
+                _raise_if_observation_unavailable(installed)
+                exact = _observed_identity_matches(installed, command, manifest_version)
                 if not exact:
                     if installed is not None:
                         raise ReceiverRuntimeError(code="SKILL_NAME_CONFLICT", detail="A different Skill already uses runtimeSkillName.")
@@ -857,7 +1054,8 @@ class ReceiverRuntimeHandler:
                             user_id=user.user_id,
                             runtime_skill_name=command.runtime_skill_name,
                         )
-                        exact = installed is not None and installed.get("skillVersionId") == command.skill_version_id and installed.get("packageDigest") == command.package_digest
+                        _raise_if_observation_unavailable(installed)
+                        exact = _observed_identity_matches(installed, command, manifest_version)
                         if not exact:
                             raise ReceiverRuntimeError(code="SKILL_NAME_CONFLICT", detail="A Skill already uses runtimeSkillName.") from None
                 entry = await self.store.transition(operation_id, phase="activating", now=self._clock(), owner=owner, token=token)
@@ -867,7 +1065,8 @@ class ReceiverRuntimeHandler:
                     user_id=user.user_id,
                     runtime_skill_name=command.runtime_skill_name,
                 )
-                exact_identity = installed is not None and installed.get("skillVersionId") == command.skill_version_id and installed.get("packageDigest") == command.package_digest
+                _raise_if_observation_unavailable(installed)
+                exact_identity = _observed_identity_matches(installed, command, manifest_version)
                 if not exact_identity:
                     raise ReceiverRuntimeError(code="ACTIVATION_FAILED", detail="The installed Skill identity could not be recovered for activation.")
                 await self.installer.activate_user_skill(
@@ -936,6 +1135,102 @@ class ReceiverRuntimeHandler:
                 )
             raise exc from None
 
+    async def _continue_global_install(
+        self,
+        entry: ReceiverOperationEntry,
+        package: bytes,
+        *,
+        owner: str,
+        token: str,
+    ) -> ReceiverOperation:
+        command = entry.command
+        operation_id = str(command.receiver_operation_id)
+        if not self._global_install_ready or self.global_installer is None:
+            raise ReceiverRuntimeError(code="GLOBAL_INSTALL_UNSUPPORTED", detail="The receiver GLOBAL release gates are not ready.")
+        try:
+            manifest_name, manifest_version = await asyncio.to_thread(_inspect_package, package)
+            if manifest_name != command.runtime_skill_name:
+                raise ReceiverRuntimeError(code="PACKAGE_MANIFEST_MISMATCH", detail="The Skill package manifest name does not match runtimeSkillName.", status_code=422)
+            if entry.operation.phase == "accepted":
+                entry = await self.store.transition(operation_id, phase="validating", now=self._clock(), owner=owner, token=token)
+            if entry.operation.phase == "validating":
+                existing = await self.global_installer.observe_global_skill(runtime_skill_name=command.runtime_skill_name)
+                if existing is not None:
+                    _raise_if_observation_unavailable(existing)
+                    exact = _observed_identity_matches(existing, command, manifest_version)
+                    if exact:
+                        raise ReceiverRuntimeError(code="SKILL_ALREADY_INSTALLED", detail="The exact Skill version is already installed.")
+                    raise ReceiverRuntimeError(code="SKILL_NAME_CONFLICT", detail="A different Skill already uses runtimeSkillName.")
+                entry = await self.store.transition(operation_id, phase="installing", now=self._clock(), owner=owner, token=token)
+            if entry.operation.phase == "installing":
+                await self._renew_execution_claim(operation_id, owner=owner, token=token)
+                installed = await self.global_installer.observe_global_skill(runtime_skill_name=command.runtime_skill_name)
+                _raise_if_observation_unavailable(installed)
+                exact = _observed_identity_matches(installed, command, manifest_version)
+                if not exact:
+                    if installed is not None:
+                        raise ReceiverRuntimeError(code="SKILL_NAME_CONFLICT", detail="A different Skill already uses runtimeSkillName.")
+                    await self.global_installer.install_global_skill(
+                        command=command,
+                        manifest_version=manifest_version,
+                        package=package,
+                    )
+                entry = await self.store.transition(operation_id, phase="activating", now=self._clock(), owner=owner, token=token)
+            if entry.operation.phase == "activating":
+                await self._renew_execution_claim(operation_id, owner=owner, token=token)
+                installed = await self.global_installer.observe_global_skill(runtime_skill_name=command.runtime_skill_name)
+                _raise_if_observation_unavailable(installed)
+                exact = _observed_identity_matches(installed, command, manifest_version)
+                if not exact:
+                    raise ReceiverRuntimeError(code="ACTIVATION_FAILED", detail="The GLOBAL Skill identity could not be recovered for activation.")
+                await self.global_installer.activate_global_skill(runtime_skill_name=command.runtime_skill_name)
+                observed_data = await self.global_installer.observe_global_skill(runtime_skill_name=command.runtime_skill_name)
+                if observed_data is None:
+                    raise ReceiverRuntimeError(code="ACTIVATION_FAILED", detail="The GLOBAL Skill could not be observed as loaded.")
+                observed = ReceiverObservedSkill(
+                    target=command.target,
+                    presence="installed",
+                    skill_version_id=observed_data.get("skillVersionId"),
+                    version=observed_data.get("version"),
+                    package_digest=observed_data.get("packageDigest"),
+                    runtime_skill_name=command.runtime_skill_name,
+                    enabled=observed_data.get("enabled"),
+                    load_state=observed_data.get("loadState", "unknown"),
+                    freshness=observed_data.get("freshness", "unavailable"),
+                    observed_at=self._clock(),
+                )
+                if (
+                    observed.skill_version_id != command.skill_version_id
+                    or observed.version != manifest_version
+                    or observed.package_digest != command.package_digest
+                    or observed.enabled is not True
+                    or observed.load_state != "loaded"
+                    or observed.freshness != "current"
+                ):
+                    raise ReceiverRuntimeError(code="OBSERVED_STATE_CONFLICT", detail="Observed GLOBAL state does not exactly prove the requested installation.")
+                entry = await self.store.transition(
+                    operation_id,
+                    phase="succeeded",
+                    now=self._clock(),
+                    owner=owner,
+                    token=token,
+                    observed=observed,
+                )
+            return entry.operation
+        except ReceiverProviderError as exc:
+            current = await self.store.get(operation_id)
+            if current is not None and current.operation.phase not in _TERMINAL:
+                terminal: ReceiverOperationPhase = "rejected" if current.operation.phase in {"accepted", "validating"} else "failed"
+                await self.store.transition(operation_id, phase=terminal, now=self._clock(), owner=owner, token=token, error=_safe_error(exc))
+            raise
+        except Exception:
+            exc = ReceiverRuntimeError(code="INTERNAL_ERROR", title="Receiver internal error", detail="The receiver could not complete the operation.", status_code=500)
+            current = await self.store.get(operation_id)
+            if current is not None and current.operation.phase not in _TERMINAL:
+                terminal = "rejected" if current.operation.phase in {"accepted", "validating"} else "failed"
+                await self.store.transition(operation_id, phase=terminal, now=self._clock(), owner=owner, token=token, error=_safe_error(exc))
+            raise exc from None
+
     async def get_operation(
         self,
         *,
@@ -945,6 +1240,13 @@ class ReceiverRuntimeHandler:
         self._require(principal, "receiver:operations:read")
         entry = await self.store.get(operation_id)
         if entry is None:
+            raise ReceiverRuntimeError(
+                code="INVALID_INSTALLATION_TARGET",
+                detail="The receiver operation does not exist.",
+                status_code=404,
+            )
+        scope_action = "receiver:observe:global" if entry.operation.target.scope == "GLOBAL" else "receiver:observe:user"
+        if scope_action not in principal.actions:
             raise ReceiverRuntimeError(
                 code="INVALID_INSTALLATION_TARGET",
                 detail="The receiver operation does not exist.",
@@ -964,12 +1266,37 @@ class ReceiverRuntimeHandler:
             raise ReceiverRuntimeError(code="INVALID_INSTALLATION_TARGET", detail="The observation query is invalid.", status_code=422) from None
         if query.target.scope == "GLOBAL":
             self._require(principal, "receiver:observe:global")
-            raise ReceiverRuntimeError(code="GLOBAL_INSTALL_UNSUPPORTED", detail="Global Skill observation is unsupported.")
-        self._require(principal, "receiver:observe:user")
-        observed_data = await self.installer.observe_user_skill(
-            user_id=query.target.deer_flow_user_id,
-            runtime_skill_name=query.runtime_skill_name,
-        )
+            if not self._global_install_ready or self.global_installer is None:
+                raise ReceiverRuntimeError(code="GLOBAL_INSTALL_UNSUPPORTED", detail="Global Skill observation is unsupported.")
+            try:
+                observed_data = await self.global_installer.observe_global_skill(runtime_skill_name=query.runtime_skill_name)
+            except ReceiverProviderError:
+                raise
+            except Exception:
+                raise ReceiverRuntimeError(
+                    code="OBSERVATION_UNAVAILABLE",
+                    title="Observation unavailable",
+                    detail="The receiver cannot determine the installed Skill state.",
+                    status_code=503,
+                    retryable=True,
+                ) from None
+        else:
+            self._require(principal, "receiver:observe:user")
+            try:
+                observed_data = await self.installer.observe_user_skill(
+                    user_id=query.target.deer_flow_user_id,
+                    runtime_skill_name=query.runtime_skill_name,
+                )
+            except ReceiverProviderError:
+                raise
+            except Exception:
+                raise ReceiverRuntimeError(
+                    code="OBSERVATION_UNAVAILABLE",
+                    title="Observation unavailable",
+                    detail="The receiver cannot determine the installed Skill state.",
+                    status_code=503,
+                    retryable=True,
+                ) from None
         if observed_data is None:
             return ReceiverObservedSkill(
                 target=query.target,
@@ -992,6 +1319,6 @@ class ReceiverRuntimeHandler:
             runtime_skill_name=query.runtime_skill_name,
             enabled=observed_data.get("enabled"),
             load_state=observed_data.get("loadState", "unknown"),
-            freshness="current",
+            freshness=observed_data.get("freshness", "current"),
             observed_at=self._clock(),
         )
