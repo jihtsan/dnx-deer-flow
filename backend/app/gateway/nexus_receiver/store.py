@@ -36,6 +36,7 @@ class SqlReceiverOperationStore:
             command=ReceiverInstallCommand.model_validate(row.command_json),
             operation=ReceiverOperation.model_validate(row.operation_json),
             execution_owner=row.execution_owner,
+            execution_token=row.execution_token,
             execution_expires_at=SqlReceiverOperationStore._as_utc(row.execution_expires_at),
         )
 
@@ -128,7 +129,10 @@ class SqlReceiverOperationStore:
         owner: str,
         now: datetime,
         expires_at: datetime,
-    ) -> bool:
+    ) -> str | None:
+        from uuid import uuid4
+
+        token = str(uuid4())
         async with self._session_factory() as session:
             statement = (
                 update(ReceiverOperationRow)
@@ -141,21 +145,47 @@ class SqlReceiverOperationStore:
                         ReceiverOperationRow.execution_expires_at <= now,
                     ),
                 )
-                .values(execution_owner=owner, execution_expires_at=expires_at)
+                .values(execution_owner=owner, execution_token=token, execution_expires_at=expires_at)
             )
             result = await session.execute(statement)
             await session.commit()
+            return token if result.rowcount == 1 else None
+
+    async def renew_claim(
+        self,
+        operation_id: str,
+        *,
+        owner: str,
+        token: str,
+        now: datetime,
+        expires_at: datetime,
+    ) -> bool:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(ReceiverOperationRow)
+                .where(
+                    ReceiverOperationRow.operation_id == operation_id,
+                    ReceiverOperationRow.phase.not_in(_TERMINAL),
+                    ReceiverOperationRow.execution_owner == owner,
+                    ReceiverOperationRow.execution_token == token,
+                    ReceiverOperationRow.execution_expires_at.is_not(None),
+                    ReceiverOperationRow.execution_expires_at > now,
+                )
+                .values(execution_expires_at=expires_at)
+            )
+            await session.commit()
             return result.rowcount == 1
 
-    async def release_claim(self, operation_id: str, *, owner: str) -> None:
+    async def release_claim(self, operation_id: str, *, owner: str, token: str) -> None:
         async with self._session_factory() as session:
             await session.execute(
                 update(ReceiverOperationRow)
                 .where(
                     ReceiverOperationRow.operation_id == operation_id,
                     ReceiverOperationRow.execution_owner == owner,
+                    ReceiverOperationRow.execution_token == token,
                 )
-                .values(execution_owner=None, execution_expires_at=None)
+                .values(execution_owner=None, execution_token=None, execution_expires_at=None)
             )
             await session.commit()
 
@@ -166,6 +196,7 @@ class SqlReceiverOperationStore:
         phase: ReceiverOperationPhase,
         now: datetime,
         owner: str | None = None,
+        token: str | None = None,
         observed: ReceiverObservedSkill | None = None,
         error: ReceiverOperationError | None = None,
     ) -> ReceiverOperationEntry:
@@ -173,7 +204,7 @@ class SqlReceiverOperationStore:
             statement = select(ReceiverOperationRow).where(ReceiverOperationRow.operation_id == operation_id).with_for_update()
             row = (await session.execute(statement)).scalars().one()
             execution_expires_at = self._as_utc(row.execution_expires_at)
-            if owner is not None and (row.execution_owner != owner or execution_expires_at is None or execution_expires_at <= self._as_utc(now)):
+            if owner is not None and (token is None or row.execution_owner != owner or row.execution_token != token or execution_expires_at is None or execution_expires_at <= self._as_utc(now)):
                 raise ReceiverRuntimeError(
                     code="OBSERVED_STATE_CONFLICT",
                     detail="The receiver operation execution claim is no longer owned by this worker.",

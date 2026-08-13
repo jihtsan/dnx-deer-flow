@@ -11,6 +11,7 @@ import re
 import tempfile
 import zipfile
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,6 +68,7 @@ _DEFAULT_DENY_BLOCKERS = [
     "COMPATIBILITY_UNKNOWN",
 ]
 _EXECUTION_LEASE = timedelta(minutes=5)
+_EXECUTION_HEARTBEAT_SECONDS = _EXECUTION_LEASE.total_seconds() / 3
 logger = logging.getLogger(__name__)
 
 
@@ -178,6 +180,7 @@ class ReceiverOperationEntry:
     command: ReceiverInstallCommand
     operation: ReceiverOperation
     execution_owner: str | None = None
+    execution_token: str | None = None
     execution_expires_at: datetime | None = None
 
 
@@ -202,9 +205,19 @@ class ReceiverOperationStore(Protocol):
         owner: str,
         now: datetime,
         expires_at: datetime,
+    ) -> str | None: ...
+
+    async def renew_claim(
+        self,
+        operation_id: str,
+        *,
+        owner: str,
+        token: str,
+        now: datetime,
+        expires_at: datetime,
     ) -> bool: ...
 
-    async def release_claim(self, operation_id: str, *, owner: str) -> None: ...
+    async def release_claim(self, operation_id: str, *, owner: str, token: str) -> None: ...
 
     async def transition(
         self,
@@ -213,6 +226,7 @@ class ReceiverOperationStore(Protocol):
         phase: ReceiverOperationPhase,
         now: datetime,
         owner: str | None = None,
+        token: str | None = None,
         observed: ReceiverObservedSkill | None = None,
         error: ReceiverOperationError | None = None,
     ) -> ReceiverOperationEntry: ...
@@ -280,22 +294,41 @@ class InMemoryReceiverOperationStore:
         owner: str,
         now: datetime,
         expires_at: datetime,
-    ) -> bool:
+    ) -> str | None:
         async with self._lock:
             entry = self._by_operation.get(operation_id)
             if entry is None or entry.operation.phase in _TERMINAL:
-                return False
+                return None
             if entry.execution_owner is not None and entry.execution_expires_at is not None and entry.execution_expires_at > now:
-                return False
+                return None
+            token = str(uuid4())
             entry.execution_owner = owner
+            entry.execution_token = token
+            entry.execution_expires_at = expires_at
+            return token
+
+    async def renew_claim(
+        self,
+        operation_id: str,
+        *,
+        owner: str,
+        token: str,
+        now: datetime,
+        expires_at: datetime,
+    ) -> bool:
+        async with self._lock:
+            entry = self._by_operation.get(operation_id)
+            if entry is None or entry.operation.phase in _TERMINAL or entry.execution_owner != owner or entry.execution_token != token or entry.execution_expires_at is None or entry.execution_expires_at <= now:
+                return False
             entry.execution_expires_at = expires_at
             return True
 
-    async def release_claim(self, operation_id: str, *, owner: str) -> None:
+    async def release_claim(self, operation_id: str, *, owner: str, token: str) -> None:
         async with self._lock:
             entry = self._by_operation.get(operation_id)
-            if entry is not None and entry.execution_owner == owner:
+            if entry is not None and entry.execution_owner == owner and entry.execution_token == token:
                 entry.execution_owner = None
+                entry.execution_token = None
                 entry.execution_expires_at = None
 
     async def transition(
@@ -305,13 +338,14 @@ class InMemoryReceiverOperationStore:
         phase: ReceiverOperationPhase,
         now: datetime,
         owner: str | None = None,
+        token: str | None = None,
         observed: ReceiverObservedSkill | None = None,
         error: ReceiverOperationError | None = None,
     ) -> ReceiverOperationEntry:
         async with self._lock:
             entry = self._by_operation[operation_id]
             current = entry.operation
-            if owner is not None and (entry.execution_owner != owner or entry.execution_expires_at is None or entry.execution_expires_at <= now):
+            if owner is not None and (token is None or entry.execution_owner != owner or entry.execution_token != token or entry.execution_expires_at is None or entry.execution_expires_at <= now):
                 raise ReceiverRuntimeError(
                     code="OBSERVED_STATE_CONFLICT",
                     detail="The receiver operation execution claim is no longer owned by this worker.",
@@ -611,14 +645,14 @@ class ReceiverRuntimeHandler:
             except (OSError, ValueError):
                 package = None
             if package is None:
-                claim_owner = f"{self._execution_owner_prefix}:{uuid4().hex}"
-                claimed = await self.store.try_claim(
+                claim_owner = self._execution_owner_prefix
+                claim_token = await self.store.try_claim(
                     operation_id,
                     owner=claim_owner,
                     now=self._clock(),
                     expires_at=self._clock() + _EXECUTION_LEASE,
                 )
-                if not claimed:
+                if claim_token is None:
                     current = await self.store.get(operation_id)
                     if current is not None:
                         recovered.append(current.operation)
@@ -638,11 +672,12 @@ class ReceiverRuntimeHandler:
                             phase=terminal,
                             now=self._clock(),
                             owner=claim_owner,
+                            token=claim_token,
                             error=_safe_error(exc),
                         )
                         recovered.append(current.operation)
                 finally:
-                    await self.store.release_claim(operation_id, owner=claim_owner)
+                    await self.store.release_claim(operation_id, owner=claim_owner, token=claim_token)
                 continue
             try:
                 recovered.append(await self._run_claimed(entry, package))
@@ -654,25 +689,58 @@ class ReceiverRuntimeHandler:
 
     async def _run_claimed(self, entry: ReceiverOperationEntry, package: bytes) -> ReceiverOperation:
         operation_id = str(entry.command.receiver_operation_id)
-        claim_owner = f"{self._execution_owner_prefix}:{uuid4().hex}"
-        claimed = await self.store.try_claim(
+        claim_owner = self._execution_owner_prefix
+        claim_token = await self.store.try_claim(
             operation_id,
             owner=claim_owner,
             now=self._clock(),
             expires_at=self._clock() + _EXECUTION_LEASE,
         )
-        if not claimed:
+        if claim_token is None:
             current = await self.store.get(operation_id)
             if current is None:
                 raise ReceiverRuntimeError(code="INTERNAL_ERROR", detail="The receiver operation disappeared.", status_code=500)
             return current.operation
+        heartbeat_stop = asyncio.Event()
+        claim_lost = asyncio.Event()
+        heartbeat = asyncio.create_task(
+            self._maintain_execution_claim(
+                operation_id,
+                owner=claim_owner,
+                token=claim_token,
+                stop=heartbeat_stop,
+                claim_lost=claim_lost,
+            ),
+            name=f"nexus-receiver-operation-heartbeat-{operation_id}",
+        )
         try:
             current = await self.store.get(operation_id)
             if current is None:
                 raise ReceiverRuntimeError(code="INTERNAL_ERROR", detail="The receiver operation disappeared.", status_code=500)
-            return await self._continue_install(current, package, owner=claim_owner)
+            install = asyncio.create_task(
+                self._continue_install(current, package, owner=claim_owner, token=claim_token),
+                name=f"nexus-receiver-operation-{operation_id}",
+            )
+            lost_waiter = asyncio.create_task(claim_lost.wait())
+            done, _pending = await asyncio.wait({install, lost_waiter}, return_when=asyncio.FIRST_COMPLETED)
+            if lost_waiter in done and claim_lost.is_set():
+                install.cancel()
+                with suppress(asyncio.CancelledError):
+                    await install
+                raise ReceiverRuntimeError(
+                    code="OBSERVED_STATE_CONFLICT",
+                    detail="The receiver operation execution claim is no longer owned by this worker.",
+                )
+            lost_waiter.cancel()
+            with suppress(asyncio.CancelledError):
+                await lost_waiter
+            return await install
         finally:
-            await self.store.release_claim(operation_id, owner=claim_owner)
+            heartbeat_stop.set()
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
+            await self.store.release_claim(operation_id, owner=claim_owner, token=claim_token)
             current = await self.store.get(operation_id)
             if current is not None and current.operation.phase in _TERMINAL:
                 await self._delete_staged_package(operation_id, current.command.package_digest)
@@ -691,7 +759,52 @@ class ReceiverRuntimeHandler:
             raise ReceiverRuntimeError(code="TARGET_USER_NOT_ELIGIBLE", detail="The selected DeerFlow user is not eligible for Skill installation.")
         return user
 
-    async def _continue_install(self, entry: ReceiverOperationEntry, package: bytes, *, owner: str) -> ReceiverOperation:
+    async def _renew_execution_claim(self, operation_id: str, *, owner: str, token: str) -> None:
+        now = self._clock()
+        renewed = await self.store.renew_claim(
+            operation_id,
+            owner=owner,
+            token=token,
+            now=now,
+            expires_at=now + _EXECUTION_LEASE,
+        )
+        if not renewed:
+            raise ReceiverRuntimeError(
+                code="OBSERVED_STATE_CONFLICT",
+                detail="The receiver operation execution claim is no longer owned by this worker.",
+            )
+
+    async def _maintain_execution_claim(
+        self,
+        operation_id: str,
+        *,
+        owner: str,
+        token: str,
+        stop: asyncio.Event,
+        claim_lost: asyncio.Event,
+    ) -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=_EXECUTION_HEARTBEAT_SECONDS)
+                return
+            except TimeoutError:
+                pass
+            try:
+                renewed = await self.store.renew_claim(
+                    operation_id,
+                    owner=owner,
+                    token=token,
+                    now=self._clock(),
+                    expires_at=self._clock() + _EXECUTION_LEASE,
+                )
+            except Exception:
+                logger.exception("Nexus receiver operation lease renewal failed for operation %s", operation_id)
+                renewed = False
+            if not renewed:
+                claim_lost.set()
+                return
+
+    async def _continue_install(self, entry: ReceiverOperationEntry, package: bytes, *, owner: str, token: str) -> ReceiverOperation:
         command = entry.command
         operation_id = str(command.receiver_operation_id)
         assert isinstance(command.target, ReceiverUserTarget)
@@ -705,7 +818,7 @@ class ReceiverRuntimeHandler:
                 )
             user = await self._resolve_install_target(command.target.deer_flow_user_id)
             if entry.operation.phase == "accepted":
-                entry = await self.store.transition(operation_id, phase="validating", now=self._clock(), owner=owner)
+                entry = await self.store.transition(operation_id, phase="validating", now=self._clock(), owner=owner, token=token)
             if entry.operation.phase == "validating":
                 existing = await self.installer.observe_user_skill(
                     user_id=user.user_id,
@@ -715,8 +828,9 @@ class ReceiverRuntimeHandler:
                     if existing.get("skillVersionId") == command.skill_version_id and existing.get("packageDigest") == command.package_digest:
                         raise ReceiverRuntimeError(code="SKILL_ALREADY_INSTALLED", detail="The exact Skill version is already installed.")
                     raise ReceiverRuntimeError(code="SKILL_NAME_CONFLICT", detail="A different Skill already uses runtimeSkillName.")
-                entry = await self.store.transition(operation_id, phase="installing", now=self._clock(), owner=owner)
+                entry = await self.store.transition(operation_id, phase="installing", now=self._clock(), owner=owner, token=token)
             if entry.operation.phase == "installing":
+                await self._renew_execution_claim(operation_id, owner=owner, token=token)
                 # A crash may occur after the atomic filesystem install but
                 # before the durable phase advances. Exact observation lets a
                 # replay close that window without a second write.
@@ -731,6 +845,7 @@ class ReceiverRuntimeHandler:
                     from deerflow.skills.installer import SkillAlreadyExistsError
 
                     try:
+                        await self._renew_execution_claim(operation_id, owner=owner, token=token)
                         await self.installer.install_user_skill(
                             user_id=user.user_id,
                             command=command,
@@ -745,8 +860,9 @@ class ReceiverRuntimeHandler:
                         exact = installed is not None and installed.get("skillVersionId") == command.skill_version_id and installed.get("packageDigest") == command.package_digest
                         if not exact:
                             raise ReceiverRuntimeError(code="SKILL_NAME_CONFLICT", detail="A Skill already uses runtimeSkillName.") from None
-                entry = await self.store.transition(operation_id, phase="activating", now=self._clock(), owner=owner)
+                entry = await self.store.transition(operation_id, phase="activating", now=self._clock(), owner=owner, token=token)
             if entry.operation.phase == "activating":
+                await self._renew_execution_claim(operation_id, owner=owner, token=token)
                 installed = await self.installer.observe_user_skill(
                     user_id=user.user_id,
                     runtime_skill_name=command.runtime_skill_name,
@@ -783,6 +899,7 @@ class ReceiverRuntimeHandler:
                     phase="succeeded",
                     now=self._clock(),
                     owner=owner,
+                    token=token,
                     observed=observed,
                 )
             return entry.operation
@@ -795,6 +912,7 @@ class ReceiverRuntimeHandler:
                     phase=terminal,
                     now=self._clock(),
                     owner=owner,
+                    token=token,
                     error=_safe_error(exc),
                 )
             raise
@@ -813,6 +931,7 @@ class ReceiverRuntimeHandler:
                     phase=terminal,
                     now=self._clock(),
                     owner=owner,
+                    token=token,
                     error=_safe_error(exc),
                 )
             raise exc from None
